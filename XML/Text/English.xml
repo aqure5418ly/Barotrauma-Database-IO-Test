@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<infotexts language="English" nowhitespace="false" translatedname="English">
+  <entityname.DatabaseInterface>Database Interface</entityname.DatabaseInterface>
+  <entitydescription.DatabaseInterface>Drop items into the slot to ingest them into the database.</entitydescription.DatabaseInterface>
+  <entityname.DatabaseTerminal>Database Terminal</entityname.DatabaseTerminal>
+  <entitydescription.DatabaseTerminal>Use to open or close a database session.</entitydescription.DatabaseTerminal>
+  <entityname.DatabaseInterfaceFixed>Database Interface (Fixed)</entityname.DatabaseInterfaceFixed>
+  <entitydescription.DatabaseInterfaceFixed>Stationary powered interface for early/mid game database ingest.</entitydescription.DatabaseInterfaceFixed>
+  <entityname.DatabaseTerminalFixed>Database Terminal (Fixed)</entityname.DatabaseTerminalFixed>
+  <entitydescription.DatabaseTerminalFixed>Stationary powered terminal for early/mid game database access.</entitydescription.DatabaseTerminalFixed>
+  <entityname.DatabaseAutoRestocker>Database Auto Restocker</entityname.DatabaseAutoRestocker>
+  <entitydescription.DatabaseAutoRestocker>Supplies linked containers from the database.</entitydescription.DatabaseAutoRestocker>
+
+  <dbiotest.interface.hint>Insert items to ingest into database.</dbiotest.interface.hint>
+  <dbiotest.interface.count>Stored Item Count</dbiotest.interface.count>
+  <dbiotest.interface.dbid>Database ID</dbiotest.interface.dbid>
+
+  <dbiotest.terminal.closedhint>Use to open database session and populate container.</dbiotest.terminal.closedhint>
+  <dbiotest.terminal.openhint>Session active. Use panel buttons to switch pages or close session.</dbiotest.terminal.openhint>
+  <dbiotest.terminal.dbid>Database ID</dbiotest.terminal.dbid>
+  <dbiotest.terminal.count>Stored Item Count</dbiotest.terminal.count>
+  <dbiotest.terminal.page>Page</dbiotest.terminal.page>
+  <dbiotest.terminal.remainingpages>Pending Page Items</dbiotest.terminal.remainingpages>
+  <dbiotest.terminal.locked>Locked by another terminal session.</dbiotest.terminal.locked>
+  <dbiotest.terminal.closed>Session closed.</dbiotest.terminal.closed>
+  <dbiotest.power.status>Power</dbiotest.power.status>
+  <dbiotest.power.online>Online</dbiotest.power.online>
+  <dbiotest.power.offline>Offline</dbiotest.power.offline>
+  <dbiotest.panel.title>Database Page Controls</dbiotest.panel.title>
+  <dbiotest.panel.prev>Prev</dbiotest.panel.prev>
+  <dbiotest.panel.next>Next</dbiotest.panel.next>
+  <dbiotest.panel.close>Close</dbiotest.panel.close>
+
+  <dbiotest.restocker.hint>Auto restock linked containers.</dbiotest.restocker.hint>
+  <dbiotest.restocker.dbid>Database ID</dbiotest.restocker.dbid>
+  <dbiotest.restocker.supply>Supply</dbiotest.restocker.supply>
+  <dbiotest.restocker.targets>Linked Targets</dbiotest.restocker.targets>
+  <dbiotest.restocker.slots>Slots</dbiotest.restocker.slots>
+  <dbiotest.restocker.slots.all>All</dbiotest.restocker.slots.all>
+  <dbiotest.restocker.nosupply>Not configured</dbiotest.restocker.nosupply>
+  <dbiotest.restocker.filter>Filter</dbiotest.restocker.filter>
+  <dbiotest.restocker.prev>Prev</dbiotest.restocker.prev>
+  <dbiotest.restocker.next>Next</dbiotest.restocker.next>
+
+  <dbiotest.ui.title>Database Terminal</dbiotest.ui.title>
+  <dbiotest.ui.search.tooltip>Search by item name or identifier.</dbiotest.ui.search.tooltip>
+  <dbiotest.ui.refresh>Refresh</dbiotest.ui.refresh>
+  <dbiotest.ui.footer>Left-click an entry to transfer one item. Right-click the terminal to close session.</dbiotest.ui.footer>
+  <dbiotest.ui.empty>No items in this session.</dbiotest.ui.empty>
+
+  <dbiotest.ui.sort.nameasc>Name A-Z</dbiotest.ui.sort.nameasc>
+  <dbiotest.ui.sort.namedesc>Name Z-A</dbiotest.ui.sort.namedesc>
+  <dbiotest.ui.sort.countdesc>Count High-Low</dbiotest.ui.sort.countdesc>
+  <dbiotest.ui.sort.countasc>Count Low-High</dbiotest.ui.sort.countasc>
+
+  <dbiotest.ui.take.success>Item moved to inventory.</dbiotest.ui.take.success>
+  <dbiotest.ui.take.failed>Failed to transfer item.</dbiotest.ui.take.failed>
+  <dbiotest.ui.take.full>Inventory full.</dbiotest.ui.take.full>
+  <dbiotest.ui.take.invalidterminal>Terminal session not found.</dbiotest.ui.take.invalidterminal>
+  <dbiotest.ui.take.denied>You are not allowed to use this terminal.</dbiotest.ui.take.denied>
+  <dbiotest.ui.take.notready>Terminal inventory is not ready.</dbiotest.ui.take.notready>
+  <dbiotest.ui.take.notfound>Item not found in terminal.</dbiotest.ui.take.notfound>
+</infotexts>

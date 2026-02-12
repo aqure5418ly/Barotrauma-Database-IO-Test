@@ -1,0 +1,346 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Items>
+  <Item
+    identifier="DatabaseInterface"
+    category="Equipment"
+    tags="smallitem,mobilecontainer,database_interface"
+    showcontentsintooltip="true"
+    scale="0.5"
+    impactsoundtag="impact_metal_light"
+    waterproof="true"
+    fireproof="true">
+    <InventoryIcon texture="Content/Items/InventoryIconAtlas.png" sourcerect="960,64,64,64" origin="0.5,0.5" />
+    <Sprite texture="Content/Items/Containers/containers.png" sourcerect="448,1,166,86" origin="0.5,0.5" depth="0.6" />
+    <Fabricate suitablefabricators="fabricator" requiredtime="28">
+      <RequiredSkill identifier="electrical" level="72" />
+      <RequiredSkill identifier="mechanical" level="68" />
+      <RequiredItem identifier="fpgacircuit" amount="2" />
+      <RequiredItem identifier="titaniumaluminiumalloy" amount="1" />
+      <RequiredItem identifier="plastic" amount="2" />
+      <RequiredItem identifier="silicon" amount="2" />
+    </Fabricate>
+    <Body width="140" height="82" density="20" />
+    <Holdable slots="Any,RightHand,LeftHand" msg="ItemMsgPickUpSelect" pickkey="Use" />
+    <ItemContainer capacity="1" slotsperrow="1" canbeselected="true" hideitems="true" msg="ItemMsgInteractSelect">
+      <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
+      <GuiFrame relativesize="0.2,0.2" anchor="Center" style="ItemUI" />
+    </ItemContainer>
+    <DatabaseInterfaceComponent databaseId="default" maxStorageCount="2048" ingestInterval="0.15" />
+  </Item>
+
+  <Item
+    identifier="DatabaseTerminal"
+    category="Equipment"
+    tags="smallitem,mobilecontainer,database_terminal"
+    showcontentsintooltip="true"
+    scale="0.5"
+    impactsoundtag="impact_metal_light"
+    waterproof="true"
+    fireproof="true">
+    <InventoryIcon texture="Content/Items/InventoryIconAtlas2.png" sourcerect="323,193,60,61" origin="0.5,0.5" />
+    <Sprite texture="Content/Items/Electricity/signalcomp.png" sourcerect="149,371,69,93" origin="0.5,0.5" depth="0.6" />
+    <Fabricate suitablefabricators="fabricator" requiredtime="32">
+      <RequiredSkill identifier="electrical" level="78" />
+      <RequiredSkill identifier="mechanical" level="72" />
+      <RequiredItem identifier="fpgacircuit" amount="3" />
+      <RequiredItem identifier="titaniumaluminiumalloy" amount="2" />
+      <RequiredItem identifier="plastic" amount="2" />
+      <RequiredItem identifier="silicon" amount="3" />
+    </Fabricate>
+    <Body width="64" height="88" density="20" />
+    <Holdable slots="Any,RightHand,LeftHand" msg="ItemMsgPickUpUse" pickkey="Use" />
+    <DatabaseTerminalComponent
+      databaseId="default"
+      terminalSessionTimeout="180"
+      terminalPageSize="20"
+      sessionVariant="false"
+      openSessionIdentifier="DatabaseTerminalSession"
+      closedTerminalIdentifier="DatabaseTerminal" />
+  </Item>
+
+  <Item
+    identifier="DatabaseTerminalSession"
+    category="Equipment"
+    tags="smallitem,mobilecontainer,database_terminal,database_terminal_session"
+    scale="0.5"
+    impactsoundtag="impact_metal_light"
+    waterproof="true"
+    fireproof="true"
+    hideinmenus="true"
+    showcontentsintooltip="true">
+    <InventoryIcon texture="Content/Items/InventoryIconAtlas2.png" sourcerect="323,193,60,61" origin="0.5,0.5" />
+    <Sprite texture="Content/Items/Electricity/signalcomp.png" sourcerect="149,371,69,93" origin="0.5,0.5" depth="0.6" />
+    <Body width="64" height="88" density="20" />
+    <Holdable slots="Any,RightHand,LeftHand" msg="ItemMsgPickUpUse" pickkey="Use">
+      <CustomInterface canbeselected="false" drawhudwhenequipped="true" allowuioverlap="true">
+        <GuiFrame relativesize="0.26,0.14" anchor="BottomLeft" relativeoffset="0.05,0.10" style="ItemUI" />
+        <Button text="Prev">
+          <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="1" />
+        </Button>
+        <Button text="Next">
+          <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="2" />
+        </Button>
+        <Button text="Close">
+          <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="3" />
+        </Button>
+      </CustomInterface>
+    </Holdable>
+    <ItemContainer
+      opentopped="true"
+      capacity="0"
+      maxstacksize="1"
+      ExtraStackSize="63"
+      slotsperrow="5"
+      canbeselected="false"
+      hideitems="true"
+      keepopenwhenequipped="true"
+      movableframe="true"
+      allowuioverlap="true">
+      <GuiFrame relativesize="0.5,0.4" anchor="Center" style="ItemUI" />
+      <SubContainer capacity="20" slotsperrow="5" maxstacksize="63">
+        <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
+      </SubContainer>
+    </ItemContainer>
+    <DatabaseTerminalComponent
+      databaseId="default"
+      terminalSessionTimeout="180"
+      terminalPageSize="20"
+      sessionVariant="true"
+      openSessionIdentifier="DatabaseTerminalSession"
+      closedTerminalIdentifier="DatabaseTerminal" />
+  </Item>
+
+  <Item
+    identifier="DatabaseInterfaceFixed"
+    category="Machine,Electrical"
+    tags="database_interface,database_interface_fixed,machine"
+    showcontentsintooltip="true"
+    linkable="true"
+    waterproof="true"
+    fireproof="true"
+    scale="0.75">
+    <InventoryIcon texture="Content/Items/InventoryIconAtlas.png" sourcerect="960,64,64,64" origin="0.5,0.5" />
+    <Sprite texture="Content/Items/Command/CommandDevices.png" sourcerect="700,0,160,128" origin="0.5,0.5" depth="0.6" />
+    <Fabricate suitablefabricators="fabricator" requiredtime="16">
+      <RequiredSkill identifier="electrical" level="38" />
+      <RequiredSkill identifier="mechanical" level="32" />
+      <RequiredItem identifier="fpgacircuit" amount="1" />
+      <RequiredItem identifier="steel" amount="2" />
+      <RequiredItem identifier="plastic" amount="2" />
+    </Fabricate>
+    <Body width="128" height="92" density="30" />
+    <Holdable selectkey="Action" pickkey="Use" slots="RightHand+LeftHand" msg="ItemMsgDetachWrench" PickingTime="3.0" aimpos="60,0" handle1="0,0" attachable="true" aimable="false">
+      <RequiredItem identifier="wrench" type="Equipped" />
+    </Holdable>
+    <ItemContainer capacity="1" slotsperrow="1" canbeselected="true" hideitems="true" msg="ItemMsgInteractSelect">
+      <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
+      <GuiFrame relativesize="0.2,0.2" anchor="Center" style="ItemUI" />
+    </ItemContainer>
+    <Powered minvoltage="0.5" powerconsumption="15" />
+    <ConnectionPanel selectkey="Action" canbeselected="true" msg="ItemMsgRewireScrewdriver" hudpriority="10">
+      <GuiFrame relativesize="0.22,0.28" minsize="380,320" maxsize="480,420" anchor="Center" style="ConnectionPanel" />
+      <RequiredItem identifier="screwdriver" type="Equipped" />
+      <input name="power_in" displayname="connection.powerin" />
+      <output name="condition_out" displayname="connection.conditionout" />
+    </ConnectionPanel>
+    <DatabaseInterfaceComponent
+      databaseId="default"
+      maxStorageCount="2048"
+      ingestInterval="0.15"
+      requirePower="true"
+      minRequiredVoltage="0.5" />
+  </Item>
+
+  <Item
+    identifier="DatabaseTerminalFixed"
+    category="Machine,Electrical"
+    tags="database_terminal,database_terminal_fixed,machine"
+    showcontentsintooltip="true"
+    linkable="true"
+    waterproof="true"
+    fireproof="true"
+    scale="0.75">
+    <InventoryIcon texture="Content/Items/InventoryIconAtlas2.png" sourcerect="323,193,60,61" origin="0.5,0.5" />
+    <Sprite texture="Content/Items/Command/CommandDevices.png" sourcerect="707,254,279,160" origin="0.5,0.5" depth="0.6" />
+    <Fabricate suitablefabricators="fabricator" requiredtime="20">
+      <RequiredSkill identifier="electrical" level="45" />
+      <RequiredSkill identifier="mechanical" level="38" />
+      <RequiredItem identifier="fpgacircuit" amount="1" />
+      <RequiredItem identifier="steel" amount="3" />
+      <RequiredItem identifier="plastic" amount="2" />
+      <RequiredItem identifier="silicon" amount="1" />
+    </Fabricate>
+    <Body width="150" height="92" density="34" />
+    <Holdable selectkey="Action" pickkey="Use" slots="RightHand+LeftHand" msg="ItemMsgDetachWrench" PickingTime="3.0" aimpos="60,0" handle1="0,0" attachable="true" aimable="false">
+      <RequiredItem identifier="wrench" type="Equipped" />
+    </Holdable>
+    <ItemContainer
+      opentopped="true"
+      capacity="0"
+      maxstacksize="1"
+      ExtraStackSize="63"
+      slotsperrow="5"
+      canbeselected="true"
+      hideitems="true"
+      msg="ItemMsgInteractSelect"
+      keepopenwhenequipped="true"
+      movableframe="true"
+      allowuioverlap="true">
+      <GuiFrame relativesize="0.5,0.4" anchor="Center" style="ItemUI" />
+      <SubContainer capacity="20" slotsperrow="5" maxstacksize="63">
+        <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
+      </SubContainer>
+    </ItemContainer>
+    <CustomInterface canbeselected="true" allowuioverlap="true">
+      <GuiFrame relativesize="0.30,0.14" anchor="BottomLeft" relativeoffset="0.04,0.08" style="ItemUI" />
+      <Button text="Open">
+        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="4" />
+      </Button>
+      <Button text="Force">
+        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="5" />
+      </Button>
+      <Button text="Prev">
+        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="1" />
+      </Button>
+      <Button text="Next">
+        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="2" />
+      </Button>
+      <Button text="Close">
+        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="3" />
+      </Button>
+    </CustomInterface>
+    <Powered minvoltage="0.5" powerconsumption="30" />
+    <ConnectionPanel selectkey="Action" canbeselected="true" msg="ItemMsgRewireScrewdriver" hudpriority="10">
+      <GuiFrame relativesize="0.22,0.28" minsize="380,320" maxsize="480,420" anchor="Center" style="ConnectionPanel" />
+      <RequiredItem identifier="screwdriver" type="Equipped" />
+      <input name="power_in" displayname="connection.powerin" />
+      <output name="condition_out" displayname="connection.conditionout" />
+    </ConnectionPanel>
+    <DatabaseTerminalComponent
+      databaseId="default"
+      terminalSessionTimeout="180"
+      terminalPageSize="20"
+      sessionVariant="false"
+      useInPlaceSession="true"
+      requirePower="true"
+      minRequiredVoltage="0.5"
+      openSessionIdentifier="DatabaseTerminalFixed"
+      closedTerminalIdentifier="DatabaseTerminalFixed" />
+  </Item>
+
+  <Item
+    identifier="DatabaseTerminalFixedSession"
+    category="Machine,Electrical"
+    tags="database_terminal,database_terminal_fixed,database_terminal_session,machine"
+    hideinmenus="true"
+    showcontentsintooltip="true"
+    linkable="true"
+    waterproof="true"
+    fireproof="true"
+    scale="0.75">
+    <InventoryIcon texture="Content/Items/InventoryIconAtlas2.png" sourcerect="323,193,60,61" origin="0.5,0.5" />
+    <Sprite texture="Content/Items/Command/CommandDevices.png" sourcerect="707,254,279,160" origin="0.5,0.5" depth="0.6" />
+    <Body width="150" height="92" density="34" />
+    <Holdable selectkey="Action" pickkey="Use" slots="RightHand+LeftHand" msg="ItemMsgDetachWrench" PickingTime="3.0" aimpos="60,0" handle1="0,0" attachable="true" aimable="false">
+      <RequiredItem identifier="wrench" type="Equipped" />
+    </Holdable>
+    <ItemContainer
+      opentopped="true"
+      capacity="0"
+      maxstacksize="1"
+      ExtraStackSize="63"
+      slotsperrow="5"
+      canbeselected="true"
+      hideitems="true"
+      msg="ItemMsgInteractSelect"
+      keepopenwhenequipped="true"
+      movableframe="true"
+      allowuioverlap="true">
+      <GuiFrame relativesize="0.5,0.4" anchor="Center" style="ItemUI" />
+      <SubContainer capacity="20" slotsperrow="5" maxstacksize="63">
+        <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
+      </SubContainer>
+    </ItemContainer>
+    <CustomInterface canbeselected="true" allowuioverlap="true">
+      <GuiFrame relativesize="0.26,0.14" anchor="BottomLeft" relativeoffset="0.04,0.08" style="ItemUI" />
+      <Button text="Prev">
+        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="1" />
+      </Button>
+      <Button text="Next">
+        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="2" />
+      </Button>
+      <Button text="Close">
+        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="3" />
+      </Button>
+    </CustomInterface>
+    <Powered minvoltage="0.5" powerconsumption="30" />
+    <ConnectionPanel selectkey="Action" canbeselected="true" msg="ItemMsgRewireScrewdriver" hudpriority="10">
+      <GuiFrame relativesize="0.22,0.28" minsize="380,320" maxsize="480,420" anchor="Center" style="ConnectionPanel" />
+      <RequiredItem identifier="screwdriver" type="Equipped" />
+      <input name="power_in" displayname="connection.powerin" />
+      <output name="condition_out" displayname="connection.conditionout" />
+    </ConnectionPanel>
+    <DatabaseTerminalComponent
+      databaseId="default"
+      terminalSessionTimeout="180"
+      terminalPageSize="20"
+      sessionVariant="true"
+      requirePower="true"
+      minRequiredVoltage="0.5"
+      openSessionIdentifier="DatabaseTerminalFixedSession"
+      closedTerminalIdentifier="DatabaseTerminalFixed" />
+  </Item>
+
+  <Item
+    identifier="DatabaseAutoRestocker"
+    category="Machine,Electrical"
+    tags="database_restocker,machine,locker,coilgun,railgun,chaingun,flakcannon,pulselaser,depthchargelauncher,turrethardpoint,largeturrethardpoint,coilgunammoloader,coilgunammosource,railgunammoloader,railgunammosource,flakcannonammoloader,flakcannonammosource,chaingunammosource,pulselaserammosource,depthchargeammosource,turretammosource"
+    allowedlinks="coilgunammoloader,coilgunammosource,railgunammoloader,railgunammosource,flakcannonammoloader,flakcannonammosource,chaingunammosource,pulselaserammosource,depthchargeammosource,turretammosource"
+    showcontentsintooltip="true"
+    linkable="true"
+    waterproof="true"
+    fireproof="true"
+    scale="0.75">
+    <InventoryIcon texture="Content/Items/InventoryIconAtlas2.png" sourcerect="323,193,60,61" origin="0.5,0.5" />
+    <Sprite texture="Content/Items/Command/CommandDevices.png" sourcerect="700,0,160,128" origin="0.5,0.5" depth="0.6" />
+    <Fabricate suitablefabricators="fabricator" requiredtime="18">
+      <RequiredSkill identifier="electrical" level="35" />
+      <RequiredSkill identifier="mechanical" level="30" />
+      <RequiredItem identifier="fpgacircuit" amount="1" />
+      <RequiredItem identifier="steel" amount="2" />
+      <RequiredItem identifier="plastic" amount="1" />
+    </Fabricate>
+    <Body width="140" height="92" density="30" />
+    <Holdable selectkey="Action" pickkey="Use" slots="RightHand+LeftHand" msg="ItemMsgDetachWrench" PickingTime="3.0" aimpos="60,0" handle1="0,0" attachable="true" aimable="false">
+      <RequiredItem identifier="wrench" type="Equipped" />
+    </Holdable>
+    <CustomInterface canbeselected="true" allowuioverlap="true">
+      <GuiFrame relativesize="0.34,0.18" anchor="BottomLeft" relativeoffset="0.04,0.08" style="ItemUI" />
+      <TextBox text="dbiotest.restocker.filter" propertyname="SupplyFilter" targetitemcomponent="DatabaseAutoRestockerComponent" maxtextlength="40" />
+      <Button text="dbiotest.restocker.prev">
+        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseAutoRestockerComponent" xmlactionrequest="1" />
+      </Button>
+      <Button text="dbiotest.restocker.next">
+        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseAutoRestockerComponent" xmlactionrequest="2" />
+      </Button>
+    </CustomInterface>
+    <Powered minvoltage="0.5" powerconsumption="20" />
+    <ConnectionPanel selectkey="Action" canbeselected="true" msg="ItemMsgRewireScrewdriver" hudpriority="10">
+      <GuiFrame relativesize="0.22,0.28" minsize="380,320" maxsize="480,420" anchor="Center" style="ConnectionPanel" />
+      <RequiredItem identifier="screwdriver" type="Equipped" />
+      <input name="power_in" displayname="connection.powerin" />
+    </ConnectionPanel>
+    <DatabaseAutoRestockerComponent
+      databaseId="default"
+      supplyIdentifiers=""
+      targetIdentifiers=""
+      targetTags=""
+      slotWhitelist=""
+      emptyTicksRequired="3"
+      lowConditionThreshold="2"
+      pollInterval="0.2"
+      supplyCooldown="0.3"
+      requirePower="true"
+      minRequiredVoltage="0.5" />
+  </Item>
+</Items>
