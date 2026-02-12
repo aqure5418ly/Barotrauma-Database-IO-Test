@@ -1,0 +1,19 @@
+# User specific
+Logs/
+*.log
+obj/
+bin/
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.sln.docstates
+
+# OS specific
+Thumbs.db
+.DS_Store
+
+# Archives
+*.zip
+*.7z

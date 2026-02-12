@@ -12,7 +12,7 @@ using DatabaseIOTest.Services;
 using Microsoft.Xna.Framework;
 #endif
 
-public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSerializable
+public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSerializable, IServerSerializable
 {
     [Editable, Serialize(DatabaseIOTest.Constants.DefaultDatabaseId, IsPropertySaveable.Yes, description: "Shared database id.")]
     public string DatabaseId { get; set; } = DatabaseIOTest.Constants.DefaultDatabaseId;
@@ -122,6 +122,16 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
         msg.WriteInt32(_pendingAmount);
         _pendingIdentifier = "";
         _pendingAmount = 0;
+    }
+
+    // This component is mainly client->server, but on dedicated servers the engine may still
+    // route a server->client component event. Provide a no-op payload to keep network parsing stable.
+    public void ServerEventWrite(IWriteMessage msg, Client c, NetEntityEvent.IData extraData = null)
+    {
+    }
+
+    public void ClientEventRead(IReadMessage msg, float sendingTime)
+    {
     }
 
     public void ServerEventRead(IReadMessage msg, Client c)
