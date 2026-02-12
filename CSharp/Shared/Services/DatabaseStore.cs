@@ -8,6 +8,13 @@ namespace DatabaseIOTest.Services
 {
     public static class DatabaseStore
     {
+        public enum TakePolicy
+        {
+            Fifo = 0,
+            HighestConditionFirst = 1,
+            LowestConditionFirst = 2
+        }
+
         private static readonly Dictionary<string, DatabaseData> _store = new Dictionary<string, DatabaseData>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, int> _activeTerminals = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, List<WeakReference<DatabaseTerminalComponent>>> _terminals =
@@ -232,6 +239,28 @@ namespace DatabaseIOTest.Services
                 out taken);
         }
 
+        public static bool TryTakeOneByIdentifierForAutomation(
+            string databaseId,
+            string identifier,
+            out ItemData taken,
+            TakePolicy policy = TakePolicy.HighestConditionFirst)
+        {
+            taken = null;
+            if (string.IsNullOrWhiteSpace(identifier)) { return false; }
+            string target = identifier.Trim();
+
+            bool ok = TryTakeItemsForAutomation(
+                databaseId,
+                data => data != null && string.Equals(data.Identifier, target, StringComparison.OrdinalIgnoreCase),
+                1,
+                out var items,
+                policy);
+
+            if (!ok || items.Count == 0) { return false; }
+            taken = items[0];
+            return true;
+        }
+
         public static bool TryTakeOneMatching(string databaseId, Func<ItemData, bool> predicate, out ItemData taken)
         {
             return TryTakeBestMatching(databaseId, predicate, out taken);
@@ -292,6 +321,98 @@ namespace DatabaseIOTest.Services
             return true;
         }
 
+        public static bool TryTakeItems(string databaseId, Func<ItemData, bool> predicate, int amount, out List<ItemData> taken)
+        {
+            taken = new List<ItemData>();
+            if (predicate == null) { return false; }
+            if (amount <= 0) { return true; }
+
+            string id = Normalize(databaseId);
+            var db = GetOrCreate(id);
+            if (db.Items == null || db.Items.Count == 0) { return false; }
+
+            int available = CountMatching(db.Items, predicate);
+            if (available < amount) { return false; }
+            int remaining = TakeMatchingFromList(db.Items, predicate, amount, taken);
+            if (remaining > 0) { return false; }
+
+            db.Version++;
+            SyncTerminals(id);
+            return true;
+        }
+
+        public static bool TryTakeItemsForAutomation(
+            string databaseId,
+            Func<ItemData, bool> predicate,
+            int amount,
+            out List<ItemData> taken,
+            TakePolicy policy = TakePolicy.Fifo)
+        {
+            taken = new List<ItemData>();
+            if (predicate == null) { return false; }
+            if (amount <= 0) { return true; }
+
+            string id = Normalize(databaseId);
+            var db = GetOrCreate(id);
+            int availableStore = CountMatching(db.Items, predicate);
+            int availableSession = 0;
+            if (TryGetActiveTerminal(id, out var activeTerminal))
+            {
+                availableSession = activeTerminal.CountTakeableForAutomation(predicate);
+            }
+
+            if (availableStore + availableSession < amount)
+            {
+                return false;
+            }
+
+            int remaining = amount;
+            bool storeChanged = false;
+            if (availableStore > 0)
+            {
+                int fromStore = Math.Min(availableStore, remaining);
+                remaining = TakeMatchingFromList(db.Items, predicate, fromStore, taken, policy);
+                storeChanged = fromStore > 0;
+            }
+
+            if (remaining > 0)
+            {
+                if (!TryGetActiveTerminal(id, out var activeTerminalNow) ||
+                    !activeTerminalNow.TryTakeItemsFromNonCurrentPagesForAutomation(predicate, remaining, policy, out var sessionTaken))
+                {
+                    if (taken.Count > 0)
+                    {
+                        var rollback = CloneItemList(db.Items);
+                        rollback.AddRange(CloneItemList(taken));
+                        db.Items = CompactItems(rollback);
+                    }
+                    return false;
+                }
+
+                taken.AddRange(sessionTaken);
+                remaining -= CountFlatItems(sessionTaken);
+            }
+
+            if (remaining > 0)
+            {
+                if (taken.Count > 0)
+                {
+                    var rollback = CloneItemList(db.Items);
+                    rollback.AddRange(CloneItemList(taken));
+                    db.Items = CompactItems(rollback);
+                }
+                return false;
+            }
+
+            if (storeChanged)
+            {
+                db.Version++;
+                SyncTerminals(id);
+            }
+
+            return true;
+        }
+
         public static List<string> GetIdentifierSnapshot(string databaseId, out int version)
         {
             string id = Normalize(databaseId);
@@ -311,6 +432,11 @@ namespace DatabaseIOTest.Services
             var list = set.ToList();
             list.Sort(StringComparer.OrdinalIgnoreCase);
             return list;
+        }
+
+        public static List<ItemData> CompactSnapshot(List<ItemData> items)
+        {
+            return CompactItems(CloneItemList(items ?? new List<ItemData>()));
         }
 
         private static DatabaseData GetOrCreate(string databaseId)
@@ -342,6 +468,16 @@ namespace DatabaseIOTest.Services
                     terminal.ApplyStoreSnapshot(data);
                 }
             }
+        }
+
+        private static bool TryGetActiveTerminal(string databaseId, out DatabaseTerminalComponent terminal)
+        {
+            terminal = null;
+            if (!_activeTerminals.TryGetValue(databaseId, out int terminalEntityId))
+            {
+                return false;
+            }
+            return TryGetTerminalByEntityId(databaseId, terminalEntityId, out terminal);
         }
 
         private static void CleanupDeadReferences(List<WeakReference<DatabaseTerminalComponent>> refsList)
@@ -447,39 +583,209 @@ namespace DatabaseIOTest.Services
             if (source == null) { return null; }
             var single = source.Clone();
             single.StackSize = 1;
-            single.StolenFlags = SliceBool(source.StolenFlags, 0);
-            single.OriginalOutposts = SliceString(source.OriginalOutposts, 0);
-            single.SlotIndices = SliceInt(source.SlotIndices, 0);
+            single.StolenFlags = SliceBool(source.StolenFlags, 0, 1, false);
+            single.OriginalOutposts = SliceString(source.OriginalOutposts, 0, 1, "");
+            single.SlotIndices = SliceInt(source.SlotIndices, 0, 1, -1);
 
             source.StackSize = Math.Max(0, source.StackSize - 1);
-            RemoveAtSafe(source.StolenFlags, 0);
-            RemoveAtSafe(source.OriginalOutposts, 0);
-            RemoveAtSafe(source.SlotIndices, 0);
+            RemoveRangeSafe(source.StolenFlags, 1);
+            RemoveRangeSafe(source.OriginalOutposts, 1);
+            RemoveRangeSafe(source.SlotIndices, 1);
 
             return single;
         }
 
-        private static List<bool> SliceBool(List<bool> source, int index)
+        private static ItemData ExtractStackPart(ItemData source, int count)
         {
-            var result = new List<bool>(1);
-            bool value = (source != null && index >= 0 && index < source.Count) ? source[index] : false;
-            result.Add(value);
+            if (source == null) { return null; }
+            int take = Math.Max(1, count);
+            var part = source.Clone();
+            part.StackSize = take;
+            part.StolenFlags = SliceBool(source.StolenFlags, 0, take, false);
+            part.OriginalOutposts = SliceString(source.OriginalOutposts, 0, take, "");
+            part.SlotIndices = SliceInt(source.SlotIndices, 0, take, -1);
+
+            source.StackSize = Math.Max(0, source.StackSize - take);
+            RemoveRangeSafe(source.StolenFlags, take);
+            RemoveRangeSafe(source.OriginalOutposts, take);
+            RemoveRangeSafe(source.SlotIndices, take);
+
+            return part;
+        }
+
+        private static int CountMatching(IEnumerable<ItemData> items, Func<ItemData, bool> predicate)
+        {
+            int count = 0;
+            if (items == null) { return 0; }
+            foreach (var item in items)
+            {
+                if (item == null) { continue; }
+                if (!predicate(item)) { continue; }
+                count += Math.Max(1, item.StackSize);
+            }
+            return count;
+        }
+
+        private static int TakeMatchingFromList(List<ItemData> items, Func<ItemData, bool> predicate, int amount, List<ItemData> taken)
+        {
+            return TakeMatchingFromList(items, predicate, amount, taken, TakePolicy.Fifo);
+        }
+
+        private static int TakeMatchingFromList(
+            List<ItemData> items,
+            Func<ItemData, bool> predicate,
+            int amount,
+            List<ItemData> taken,
+            TakePolicy policy)
+        {
+            int remaining = Math.Max(0, amount);
+            if (items == null || predicate == null || remaining <= 0)
+            {
+                return remaining;
+            }
+
+            while (remaining > 0)
+            {
+                int index = FindCandidateIndex(items, predicate, policy);
+                if (index < 0) { break; }
+
+                var entry = items[index];
+
+                if (entry.ContainedItems != null && entry.ContainedItems.Count > 0)
+                {
+                    taken?.Add(entry.Clone());
+                    items.RemoveAt(index);
+                    remaining--;
+                    continue;
+                }
+
+                int stackSize = Math.Max(1, entry.StackSize);
+                if (stackSize <= remaining)
+                {
+                    taken?.Add(entry.Clone());
+                    remaining -= stackSize;
+                    items.RemoveAt(index);
+                    continue;
+                }
+
+                var part = ExtractStackPart(entry, remaining);
+                if (part != null)
+                {
+                    taken?.Add(part);
+                }
+                remaining = 0;
+                if (entry.StackSize <= 0)
+                {
+                    items.RemoveAt(index);
+                }
+            }
+
+            return remaining;
+        }
+
+        private static int FindCandidateIndex(List<ItemData> items, Func<ItemData, bool> predicate, TakePolicy policy)
+        {
+            if (items == null || predicate == null || items.Count == 0) { return -1; }
+
+            if (policy == TakePolicy.Fifo)
+            {
+                for (int i = 0; i < items.Count; i++)
+                {
+                    var entry = items[i];
+                    if (entry == null) { continue; }
+                    if (!predicate(entry)) { continue; }
+                    return i;
+                }
+                return -1;
+            }
+
+            int bestIndex = -1;
+            float bestCondition = 0f;
+            int bestQuality = 0;
+            const float eps = 0.0001f;
+
+            for (int i = 0; i < items.Count; i++)
+            {
+                var entry = items[i];
+                if (entry == null) { continue; }
+                if (!predicate(entry)) { continue; }
+
+                if (bestIndex < 0)
+                {
+                    bestIndex = i;
+                    bestCondition = entry.Condition;
+                    bestQuality = entry.Quality;
+                    continue;
+                }
+
+                bool replace;
+                if (policy == TakePolicy.HighestConditionFirst)
+                {
+                    replace = entry.Condition > bestCondition + eps ||
+                              (Math.Abs(entry.Condition - bestCondition) <= eps && entry.Quality > bestQuality);
+                }
+                else
+                {
+                    replace = entry.Condition < bestCondition - eps ||
+                              (Math.Abs(entry.Condition - bestCondition) <= eps && entry.Quality < bestQuality);
+                }
+
+                if (replace)
+                {
+                    bestIndex = i;
+                    bestCondition = entry.Condition;
+                    bestQuality = entry.Quality;
+                }
+            }
+
+            return bestIndex;
+        }
+
+        private static int CountFlatItems(IEnumerable<ItemData> items)
+        {
+            int count = 0;
+            if (items == null) { return 0; }
+            foreach (var item in items)
+            {
+                if (item == null) { continue; }
+                count += Math.Max(1, item.StackSize);
+            }
+            return count;
+        }
+
+        private static List<bool> SliceBool(List<bool> source, int start, int count, bool fallback)
+        {
+            var result = new List<bool>(Math.Max(0, count));
+            for (int i = 0; i < count; i++)
+            {
+                int idx = start + i;
+                bool value = (source != null && idx >= 0 && idx < source.Count) ? source[idx] : fallback;
+                result.Add(value);
+            }
             return result;
         }
 
-        private static List<string> SliceString(List<string> source, int index)
+        private static List<string> SliceString(List<string> source, int start, int count, string fallback)
         {
-            var result = new List<string>(1);
-            string value = (source != null && index >= 0 && index < source.Count) ? (source[index] ?? "") : "";
-            result.Add(value);
+            var result = new List<string>(Math.Max(0, count));
+            for (int i = 0; i < count; i++)
+            {
+                int idx = start + i;
+                string value = (source != null && idx >= 0 && idx < source.Count) ? (source[idx] ?? fallback) : fallback;
+                result.Add(value);
+            }
             return result;
         }
 
-        private static List<int> SliceInt(List<int> source, int index)
+        private static List<int> SliceInt(List<int> source, int start, int count, int fallback)
         {
-            var result = new List<int>(1);
-            int value = (source != null && index >= 0 && index < source.Count) ? source[index] : -1;
-            result.Add(value);
+            var result = new List<int>(Math.Max(0, count));
+            for (int i = 0; i < count; i++)
+            {
+                int idx = start + i;
+                int value = (source != null && idx >= 0 && idx < source.Count) ? source[idx] : fallback;
+                result.Add(value);
+            }
             return result;
         }
 
@@ -488,6 +794,15 @@ namespace DatabaseIOTest.Services
             if (list == null) { return; }
             if (index < 0 || index >= list.Count) { return; }
             list.RemoveAt(index);
+        }
+
+        private static void RemoveRangeSafe<T>(List<T> list, int count)
+        {
+            if (list == null) { return; }
+            if (count <= 0) { return; }
+            int remove = Math.Min(count, list.Count);
+            if (remove <= 0) { return; }
+            list.RemoveRange(0, remove);
         }
 
         private static bool CanStack(ItemData item)

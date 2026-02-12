@@ -10,12 +10,16 @@ namespace DatabaseIOTest.Services
 {
     public static class SpawnService
     {
-        public static void SpawnItemsIntoInventory(List<ItemData> items, Inventory targetInventory, Character actor = null)
+        public static void SpawnItemsIntoInventory(
+            List<ItemData> items,
+            Inventory targetInventory,
+            Character actor = null,
+            Func<bool> guard = null)
         {
             if (items == null || targetInventory == null) { return; }
             foreach (var itemData in items)
             {
-                SpawnItemData(itemData, targetInventory, actor, stackIndex: 0);
+                SpawnItemData(itemData, targetInventory, actor, stackIndex: 0, guard: guard);
             }
         }
 
@@ -45,7 +49,12 @@ namespace DatabaseIOTest.Services
             }
         }
 
-        private static void SpawnItemData(ItemData itemData, Inventory targetInventory, Character actor, int stackIndex)
+        private static void SpawnItemData(
+            ItemData itemData,
+            Inventory targetInventory,
+            Character actor,
+            int stackIndex,
+            Func<bool> guard)
         {
             if (itemData == null || targetInventory == null) { return; }
             var prefab = ItemPrefab.FindByIdentifier(itemData.Identifier.ToIdentifier()) as ItemPrefab;
@@ -58,26 +67,37 @@ namespace DatabaseIOTest.Services
             for (int i = 0; i < Math.Max(itemData.StackSize, 1); i++)
             {
                 int index = i;
-                SpawnSingle(prefab, itemData, targetInventory, actor, index);
+                SpawnSingle(prefab, itemData, targetInventory, actor, index, guard);
             }
         }
 
-        private static void SpawnSingle(ItemPrefab prefab, ItemData itemData, Inventory targetInventory, Character actor, int stackIndex)
+        private static void SpawnSingle(
+            ItemPrefab prefab,
+            ItemData itemData,
+            Inventory targetInventory,
+            Character actor,
+            int stackIndex,
+            Func<bool> guard)
         {
             var (spawnPos, submarine) = ResolveSpawnPoint(targetInventory, actor);
             Entity.Spawner?.AddItemToSpawnQueue(prefab, spawnPos, submarine, quality: itemData.Quality, onSpawned: item =>
             {
                 if (item == null || item.Removed) { return; }
+                if (guard != null && !guard())
+                {
+                    RemoveItem(item);
+                    return;
+                }
 
                 item.Condition = itemData.Condition;
                 RestoreStolenState(item, itemData, stackIndex);
 
                 TryPutItemPreserveSlot(itemData, stackIndex, item, targetInventory, actor);
-                SpawnContained(itemData, item, actor);
+                SpawnContained(itemData, item, actor, guard);
             });
         }
 
-        private static void SpawnContained(ItemData itemData, Item parent, Character actor)
+        private static void SpawnContained(ItemData itemData, Item parent, Character actor, Func<bool> guard)
         {
             if (itemData?.ContainedItems == null || itemData.ContainedItems.Count == 0) { return; }
 
@@ -87,7 +107,7 @@ namespace DatabaseIOTest.Services
             foreach (var child in itemData.ContainedItems)
             {
                 var childTarget = containers[0].Inventory;
-                SpawnItemData(child, childTarget, actor, 0);
+                SpawnItemData(child, childTarget, actor, 0, guard);
             }
         }
 

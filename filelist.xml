@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <contentpackage name="Database IO Test" modversion="0.1.0" corepackage="False">
   <Item file="%ModDir%/XML/Items.xml" />
+  <Item file="%ModDir%/XML/FabricatorOverrides.xml" />
   <Text file="%ModDir%/XML/Text/English.xml" />
   <Text file="%ModDir%/XML/Text/SimplifiedChinese.xml" />
 </contentpackage>

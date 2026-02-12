@@ -279,3 +279,231 @@
 2026-02-12 16:31:32.081 [SP] [FixedTerminal] [Database IO Test] open rejected: already session id=1122
 2026-02-12 16:31:32.082 [SP] [Panel] [Database IO Test] XML action consumed: OpenSession applied=False db='default' page=2/2 itemId=1122
 2026-02-12 16:31:32.348 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1122
+2026-02-12 17:50:24.309 [SP] [FixedTerminal] [Database IO Test] open rejected: no power id=1122 voltage=0
+2026-02-12 17:50:24.311 [SP] [Panel] [Database IO Test] XML action consumed: OpenSession applied=False db='default' page=1/1 itemId=1122
+2026-02-12 17:50:25.369 [SP] [FixedTerminal] [Database IO Test] open rejected: no power id=1122 voltage=0
+2026-02-12 17:50:25.370 [SP] [Panel] [Database IO Test] XML action consumed: OpenSession applied=False db='default' page=1/1 itemId=1122
+2026-02-12 17:51:02.438 [SP] [FixedTerminal] [Database IO Test] open request id=1122 actor=none db='default'
+2026-02-12 17:51:02.452 [SP] [Panel] [Database IO Test] XML action consumed: OpenSession applied=True db='default' page=1/3 itemId=1122
+2026-02-12 17:51:11.238 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/3 itemId=1122
+2026-02-12 17:51:18.172 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=3/3 itemId=1122
+2026-02-12 17:51:21.369 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=2/3 itemId=1122
+2026-02-12 17:51:33.103 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=3/3 itemId=1122
+2026-02-12 17:51:39.505 [SP] [Panel] [Database IO Test] XML action consumed: CloseSession applied=True db='default' page=1/1 itemId=1122
+2026-02-12 17:51:40.573 [SP] [FixedTerminal] [Database IO Test] open request id=1122 actor=none db='default'
+2026-02-12 17:51:40.573 [SP] [Panel] [Database IO Test] XML action consumed: OpenSession applied=True db='default' page=1/3 itemId=1122
+2026-02-12 17:51:42.973 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/3 itemId=1122
+2026-02-12 17:51:44.039 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=3/3 itemId=1122
+2026-02-12 17:51:45.369 [SP] [Panel] [Database IO Test] XML action consumed: CloseSession applied=True db='default' page=1/1 itemId=1122
+2026-02-12 17:54:40.703 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1125
+2026-02-12 17:54:42.302 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1125
+2026-02-12 17:54:42.836 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1125
+2026-02-12 17:54:43.373 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1125
+2026-02-12 17:54:43.905 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1125
+2026-02-12 17:54:44.172 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1125
+2026-02-12 17:54:46.037 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=1/2 itemId=1125
+2026-02-12 17:54:47.103 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1125
+2026-02-12 17:54:49.771 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=1/2 itemId=1125
+2026-02-12 17:54:50.572 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1125
+2026-02-12 17:54:59.104 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=1/2 itemId=1125
+2026-02-12 17:55:04.704 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1125
+2026-02-12 17:55:06.037 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=1/2 itemId=1125
+2026-02-12 17:55:11.105 [SP] [Panel] [Database IO Test] XML action consumed: CloseSession applied=True db='default' page=1/2 itemId=1125
+2026-02-12 18:01:34.269 [SP] [FixedTerminal] [Database IO Test] open rejected: no power id=1122 voltage=0
+2026-02-12 18:01:34.271 [SP] [Panel] [Database IO Test] XML action consumed: OpenSession applied=False db='default' page=1/1 itemId=1122
+2026-02-12 18:01:57.463 [SP] [FixedTerminal] [Database IO Test] open request id=1122 actor=none db='default'
+2026-02-12 18:01:57.472 [SP] [Panel] [Database IO Test] XML action consumed: OpenSession applied=True db='default' page=1/3 itemId=1122
+2026-02-12 18:02:00.935 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/3 itemId=1122
+2026-02-12 18:02:02.799 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=3/3 itemId=1122
+2026-02-12 18:02:04.945 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=2/3 itemId=1122
+2026-02-12 18:03:14.285 [SP] [Terminal] [Database IO Test] force takeover requested db='default' by terminal=1625 actor=Ara Meisner
+2026-02-12 18:03:21.013 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/3 itemId=1125
+2026-02-12 18:03:30.614 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=3/3 itemId=1125
+2026-02-12 18:03:34.884 [SP] [Panel] [Database IO Test] XML action consumed: CloseSession applied=True db='default' page=3/3 itemId=1125
+2026-02-12 18:05:11.985 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1126
+2026-02-12 18:05:13.049 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1126
+2026-02-12 18:05:13.581 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1126
+2026-02-12 18:57:09.456 [SP] [FixedTerminal] [Database IO Test] open request id=1122 actor=none db='default'
+2026-02-12 18:57:09.467 [SP] [Panel] [Database IO Test] XML action consumed: OpenSession applied=True db='default' page=1/3 itemId=1122
+2026-02-12 18:57:11.322 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/3 itemId=1122
+2026-02-12 18:57:13.187 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=3/3 itemId=1122
+2026-02-12 18:57:15.851 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=2/3 itemId=1122
+2026-02-12 19:00:42.034 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1189
+2026-02-12 19:00:43.890 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1189
+2026-02-12 19:00:44.693 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1189
+2026-02-12 19:00:45.492 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=1/2 itemId=1189
+2026-02-12 19:00:47.893 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1189
+2026-02-12 19:00:49.228 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=1/2 itemId=1189
+2026-02-12 19:00:50.026 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1189
+2026-02-12 19:00:51.093 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=1/2 itemId=1189
+2026-02-12 19:00:51.891 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1189
+2026-02-12 19:00:52.692 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=1/2 itemId=1189
+2026-02-12 19:00:53.496 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1189
+2026-02-12 19:00:54.292 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=1/2 itemId=1189
+2026-02-12 19:00:55.092 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1189
+2026-02-12 19:00:58.743 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1189
+2026-02-12 19:00:59.743 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1189
+2026-02-12 19:01:00.243 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=1/2 itemId=1189
+2026-02-12 19:01:13.240 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=False db='default' page=1/2 itemId=1189
+2026-02-12 19:12:22.589 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/3 itemId=1125
+2026-02-12 19:12:24.187 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=3/3 itemId=1125
+2026-02-12 19:16:19.354 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/3 itemId=1086
+2026-02-12 19:16:20.687 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=3/3 itemId=1086
+2026-02-12 19:16:26.821 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=3/3 itemId=1086
+2026-02-12 19:16:27.085 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=2/3 itemId=1086
+2026-02-12 19:16:27.351 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=False db='default' page=2/3 itemId=1086
+2026-02-12 19:16:28.154 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=1/3 itemId=1086
+2026-02-12 19:16:30.286 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=False db='default' page=1/3 itemId=1086
+2026-02-12 19:16:30.821 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/3 itemId=1086
+2026-02-12 19:16:32.419 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=3/3 itemId=1086
+2026-02-12 19:16:51.353 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1643
+2026-02-12 19:16:52.151 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1643
+2026-02-12 19:16:52.952 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1643
+2026-02-12 19:16:53.219 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1643
+2026-02-12 19:16:53.754 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1643
+2026-02-12 19:17:20.485 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/3 itemId=1028
+2026-02-12 19:17:21.020 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=3/3 itemId=1028
+2026-02-12 19:17:32.750 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=2/3 itemId=1028
+2026-02-12 19:17:36.217 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=3/3 itemId=1028
+2026-02-12 19:17:42.619 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=2/3 itemId=1028
+2026-02-12 19:17:43.417 [SP] [Panel] [Database IO Test] XML action consumed: CloseSession applied=True db='default' page=2/3 itemId=1028
+2026-02-12 20:32:19.049 [SP] [Fabricator] [Database IO Test] order begin target='wrench' amount=1 db='default' user='Kip Santillan'
+2026-02-12 20:32:19.052 [SP] [Fabricator] [Database IO Test] order req#1 target='wrench' need=2 perCraft=2 ids=[iron] useCondition=True min=1 max=1
+2026-02-12 20:32:19.053 [SP] [Fabricator] [Database IO Test] order fail target='wrench' amount=1 failedReq#1 need=2 ids=[iron]
+2026-02-12 20:41:58.377 [SP] [Fabricator] [Database IO Test] order begin target='wrench' amount=1 db='default' user='Chuck Sparks'
+2026-02-12 20:41:58.381 [SP] [Fabricator] [Database IO Test] order req#1 target='wrench' need=2 perCraft=2 ids=[iron] useCondition=True min=1 max=1
+2026-02-12 20:41:58.386 [SP] [Fabricator] [Database IO Test] order success target='wrench' amount=1 consumed=2 entries=1
+2026-02-12 20:42:03.473 [SP] [Fabricator] [Database IO Test] order begin target='wrench' amount=1 db='default' user='Chuck Sparks'
+2026-02-12 20:42:03.474 [SP] [Fabricator] [Database IO Test] order req#1 target='wrench' need=2 perCraft=2 ids=[iron] useCondition=True min=1 max=1
+2026-02-12 20:42:03.474 [SP] [Fabricator] [Database IO Test] order fail target='wrench' amount=1 failedReq#1 need=2 ids=[iron]
+2026-02-12 21:05:52.394 [SP] [Panel] [Database IO Test] XML action consumed: NextMatch applied=False db='default' page=1/2 itemId=1647
+2026-02-12 21:05:53.436 [SP] [Panel] [Database IO Test] XML action consumed: PrevMatch applied=False db='default' page=1/2 itemId=1647
+2026-02-12 21:05:54.501 [SP] [Panel] [Database IO Test] XML action consumed: NextMatch applied=False db='default' page=1/2 itemId=1647
+2026-02-12 21:05:56.634 [SP] [Panel] [Database IO Test] XML action consumed: PrevMatch applied=False db='default' page=1/2 itemId=1647
+2026-02-12 21:05:59.833 [SP] [Panel] [Database IO Test] XML action consumed: PrevMatch applied=False db='default' page=1/2 itemId=1647
+2026-02-12 21:06:00.367 [SP] [Panel] [Database IO Test] XML action consumed: NextMatch applied=False db='default' page=1/2 itemId=1647
+2026-02-12 21:06:05.169 [SP] [Panel] [Database IO Test] XML action consumed: CycleSortMode applied=True db='default' page=1/1 itemId=1647
+2026-02-12 21:06:06.235 [SP] [Panel] [Database IO Test] XML action consumed: CycleSortMode applied=True db='default' page=1/1 itemId=1647
+2026-02-12 21:06:07.034 [SP] [Panel] [Database IO Test] XML action consumed: CycleSortMode applied=True db='default' page=1/1 itemId=1647
+2026-02-12 21:06:11.301 [SP] [Panel] [Database IO Test] XML action consumed: ToggleSortOrder applied=True db='default' page=1/1 itemId=1647
+2026-02-12 21:06:12.102 [SP] [Panel] [Database IO Test] XML action consumed: ToggleSortOrder applied=True db='default' page=1/1 itemId=1647
+2026-02-12 21:06:14.501 [SP] [Panel] [Database IO Test] XML action consumed: CompactItems applied=True db='default' page=1/1 itemId=1647
+2026-02-12 21:06:15.304 [SP] [Panel] [Database IO Test] XML action consumed: CompactItems applied=True db='default' page=1/1 itemId=1647
+2026-02-12 21:06:16.369 [SP] [Panel] [Database IO Test] XML action consumed: CompactItems applied=True db='default' page=1/1 itemId=1647
+2026-02-12 21:06:20.906 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=1/1 itemId=1647
+2026-02-12 21:06:21.702 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=1/1 itemId=1647
+2026-02-12 21:06:22.239 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=1/1 itemId=1647
+2026-02-12 21:06:22.507 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=1/1 itemId=1647
+2026-02-12 21:06:24.639 [SP] [Panel] [Database IO Test] XML action consumed: NextMatch applied=False db='default' page=1/1 itemId=1647
+2026-02-12 21:06:25.435 [SP] [Panel] [Database IO Test] XML action consumed: CloseSession applied=True db='default' page=1/1 itemId=1647
+2026-02-12 21:10:05.775 [SP] [FixedTerminal] [Database IO Test] force request id=1122 actor=none db='default'
+2026-02-12 21:10:05.787 [SP] [Panel] [Database IO Test] XML action consumed: ForceOpenSession applied=True db='default' page=1/2 itemId=1122
+2026-02-12 21:10:11.638 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=False db='default' page=1/2 itemId=1122
+2026-02-12 21:10:12.702 [SP] [FixedTerminal] [Database IO Test] force rejected: already session id=1122
+2026-02-12 21:10:12.703 [SP] [Panel] [Database IO Test] XML action consumed: ForceOpenSession applied=False db='default' page=1/2 itemId=1122
+2026-02-12 21:10:13.504 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=False db='default' page=1/2 itemId=1122
+2026-02-12 21:10:14.042 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1122
+2026-02-12 21:10:15.369 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1122
+2026-02-12 21:10:16.438 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1122
+2026-02-12 21:10:17.236 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1122
+2026-02-12 21:10:22.038 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1122
+2026-02-12 21:11:01.158 [SP] [Terminal] [Database IO Test] force takeover requested db='default' by terminal=1673 actor=Reed Moses
+2026-02-12 21:11:01.437 [SP] [Panel] [Database IO Test] XML action consumed: CycleSortMode applied=False db='default' page=1/2 itemId=1642
+2026-02-12 21:11:10.419 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1642
+2026-02-12 21:11:13.621 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=1/2 itemId=1642
+2026-02-12 21:11:17.890 [SP] [Panel] [Database IO Test] XML action consumed: PrevMatch applied=False db='default' page=1/2 itemId=1642
+2026-02-12 21:11:18.689 [SP] [Panel] [Database IO Test] XML action consumed: NextMatch applied=False db='default' page=1/2 itemId=1642
+2026-02-12 21:11:26.157 [SP] [Panel] [Database IO Test] XML action consumed: PrevMatch applied=True db='default' page=2/2 itemId=1642
+2026-02-12 21:11:26.953 [SP] [Panel] [Database IO Test] XML action consumed: NextMatch applied=True db='default' page=2/2 itemId=1642
+2026-02-12 21:12:02.471 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=1/2 itemId=1642
+2026-02-12 21:12:03.537 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1642
+2026-02-12 21:12:04.070 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1642
+2026-02-12 21:12:04.605 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=1/2 itemId=1642
+2026-02-12 21:12:05.136 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1642
+2026-02-12 21:12:06.471 [SP] [Panel] [Database IO Test] XML action consumed: CloseSession applied=True db='default' page=2/2 itemId=1642
+2026-02-12 21:12:08.752 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=1/1 itemId=1642
+2026-02-12 21:12:09.289 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=1/1 itemId=1642
+2026-02-12 21:16:48.546 [SP] [Fabricator] [Database IO Test] order begin target='it_medicallens' amount=1 db='default' user='Amee Wheeling'
+2026-02-12 21:16:48.549 [SP] [Fabricator] [Database IO Test] order req#1 target='it_medicallens' need=1 perCraft=1 ids=[plastic] useCondition=True min=1 max=1
+2026-02-12 21:16:48.550 [SP] [Fabricator] [Database IO Test] order fail target='it_medicallens' amount=1 failedReq#1 need=1 ids=[plastic]
+2026-02-12 21:16:55.437 [SP] [Fabricator] [Database IO Test] order begin target='it_eyedrop' amount=1 db='default' user='Amee Wheeling'
+2026-02-12 21:16:55.438 [SP] [Fabricator] [Database IO Test] order req#1 target='it_eyedrop' need=1 perCraft=1 ids=[pomegrenadeextract] useCondition=True min=1 max=1
+2026-02-12 21:16:55.439 [SP] [Fabricator] [Database IO Test] order fail target='it_eyedrop' amount=1 failedReq#1 need=1 ids=[pomegrenadeextract]
+2026-02-12 21:17:48.955 [SP] [Fabricator] [Database IO Test] order begin target='scp_vodka' amount=1 db='default' user='Amee Wheeling'
+2026-02-12 21:17:48.956 [SP] [Fabricator] [Database IO Test] order req#1 target='scp_vodka' need=3 perCraft=3 ids=[ethanol] useCondition=True min=1 max=1
+2026-02-12 21:17:48.958 [SP] [Fabricator] [Database IO Test] order req#2 target='scp_vodka' need=2 perCraft=2 ids=[plastic] useCondition=True min=1 max=1
+2026-02-12 21:17:48.961 [SP] [Fabricator] [Database IO Test] order success target='scp_vodka' amount=1 consumed=5 entries=2
+2026-02-12 21:18:13.953 [SP] [Fabricator] [Database IO Test] order begin target='hyperzine' amount=1 db='default' user='Amee Wheeling'
+2026-02-12 21:18:13.953 [SP] [Fabricator] [Database IO Test] order req#1 target='hyperzine' need=1 perCraft=1 ids=[meth] useCondition=True min=1 max=1
+2026-02-12 21:18:13.953 [SP] [Fabricator] [Database IO Test] order fail target='hyperzine' amount=1 failedReq#1 need=1 ids=[meth]
+2026-02-12 21:18:15.937 [SP] [Fabricator] [Database IO Test] order begin target='hyperzine' amount=1 db='default' user='Amee Wheeling'
+2026-02-12 21:18:15.938 [SP] [Fabricator] [Database IO Test] order req#1 target='hyperzine' need=1 perCraft=1 ids=[meth] useCondition=True min=1 max=1
+2026-02-12 21:18:15.938 [SP] [Fabricator] [Database IO Test] order req#2 target='hyperzine' need=1 perCraft=1 ids=[steroids] useCondition=True min=1 max=1
+2026-02-12 21:18:15.939 [SP] [Fabricator] [Database IO Test] order fail target='hyperzine' amount=1 failedReq#2 need=1 ids=[steroids]
+2026-02-12 21:18:18.202 [SP] [Fabricator] [Database IO Test] order begin target='hyperzine' amount=1 db='default' user='Amee Wheeling'
+2026-02-12 21:18:18.203 [SP] [Fabricator] [Database IO Test] order req#1 target='hyperzine' need=1 perCraft=1 ids=[meth] useCondition=True min=1 max=1
+2026-02-12 21:18:18.203 [SP] [Fabricator] [Database IO Test] order req#2 target='hyperzine' need=1 perCraft=1 ids=[steroids] useCondition=True min=1 max=1
+2026-02-12 21:18:18.204 [SP] [Fabricator] [Database IO Test] order success target='hyperzine' amount=1 consumed=2 entries=2
+2026-02-12 21:24:12.237 [SP] [FixedTerminal] [Database IO Test] open rejected: no power id=1122 voltage=0
+2026-02-12 21:24:12.239 [SP] [Panel] [Database IO Test] XML action consumed: OpenSession applied=False db='default' page=1/1 itemId=1122
+2026-02-12 21:24:13.299 [SP] [FixedTerminal] [Database IO Test] open rejected: no power id=1122 voltage=0
+2026-02-12 21:24:13.300 [SP] [Panel] [Database IO Test] XML action consumed: OpenSession applied=False db='default' page=1/1 itemId=1122
+2026-02-12 21:24:13.564 [SP] [FixedTerminal] [Database IO Test] open rejected: no power id=1122 voltage=0.08
+2026-02-12 21:24:13.565 [SP] [Panel] [Database IO Test] XML action consumed: OpenSession applied=False db='default' page=1/1 itemId=1122
+2026-02-12 21:24:18.684 [SP] [FixedTerminal] [Database IO Test] open request id=1122 actor=none db='default'
+2026-02-12 21:24:18.695 [SP] [Panel] [Database IO Test] XML action consumed: OpenSession applied=True db='default' page=1/2 itemId=1122
+2026-02-12 21:24:20.549 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=False db='default' page=1/2 itemId=1122
+2026-02-12 21:24:21.889 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1122
+2026-02-12 21:24:22.416 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1122
+2026-02-12 21:24:23.749 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1122
+2026-02-12 21:24:24.821 [SP] [Panel] [Database IO Test] XML action consumed: CloseSession applied=True db='default' page=1/1 itemId=1122
+2026-02-12 21:24:44.537 [SP] [Panel] [Database IO Test] XML action consumed: NextMatch applied=True db='default' page=2/2 itemId=1637
+2026-02-12 21:24:53.283 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1637
+2026-02-12 21:24:54.286 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:24:55.534 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1637
+2026-02-12 21:24:56.533 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:24:57.033 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=1/2 itemId=1637
+2026-02-12 21:24:57.784 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1637
+2026-02-12 21:24:58.532 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=False db='default' page=2/2 itemId=1637
+2026-02-12 21:25:00.284 [SP] [Panel] [Database IO Test] XML action consumed: CycleSortMode applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:25:02.036 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1637
+2026-02-12 21:25:03.281 [SP] [Panel] [Database IO Test] XML action consumed: CycleSortMode applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:25:05.032 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=False db='default' page=1/2 itemId=1637
+2026-02-12 21:25:06.037 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1637
+2026-02-12 21:25:07.535 [SP] [Panel] [Database IO Test] XML action consumed: ToggleSortOrder applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:25:09.031 [SP] [Panel] [Database IO Test] XML action consumed: ToggleSortOrder applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:25:10.281 [SP] [Panel] [Database IO Test] XML action consumed: ToggleSortOrder applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:25:11.282 [SP] [Panel] [Database IO Test] XML action consumed: ToggleSortOrder applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:25:12.286 [SP] [Panel] [Database IO Test] XML action consumed: ToggleSortOrder applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:25:13.034 [SP] [Panel] [Database IO Test] XML action consumed: ToggleSortOrder applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:25:13.782 [SP] [Panel] [Database IO Test] XML action consumed: CompactItems applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:25:14.535 [SP] [Panel] [Database IO Test] XML action consumed: CompactItems applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:25:15.532 [SP] [Panel] [Database IO Test] XML action consumed: CompactItems applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:25:17.031 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1637
+2026-02-12 21:25:18.031 [SP] [Panel] [Database IO Test] XML action consumed: CompactItems applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:25:19.533 [SP] [Panel] [Database IO Test] XML action consumed: CompactItems applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:25:42.333 [SP] [Panel] [Database IO Test] XML action consumed: NextMatch applied=False db='default' page=1/2 itemId=1637
+2026-02-12 21:25:43.065 [SP] [Panel] [Database IO Test] XML action consumed: NextMatch applied=False db='default' page=1/2 itemId=1637
+2026-02-12 21:25:44.326 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1637
+2026-02-12 21:26:29.584 [SP] [Panel] [Database IO Test] XML action consumed: CycleSortMode applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:26:31.983 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1637
+2026-02-12 21:26:34.381 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:26:35.717 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1637
+2026-02-12 21:26:57.149 [SP] [Panel] [Database IO Test] XML action consumed: CompactItems applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:26:59.548 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1637
+2026-02-12 21:27:01.148 [SP] [Panel] [Database IO Test] XML action consumed: CompactItems applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:27:02.482 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1637
+2026-02-12 21:27:05.415 [SP] [Panel] [Database IO Test] XML action consumed: CloseSession applied=True db='default' page=2/2 itemId=1637
+2026-02-12 21:27:15.070 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1637
+2026-02-12 21:27:16.934 [SP] [Panel] [Database IO Test] XML action consumed: CompactItems applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:27:18.798 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1637
+2026-02-12 21:27:21.666 [SP] [Panel] [Database IO Test] XML action consumed: CompactItems applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:27:24.066 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1637
+2026-02-12 21:27:27.001 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:27:31.531 [SP] [Panel] [Database IO Test] XML action consumed: CompactItems applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:27:33.401 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1637
+2026-02-12 21:27:36.600 [SP] [Panel] [Database IO Test] XML action consumed: PrevPage applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:27:37.667 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1637
+2026-02-12 21:27:38.735 [SP] [Panel] [Database IO Test] XML action consumed: CycleSortMode applied=True db='default' page=1/2 itemId=1637
+2026-02-12 21:27:40.331 [SP] [Panel] [Database IO Test] XML action consumed: NextPage applied=True db='default' page=2/2 itemId=1637
+2026-02-12 21:29:32.065 [SP] [Panel] [Database IO Test] XML action consumed: CycleSortMode applied=True db='default' page=1/2 itemId=1637

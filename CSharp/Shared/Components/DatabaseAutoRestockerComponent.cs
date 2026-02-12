@@ -353,7 +353,8 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
                 if (IsSlotLocked(slotKey, now)) { continue; }
 
                 var current = inventory.GetItemAt(slot);
-                bool needsSupply = current == null || current.Condition <= LowConditionThreshold;
+                bool shouldEjectCurrent = false;
+                bool needsSupply = EvaluateSlotNeedsSupply(current, out shouldEjectCurrent);
                 UpdateEmptyTick(slotKey, needsSupply);
                 if (!needsSupply) { continue; }
                 if (_slotEmptyTicks.TryGetValue(slotKey, out int ticks) && ticks < Math.Max(1, EmptyTicksRequired))
@@ -361,7 +362,11 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
                     continue;
                 }
 
-                if (!DatabaseStore.TryTakeOneByIdentifier(_resolvedDatabaseId, supplyIdentifier, out var supplyData))
+                if (!DatabaseStore.TryTakeOneByIdentifierForAutomation(
+                        _resolvedDatabaseId,
+                        supplyIdentifier,
+                        out var supplyData,
+                        DatabaseStore.TakePolicy.HighestConditionFirst))
                 {
                     continue;
                 }
@@ -369,10 +374,9 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
                 _slotEmptyTicks[slotKey] = 0;
                 LockSlot(slotKey, now + Math.Max(0.05f, SupplyCooldown));
 
-                if (current != null && current.Condition <= LowConditionThreshold)
+                if (current != null && shouldEjectCurrent)
                 {
-                    inventory.RemoveItem(current);
-                    current.Drop(null);
+                    EjectItemFromSlot(current, inventory);
                 }
 
                 SpawnSupplyToSlot(supplyData, inventory, slot);
@@ -513,6 +517,40 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
     private static void LockSlot(ulong slotKey, double until)
     {
         SlotLockUntil[slotKey] = until;
+    }
+
+    private bool EvaluateSlotNeedsSupply(Item current, out bool shouldEjectCurrent)
+    {
+        shouldEjectCurrent = false;
+        if (current == null || current.Removed)
+        {
+            return true;
+        }
+
+        bool lowCondition = current.Condition <= LowConditionThreshold;
+        if (lowCondition)
+        {
+            shouldEjectCurrent = true;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static void EjectItemFromSlot(Item current, Inventory expectedInventory)
+    {
+        if (current == null || current.Removed) { return; }
+
+        if (expectedInventory != null && current.ParentInventory == expectedInventory)
+        {
+            expectedInventory.RemoveItem(current);
+        }
+        else
+        {
+            current.ParentInventory?.RemoveItem(current);
+        }
+
+        current.Drop(null);
     }
 
     private void UpdateDescription()

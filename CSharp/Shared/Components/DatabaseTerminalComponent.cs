@@ -20,7 +20,20 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         NextPage = 2,
         CloseSession = 3,
         OpenSession = 4,
-        ForceOpenSession = 5
+        ForceOpenSession = 5,
+        PrevMatch = 6,
+        NextMatch = 7,
+        CycleSortMode = 8,
+        ToggleSortOrder = 9,
+        CompactItems = 10
+    }
+
+    private enum TerminalSortMode : int
+    {
+        Identifier = 0,
+        Condition = 1,
+        Quality = 2,
+        StackSize = 3
     }
 
     private readonly struct SummaryEventData : IEventData
@@ -85,8 +98,17 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     [Serialize(0, IsPropertySaveable.Yes, description: "Persisted database version.")]
     public int DatabaseVersion { get; set; } = 0;
 
-    [Serialize(0, IsPropertySaveable.No, description: "XML button action request (1=Prev,2=Next,3=Close,4=Open,5=ForceOpen).")]
+    [Serialize(0, IsPropertySaveable.No, description: "XML button action request (1=Prev,2=Next,3=Close,4=Open,5=ForceOpen,6=PrevMatch,7=NextMatch,8=SortMode,9=SortOrder,10=Compact).")]
     public int XmlActionRequest { get; set; } = 0;
+
+    [Editable, Serialize("", IsPropertySaveable.Yes, description: "Search keyword for page jump by identifier.")]
+    public string SearchKeyword { get; set; } = "";
+
+    [Editable, Serialize(0, IsPropertySaveable.Yes, description: "Sort mode (0=Identifier,1=Condition,2=Quality,3=StackSize).")]
+    public int SortModeIndex { get; set; } = 0;
+
+    [Editable, Serialize(false, IsPropertySaveable.Yes, description: "Sort descending when true.")]
+    public bool SortDescending { get; set; } = false;
 
     private string _resolvedDatabaseId = Constants.DefaultDatabaseId;
     private Character _sessionOwner;
@@ -99,10 +121,13 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private bool _inPlaceSessionActive;
     private int _pendingTakeoverRequesterId = -1;
     private double _pendingTakeoverUntil;
+    private double _currentPageLoadedAt;
 
     private readonly List<List<ItemData>> _sessionPages = new List<List<ItemData>>();
     private int _sessionCurrentPageIndex = -1;
     private int _sessionTotalEntryCount;
+    private int _pageLoadGeneration;
+    private int _sessionAutomationConsumedCount;
 
     private int _cachedItemCount;
     private bool _cachedLocked;
@@ -126,6 +151,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private const double MinSessionDurationBeforeClose = 0.9;
     private const double PanelActionCooldownSeconds = 0.4;
     private const double TakeoverConfirmWindowSeconds = 4.0;
+    private const double PageActionSafetySeconds = 0.55;
 
 #if CLIENT
     private GUIFrame _panelFrame;
@@ -361,6 +387,178 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         TrySyncSummary();
     }
 
+    public int CountTakeableForAutomation(Func<ItemData, bool> predicate)
+    {
+        if (!IsServerAuthority || predicate == null || !IsSessionActive())
+        {
+            return 0;
+        }
+
+        int count = 0;
+        for (int pageIndex = 0; pageIndex < _sessionPages.Count; pageIndex++)
+        {
+            if (pageIndex == _sessionCurrentPageIndex) { continue; }
+            var page = _sessionPages[pageIndex];
+            if (page == null) { continue; }
+            foreach (var entry in page)
+            {
+                if (entry == null || !predicate(entry)) { continue; }
+                count += Math.Max(1, entry.StackSize);
+            }
+        }
+
+        return count;
+    }
+
+    public bool TryTakeItemsFromNonCurrentPagesForAutomation(
+        Func<ItemData, bool> predicate,
+        int amount,
+        DatabaseStore.TakePolicy policy,
+        out List<ItemData> taken)
+    {
+        taken = new List<ItemData>();
+        if (!IsServerAuthority || predicate == null || amount <= 0 || !IsSessionActive())
+        {
+            return false;
+        }
+
+        if (CountTakeableForAutomation(predicate) < amount)
+        {
+            return false;
+        }
+
+        int remaining = amount;
+        while (remaining > 0)
+        {
+            if (!TryFindAutomationCandidate(predicate, policy, out int pageIndex, out int entryIndex))
+            {
+                break;
+            }
+
+            var page = _sessionPages[pageIndex];
+            var entry = page[entryIndex];
+
+            if (entry.ContainedItems != null && entry.ContainedItems.Count > 0)
+            {
+                taken.Add(entry.Clone());
+                page.RemoveAt(entryIndex);
+                remaining--;
+                continue;
+            }
+
+            int stackSize = Math.Max(1, entry.StackSize);
+            if (stackSize <= remaining)
+            {
+                taken.Add(entry.Clone());
+                remaining -= stackSize;
+                page.RemoveAt(entryIndex);
+                continue;
+            }
+
+            var part = ExtractStackPart(entry, remaining);
+            if (part != null)
+            {
+                taken.Add(part);
+            }
+            remaining = 0;
+
+            if (entry.StackSize <= 0)
+            {
+                page.RemoveAt(entryIndex);
+            }
+        }
+
+        if (remaining > 0)
+        {
+            return false;
+        }
+
+        _sessionAutomationConsumedCount += CountFlatItems(taken);
+        UpdateSummaryFromStore();
+        UpdateDescriptionLocal();
+        TrySyncSummary(force: true);
+        return true;
+    }
+
+    private bool TryFindAutomationCandidate(
+        Func<ItemData, bool> predicate,
+        DatabaseStore.TakePolicy policy,
+        out int pageIndex,
+        out int entryIndex)
+    {
+        pageIndex = -1;
+        entryIndex = -1;
+        if (predicate == null) { return false; }
+
+        if (policy == DatabaseStore.TakePolicy.Fifo)
+        {
+            for (int p = 0; p < _sessionPages.Count; p++)
+            {
+                if (p == _sessionCurrentPageIndex) { continue; }
+                var page = _sessionPages[p];
+                if (page == null) { continue; }
+                for (int i = 0; i < page.Count; i++)
+                {
+                    var entry = page[i];
+                    if (entry == null || !predicate(entry)) { continue; }
+                    pageIndex = p;
+                    entryIndex = i;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        float bestCondition = 0f;
+        int bestQuality = 0;
+        const float eps = 0.0001f;
+
+        for (int p = 0; p < _sessionPages.Count; p++)
+        {
+            if (p == _sessionCurrentPageIndex) { continue; }
+            var page = _sessionPages[p];
+            if (page == null) { continue; }
+
+            for (int i = 0; i < page.Count; i++)
+            {
+                var entry = page[i];
+                if (entry == null || !predicate(entry)) { continue; }
+
+                if (pageIndex < 0)
+                {
+                    pageIndex = p;
+                    entryIndex = i;
+                    bestCondition = entry.Condition;
+                    bestQuality = entry.Quality;
+                    continue;
+                }
+
+                bool replace;
+                if (policy == DatabaseStore.TakePolicy.HighestConditionFirst)
+                {
+                    replace = entry.Condition > bestCondition + eps ||
+                              (Math.Abs(entry.Condition - bestCondition) <= eps && entry.Quality > bestQuality);
+                }
+                else
+                {
+                    replace = entry.Condition < bestCondition - eps ||
+                              (Math.Abs(entry.Condition - bestCondition) <= eps && entry.Quality < bestQuality);
+                }
+
+                if (replace)
+                {
+                    pageIndex = p;
+                    entryIndex = i;
+                    bestCondition = entry.Condition;
+                    bestQuality = entry.Quality;
+                }
+            }
+        }
+
+        return pageIndex >= 0 && entryIndex >= 0;
+    }
+
     private void OpenSessionInternal(Character character, bool forceTakeover = false)
     {
         if (UseInPlaceSession && !SessionVariant)
@@ -405,6 +603,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                     terminal.SerializedDatabase = SerializedDatabase;
                     terminal._sessionOwner = character;
                     terminal._sessionOpenedAt = Timing.TotalTime;
+                    terminal._sessionAutomationConsumedCount = 0;
                     terminal.InitializePages(allData, actor);
                     terminal._nextToggleAllowedTime = Timing.TotalTime + ToggleCooldownSeconds;
                     terminal._nextPanelActionAllowedTime = Timing.TotalTime + PanelActionCooldownSeconds;
@@ -459,6 +658,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         _sessionOwner = character;
         _sessionOpenedAt = Timing.TotalTime;
         _inPlaceSessionActive = true;
+        _sessionAutomationConsumedCount = 0;
         InitializePages(allData, character);
         _nextToggleAllowedTime = Timing.TotalTime + ToggleCooldownSeconds;
         _nextPanelActionAllowedTime = Timing.TotalTime + PanelActionCooldownSeconds;
@@ -632,6 +832,21 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             case TerminalPanelAction.NextPage:
                 applied = TryChangePage(1, actor);
                 break;
+            case TerminalPanelAction.PrevMatch:
+                applied = TryJumpToMatch(-1, actor);
+                break;
+            case TerminalPanelAction.NextMatch:
+                applied = TryJumpToMatch(1, actor);
+                break;
+            case TerminalPanelAction.CycleSortMode:
+                applied = TryCycleSortMode(actor);
+                break;
+            case TerminalPanelAction.ToggleSortOrder:
+                applied = TryToggleSortOrder(actor);
+                break;
+            case TerminalPanelAction.CompactItems:
+                applied = TryCompactSessionItems(actor);
+                break;
             case TerminalPanelAction.CloseSession:
                 if (Timing.TotalTime - _sessionOpenedAt < MinSessionDurationBeforeClose)
                 {
@@ -674,6 +889,11 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             3 => TerminalPanelAction.CloseSession,
             4 => TerminalPanelAction.OpenSession,
             5 => TerminalPanelAction.ForceOpenSession,
+            6 => TerminalPanelAction.PrevMatch,
+            7 => TerminalPanelAction.NextMatch,
+            8 => TerminalPanelAction.CycleSortMode,
+            9 => TerminalPanelAction.ToggleSortOrder,
+            10 => TerminalPanelAction.CompactItems,
             _ => TerminalPanelAction.None
         };
         if (action == TerminalPanelAction.None) { return; }
@@ -762,6 +982,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private bool TryChangePage(int delta, Character actor)
     {
         if (!IsSessionActive() || _sessionPages.Count <= 0) { return false; }
+        if (!CanRunPageMutatingAction()) { return false; }
 
         int targetIndex = _sessionCurrentPageIndex + delta;
         if (targetIndex < 0 || targetIndex >= _sessionPages.Count)
@@ -782,6 +1003,157 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             Microsoft.Xna.Framework.Color.LightGray);
 
         return true;
+    }
+
+    private bool TryJumpToMatch(int direction, Character actor)
+    {
+        if (!IsSessionActive() || _sessionPages.Count <= 0) { return false; }
+        if (direction == 0) { return false; }
+        if (!CanRunPageMutatingAction()) { return false; }
+
+        string keyword = (SearchKeyword ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(keyword)) { return false; }
+
+        int originalIndex = _sessionCurrentPageIndex;
+        CaptureCurrentPageFromInventory();
+
+        int pageCount = _sessionPages.Count;
+        int start = Math.Max(0, _sessionCurrentPageIndex);
+        int stepDir = direction > 0 ? 1 : -1;
+        for (int step = 1; step <= pageCount; step++)
+        {
+            int index = WrapPageIndex(start + (step * stepDir), pageCount);
+            if (PageMatchesKeyword(index, keyword))
+            {
+                _sessionCurrentPageIndex = index;
+                LoadCurrentPageIntoInventory(actor);
+                UpdateSummaryFromStore();
+                UpdateDescriptionLocal();
+                TrySyncSummary(force: true);
+                return true;
+            }
+        }
+
+        _sessionCurrentPageIndex = originalIndex;
+        LoadCurrentPageIntoInventory(actor);
+        return false;
+    }
+
+    private bool TryCycleSortMode(Character actor)
+    {
+        if (!IsSessionActive()) { return false; }
+        if (!CanRunPageMutatingAction()) { return false; }
+        SortModeIndex = (NormalizeSortModeIndex(SortModeIndex) + 1) % 4;
+        return TryRebuildPagesAfterResort(actor);
+    }
+
+    private bool TryToggleSortOrder(Character actor)
+    {
+        if (!IsSessionActive()) { return false; }
+        if (!CanRunPageMutatingAction()) { return false; }
+        SortDescending = !SortDescending;
+        return TryRebuildPagesAfterResort(actor);
+    }
+
+    private bool TryCompactSessionItems(Character actor)
+    {
+        if (!IsSessionActive()) { return false; }
+        if (!CanRunPageMutatingAction()) { return false; }
+
+        CaptureCurrentPageFromInventory();
+        var allEntries = FlattenAllPages();
+        allEntries = DatabaseStore.CompactSnapshot(allEntries);
+        allEntries.Sort((a, b) => CompareBySortMode(a, b, (TerminalSortMode)NormalizeSortModeIndex(SortModeIndex), SortDescending));
+        InitializePages(allEntries, actor ?? _sessionOwner);
+
+        UpdateSummaryFromStore();
+        UpdateDescriptionLocal();
+        TrySyncSummary(force: true);
+        return true;
+    }
+
+    private bool TryRebuildPagesAfterResort(Character actor)
+    {
+        if (!CanRunPageMutatingAction()) { return false; }
+        CaptureCurrentPageFromInventory();
+        var allEntries = FlattenAllPages();
+        allEntries.Sort((a, b) => CompareBySortMode(a, b, (TerminalSortMode)NormalizeSortModeIndex(SortModeIndex), SortDescending));
+        InitializePages(allEntries, actor ?? _sessionOwner);
+
+        UpdateSummaryFromStore();
+        UpdateDescriptionLocal();
+        TrySyncSummary(force: true);
+        return true;
+    }
+
+    private static int NormalizeSortModeIndex(int raw)
+    {
+        if (raw < 0 || raw > 3) { return 0; }
+        return raw;
+    }
+
+    private static int CompareBySortMode(ItemData left, ItemData right, TerminalSortMode mode, bool descending)
+    {
+        left ??= new ItemData();
+        right ??= new ItemData();
+
+        int cmp;
+        switch (mode)
+        {
+            case TerminalSortMode.Condition:
+                cmp = left.Condition.CompareTo(right.Condition);
+                break;
+            case TerminalSortMode.Quality:
+                cmp = left.Quality.CompareTo(right.Quality);
+                break;
+            case TerminalSortMode.StackSize:
+                cmp = Math.Max(1, left.StackSize).CompareTo(Math.Max(1, right.StackSize));
+                break;
+            default:
+                cmp = string.Compare(left.Identifier ?? "", right.Identifier ?? "", StringComparison.OrdinalIgnoreCase);
+                break;
+        }
+
+        if (cmp == 0)
+        {
+            cmp = string.Compare(left.Identifier ?? "", right.Identifier ?? "", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return descending ? -cmp : cmp;
+    }
+
+    private bool PageMatchesKeyword(int pageIndex, string keyword)
+    {
+        if (pageIndex < 0 || pageIndex >= _sessionPages.Count) { return false; }
+        var page = _sessionPages[pageIndex];
+        if (page == null || page.Count == 0) { return false; }
+
+        foreach (var entry in page)
+        {
+            string id = entry?.Identifier ?? "";
+            if (id.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static int WrapPageIndex(int index, int count)
+    {
+        if (count <= 0) { return 0; }
+        int wrapped = index % count;
+        if (wrapped < 0) { wrapped += count; }
+        return wrapped;
+    }
+
+    private bool CanRunPageMutatingAction()
+    {
+        if (!IsSessionActive()) { return false; }
+        if (_currentPageLoadedAt <= 0) { return true; }
+        if (Timing.TotalTime - _currentPageLoadedAt >= PageActionSafetySeconds) { return true; }
+        return false;
     }
 
     private bool CanCharacterControlSession(Character actor)
@@ -917,11 +1289,20 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         SpawnService.ClearInventory(inventory);
 
+        _pageLoadGeneration++;
+        int loadGeneration = _pageLoadGeneration;
+
         var pageItems = CloneItems(_sessionPages[_sessionCurrentPageIndex]);
         if (pageItems.Count > 0)
         {
-            SpawnService.SpawnItemsIntoInventory(pageItems, inventory, actor ?? _sessionOwner);
+            SpawnService.SpawnItemsIntoInventory(
+                pageItems,
+                inventory,
+                actor ?? _sessionOwner,
+                () => IsSessionActive() && loadGeneration == _pageLoadGeneration);
         }
+
+        _currentPageLoadedAt = Timing.TotalTime;
 
         return true;
     }
@@ -1075,9 +1456,17 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         DatabaseStore.ReleaseTerminal(_resolvedDatabaseId, item.ID);
 
+        if (_sessionAutomationConsumedCount > 0)
+        {
+            string line = $"{Constants.LogPrefix} Session '{_resolvedDatabaseId}' consumed {_sessionAutomationConsumedCount} item(s) by automation.";
+            DebugConsole.NewMessage(line, Microsoft.Xna.Framework.Color.LightGray);
+            ModFileLog.Write("Terminal", line);
+        }
+
         _sessionPages.Clear();
         _sessionCurrentPageIndex = -1;
         _sessionTotalEntryCount = 0;
+        _sessionAutomationConsumedCount = 0;
     }
 
     private void UpdateSummaryFromStore()
@@ -1165,7 +1554,15 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         {
             string pageLabel = T("dbiotest.terminal.page", "Page");
             string remainingLabel = T("dbiotest.terminal.remainingpages", "Pending Page Items");
-            pageLine = $"\n{pageLabel}: {Math.Max(1, _cachedPageIndex)}/{Math.Max(1, _cachedPageTotal)}\n{remainingLabel}: {_cachedRemainingPageItems}";
+            string sortLabel = T("dbiotest.terminal.sort", "Sort");
+            string directionLabel = SortDescending ? T("dbiotest.terminal.sortdesc", "Desc") : T("dbiotest.terminal.sortasc", "Asc");
+            string searchLabel = T("dbiotest.terminal.search", "Search");
+            string searchValue = string.IsNullOrWhiteSpace(SearchKeyword) ? "-" : SearchKeyword;
+            pageLine =
+                $"\n{pageLabel}: {Math.Max(1, _cachedPageIndex)}/{Math.Max(1, _cachedPageTotal)}" +
+                $"\n{remainingLabel}: {_cachedRemainingPageItems}" +
+                $"\n{sortLabel}: {GetSortModeLabel((TerminalSortMode)NormalizeSortModeIndex(SortModeIndex))} ({directionLabel})" +
+                $"\n{searchLabel}: {searchValue}";
         }
 
         string powerLine = "";
@@ -1179,6 +1576,17 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         }
 
         item.Description = $"{hint}\n\n{dbLabel}: {_resolvedDatabaseId}\n{countLabel}: {_cachedItemCount}{pageLine}{powerLine}{lockLine}";
+    }
+
+    private static string GetSortModeLabel(TerminalSortMode mode)
+    {
+        return mode switch
+        {
+            TerminalSortMode.Condition => T("dbiotest.terminal.sort.condition", "Condition"),
+            TerminalSortMode.Quality => T("dbiotest.terminal.sort.quality", "Quality"),
+            TerminalSortMode.StackSize => T("dbiotest.terminal.sort.stacksize", "StackSize"),
+            _ => T("dbiotest.terminal.sort.identifier", "Identifier")
+        };
     }
 
     private float GetCurrentVoltage()
@@ -1210,6 +1618,80 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             list.Add(itemData?.Clone());
         }
         return list;
+    }
+
+    private static int CountFlatItems(IEnumerable<ItemData> items)
+    {
+        int count = 0;
+        if (items == null) { return 0; }
+        foreach (var item in items)
+        {
+            if (item == null) { continue; }
+            count += Math.Max(1, item.StackSize);
+        }
+        return count;
+    }
+
+    private static ItemData ExtractStackPart(ItemData source, int count)
+    {
+        if (source == null) { return null; }
+        int take = Math.Max(1, count);
+        var part = source.Clone();
+        part.StackSize = take;
+        part.StolenFlags = SliceBool(source.StolenFlags, 0, take, false);
+        part.OriginalOutposts = SliceString(source.OriginalOutposts, 0, take, "");
+        part.SlotIndices = SliceInt(source.SlotIndices, 0, take, -1);
+
+        source.StackSize = Math.Max(0, source.StackSize - take);
+        RemoveRangeSafe(source.StolenFlags, take);
+        RemoveRangeSafe(source.OriginalOutposts, take);
+        RemoveRangeSafe(source.SlotIndices, take);
+
+        return part;
+    }
+
+    private static List<bool> SliceBool(List<bool> source, int start, int count, bool fallback)
+    {
+        var result = new List<bool>(Math.Max(0, count));
+        for (int i = 0; i < count; i++)
+        {
+            int idx = start + i;
+            bool value = (source != null && idx >= 0 && idx < source.Count) ? source[idx] : fallback;
+            result.Add(value);
+        }
+        return result;
+    }
+
+    private static List<string> SliceString(List<string> source, int start, int count, string fallback)
+    {
+        var result = new List<string>(Math.Max(0, count));
+        for (int i = 0; i < count; i++)
+        {
+            int idx = start + i;
+            string value = (source != null && idx >= 0 && idx < source.Count) ? (source[idx] ?? fallback) : fallback;
+            result.Add(value);
+        }
+        return result;
+    }
+
+    private static List<int> SliceInt(List<int> source, int start, int count, int fallback)
+    {
+        var result = new List<int>(Math.Max(0, count));
+        for (int i = 0; i < count; i++)
+        {
+            int idx = start + i;
+            int value = (source != null && idx >= 0 && idx < source.Count) ? source[idx] : fallback;
+            result.Add(value);
+        }
+        return result;
+    }
+
+    private static void RemoveRangeSafe<T>(List<T> list, int count)
+    {
+        if (list == null || count <= 0) { return; }
+        int remove = Math.Min(count, list.Count);
+        if (remove <= 0) { return; }
+        list.RemoveRange(0, remove);
     }
 
 #if CLIENT
