@@ -9,8 +9,8 @@
     impactsoundtag="impact_metal_light"
     waterproof="true"
     fireproof="true">
-    <InventoryIcon texture="Content/Items/InventoryIconAtlas.png" sourcerect="960,64,64,64" origin="0.5,0.5" />
-    <Sprite texture="Content/Items/Containers/containers.png" sourcerect="448,1,166,86" origin="0.5,0.5" depth="0.6" />
+    <InventoryIcon texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="678,223,180,66" origin="0.5,0.5" />
+    <Sprite texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="678,223,180,66" origin="0.5,0.5" depth="0.6" />
     <Fabricate suitablefabricators="fabricator" requiredtime="28">
       <RequiredSkill identifier="electrical" level="72" />
       <RequiredSkill identifier="mechanical" level="68" />
@@ -37,8 +37,8 @@
     impactsoundtag="impact_metal_light"
     waterproof="true"
     fireproof="true">
-    <InventoryIcon texture="Content/Items/InventoryIconAtlas2.png" sourcerect="323,193,60,61" origin="0.5,0.5" />
-    <Sprite texture="Content/Items/Electricity/signalcomp.png" sourcerect="149,371,69,93" origin="0.5,0.5" depth="0.6" />
+    <InventoryIcon texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="1702,208,180,96" origin="0.5,0.5" />
+    <Sprite texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="1702,208,180,96" origin="0.5,0.5" depth="0.6" />
     <Fabricate suitablefabricators="fabricator" requiredtime="32">
       <RequiredSkill identifier="electrical" level="78" />
       <RequiredSkill identifier="mechanical" level="72" />
@@ -68,8 +68,8 @@
     fireproof="true"
     hideinmenus="true"
     showcontentsintooltip="true">
-    <InventoryIcon texture="Content/Items/InventoryIconAtlas2.png" sourcerect="323,193,60,61" origin="0.5,0.5" />
-    <Sprite texture="Content/Items/Electricity/signalcomp.png" sourcerect="149,371,69,93" origin="0.5,0.5" depth="0.6" />
+    <InventoryIcon texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="1702,208,180,96" origin="0.5,0.5" />
+    <Sprite texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="1702,208,180,96" origin="0.5,0.5" depth="0.6" />
     <Body width="64" height="88" density="20" />
     <Holdable slots="Any,RightHand,LeftHand" msg="ItemMsgPickUpUse" pickkey="Use">
       <CustomInterface canbeselected="false" drawhudwhenequipped="true" allowuioverlap="true">
@@ -135,8 +135,8 @@
     waterproof="true"
     fireproof="true"
     scale="0.75">
-    <InventoryIcon texture="Content/Items/InventoryIconAtlas.png" sourcerect="960,64,64,64" origin="0.5,0.5" />
-    <Sprite texture="Content/Items/Command/CommandDevices.png" sourcerect="700,0,160,128" origin="0.5,0.5" depth="0.6" />
+    <InventoryIcon texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="1190,210,180,91" origin="0.5,0.5" />
+    <Sprite texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="1190,210,180,91" origin="0.5,0.5" depth="0.6" />
     <Fabricate suitablefabricators="fabricator" requiredtime="16">
       <RequiredSkill identifier="electrical" level="38" />
       <RequiredSkill identifier="mechanical" level="32" />
@@ -176,8 +176,8 @@
     waterproof="true"
     fireproof="true"
     scale="0.75">
-    <InventoryIcon texture="Content/Items/InventoryIconAtlas2.png" sourcerect="323,193,60,61" origin="0.5,0.5" />
-    <Sprite texture="Content/Items/Command/CommandDevices.png" sourcerect="707,254,279,160" origin="0.5,0.5" depth="0.6" />
+    <InventoryIcon texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="166,684,180,167" origin="0.5,0.5" />
+    <Sprite texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="166,684,180,167" origin="0.5,0.5" depth="0.6" />
     <Fabricate suitablefabricators="fabricator" requiredtime="20">
       <RequiredSkill identifier="electrical" level="45" />
       <RequiredSkill identifier="mechanical" level="38" />
@@ -274,8 +274,8 @@
     waterproof="true"
     fireproof="true"
     scale="0.75">
-    <InventoryIcon texture="Content/Items/InventoryIconAtlas2.png" sourcerect="323,193,60,61" origin="0.5,0.5" />
-    <Sprite texture="Content/Items/Command/CommandDevices.png" sourcerect="700,0,160,128" origin="0.5,0.5" depth="0.6" />
+    <InventoryIcon texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="166,214,180,83" origin="0.5,0.5" />
+    <Sprite texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="166,214,180,83" origin="0.5,0.5" depth="0.6" />
     <Fabricate suitablefabricators="fabricator" requiredtime="18">
       <RequiredSkill identifier="electrical" level="35" />
       <RequiredSkill identifier="mechanical" level="30" />

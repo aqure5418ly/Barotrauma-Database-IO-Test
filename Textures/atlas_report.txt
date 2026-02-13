@@ -1,0 +1,8 @@
+Texture Atlas Report (Tight Selection)
+Cell Size: 512x512
+------------------------------
+DatabaseAutoRestocker.png: sourcerect="166,214,180,83"
+DatabaseInterface.png: sourcerect="678,223,180,66"
+DatabaseInterfaceFixed.png: sourcerect="1190,210,180,91"
+DatabaseTerminal.png: sourcerect="1702,208,180,96"
+DatabaseTerminalFixed.png: sourcerect="166,684,180,167"
