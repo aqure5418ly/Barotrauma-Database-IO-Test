@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using Barotrauma;
 using Barotrauma.Items.Components;
 using DatabaseIOTest.Models;
@@ -67,6 +68,7 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
 
     private string _lastSupplyFilter = "";
     private readonly List<string> _filteredSupplyList = new List<string>();
+    private readonly Dictionary<string, string> _supplySearchTextCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     private int _lastIdentifierSnapshotVersion = -1;
     private List<string> _cachedDatabaseIdentifiers = new List<string>();
 
@@ -205,6 +207,10 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
 
         if (supplyListChanged || supplyFilterChanged || baseListChanged)
         {
+            if (supplyListChanged || baseListChanged)
+            {
+                _supplySearchTextCache.Clear();
+            }
             RebuildFilteredSupplyList();
         }
 
@@ -293,7 +299,7 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
         foreach (var entry in baseList)
         {
             if (string.IsNullOrWhiteSpace(entry)) { continue; }
-            if (entry.ToLowerInvariant().Contains(lowered))
+            if (IdentifierMatchesFilter(entry, lowered))
             {
                 _filteredSupplyList.Add(entry);
             }
@@ -321,6 +327,90 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
             _cachedDatabaseIdentifiers = new List<string>();
         }
         return _cachedDatabaseIdentifiers;
+    }
+
+    private bool IdentifierMatchesFilter(string identifier, string loweredFilter)
+    {
+        if (string.IsNullOrWhiteSpace(identifier)) { return false; }
+        if (string.IsNullOrWhiteSpace(loweredFilter)) { return true; }
+
+        string searchText = GetSearchTextForIdentifier(identifier);
+        if (string.IsNullOrWhiteSpace(searchText)) { return false; }
+        return searchText.IndexOf(loweredFilter, StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private string GetSearchTextForIdentifier(string identifier)
+    {
+        string id = (identifier ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(id)) { return ""; }
+
+        if (_supplySearchTextCache.TryGetValue(id, out var cached))
+        {
+            return cached ?? "";
+        }
+
+        var terms = new List<string>();
+        AddSearchTerm(terms, id);
+
+        string entityNameKey = $"entityname.{id}";
+        AddSearchTerm(terms, TextManager.Get(entityNameKey)?.Value);
+        AddSearchTerm(terms, TextManager.Get(entityNameKey.ToLowerInvariant())?.Value);
+
+        var prefab = ItemPrefab.FindByIdentifier(id.ToIdentifier()) as ItemPrefab;
+        if (prefab != null)
+        {
+            AddSearchTerm(terms, TryReadPrefabName(prefab, "Name"));
+            AddSearchTerm(terms, TryReadPrefabName(prefab, "name"));
+            AddSearchTerm(terms, TryReadPrefabName(prefab, "OriginalName"));
+            AddSearchTerm(terms, TryReadPrefabName(prefab, "originalName"));
+        }
+
+        string combined = string.Join("\n", terms.Distinct(StringComparer.OrdinalIgnoreCase));
+        _supplySearchTextCache[id] = combined;
+        return combined;
+    }
+
+    private static string TryReadPrefabName(ItemPrefab prefab, string memberName)
+    {
+        if (prefab == null || string.IsNullOrWhiteSpace(memberName)) { return ""; }
+
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        var prop = prefab.GetType().GetProperty(memberName, flags);
+        if (prop != null)
+        {
+            return ExtractTextValue(prop.GetValue(prefab));
+        }
+
+        var field = prefab.GetType().GetField(memberName, flags);
+        if (field != null)
+        {
+            return ExtractTextValue(field.GetValue(prefab));
+        }
+
+        return "";
+    }
+
+    private static string ExtractTextValue(object value)
+    {
+        if (value == null) { return ""; }
+        if (value is string text) { return text; }
+
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        var valueProp = value.GetType().GetProperty("Value", flags);
+        if (valueProp != null && valueProp.PropertyType == typeof(string))
+        {
+            return valueProp.GetValue(value) as string ?? "";
+        }
+
+        return value.ToString() ?? "";
+    }
+
+    private static void AddSearchTerm(List<string> terms, string value)
+    {
+        if (terms == null) { return; }
+        string trimmed = (value ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(trimmed)) { return; }
+        terms.Add(trimmed);
     }
 
     private void TryRestock(double now)
