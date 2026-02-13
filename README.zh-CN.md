@@ -1,10 +1,10 @@
-# Database IO Test（0.1.0）
+﻿# Database IO Test（0.1.0）
 
 ## 当前状态
 - 这是一个**测试版本**。
 - 主要逻辑由 **C#（LuaCs）** 实现。
 - 当前版本**没有可用的 Lua UI**。
-- `Lua/` 目录目前仅保留作后续开发预留，运行时可视为暂时废弃。
+- `Lua/` 目录目前仅作后续开发预留，运行时可视为暂时废弃。
 
 ## 模组内容
 - `DatabaseInterface`（手持）与 `DatabaseInterfaceFixed`（固定式、需接电）
@@ -13,7 +13,7 @@
   - 通过会话方式访问数据库物品。
   - 支持分页、搜索、排序、整理（Compact）（XML + C# 实现）。
 - `DatabaseAutoRestocker`（自动补货器）
-  - 从数据库取物，补充到链接目标。
+  - 从数据库取物并补充到链接目标。
 - 加工台联动（`DB Fill` 按钮，基于 override）
   - 从数据库拉取配方原料到加工台输入槽。
 
@@ -21,6 +21,15 @@
 - 本模组的 `filelist.xml` 当前不会加载 Lua 脚本。
 - 现有交互界面为 XML CustomInterface + C# 组件，不依赖 Lua UI。
 - 数据结构仍在持续迭代中。
+
+## 灵感与参考
+- 灵感来源：
+  - Applied Energistics 2（AE2）：https://appliedenergistics.org/
+- 代码/实现参考：
+  - Item IO Framework：https://steamcommunity.com/sharedfiles/filedetails/?id=2950383008
+  - IO Storage：https://steamcommunity.com/sharedfiles/filedetails/?id=3646358075
+
+以上项目仅作为设计与实现参考，本模组与其无隶属关系。
 
 ## 存档兼容性警告
 - 后续更新可能调整数据库序列化结构。
@@ -37,4 +46,3 @@
 ## 运行需求
 - 启用 LuaCs 的 Barotrauma。
 - 在内容包中启用本模组。
-

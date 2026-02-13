@@ -22,6 +22,15 @@
 - Current UI behavior is XML CustomInterface + C# components only.
 - This is still an evolving data model.
 
+## Inspiration And References
+- Inspiration:
+  - Applied Energistics 2 (AE2): https://appliedenergistics.org/
+- Code/architecture references:
+  - Item IO Framework: https://steamcommunity.com/sharedfiles/filedetails/?id=2950383008&searchtext=item+io
+  - IO Storage: https://steamcommunity.com/sharedfiles/filedetails/?id=3646358075
+
+These projects were used as design/implementation references only. This mod is not affiliated with them.
+
 ## Save Compatibility Warning
 - Future updates may change internal database serialization format.
 - Old campaign saves may be affected (missing items, duplicated items, or reset database state are possible in breaking updates).
@@ -37,4 +46,3 @@
 ## Requirements
 - Barotrauma with LuaCs enabled.
 - This package enabled in content packages.
-

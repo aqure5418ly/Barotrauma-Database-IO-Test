@@ -146,6 +146,15 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private int _cachedPageTotal;
     private int _cachedRemainingPageItems;
 
+    private bool _pendingSummarySync;
+    private double _nextPendingSummarySyncAt;
+
+    private int _pendingPageFillCheckGeneration = -1;
+    private double _pendingPageFillCheckAt;
+    private int _pendingPageFillCheckExpectedCount;
+    private int _pendingPageFillCheckPageIndex = -1;
+    private int _pendingPageFillCheckRetries;
+
     private string _lastSyncedDatabaseId;
     private int _lastSyncedItemCount = -1;
     private bool _lastSyncedLocked;
@@ -162,6 +171,15 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private const double PanelActionCooldownSeconds = 0.4;
     private const double TakeoverConfirmWindowSeconds = 4.0;
     private const double PageActionSafetySeconds = 0.55;
+    private const double PendingSummarySyncRetrySeconds = 0.25;
+    private const double PageFillCheckDelaySeconds = 0.35;
+    private const int MaxPageFillCheckRetries = 1;
+
+    private static readonly PropertyInfo ItemFullyInitializedProperty =
+        typeof(Item).GetProperty("FullyInitialized", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+    private static readonly FieldInfo ItemFullyInitializedField =
+        typeof(Item).GetField("fullyInitialized", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
 #if CLIENT
     private GUIFrame _panelFrame;
@@ -255,6 +273,12 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         FlushIdleInventoryItems();
 
         ConsumeXmlActionRequest();
+        TryRunPendingPageFillCheck();
+
+        if (_pendingSummarySync && Timing.TotalTime >= _nextPendingSummarySyncAt)
+        {
+            TrySyncSummary(force: true);
+        }
 
         UpdateSummaryFromStore();
         UpdateDescriptionLocal();
@@ -1521,12 +1545,77 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                 pageItems,
                 inventory,
                 actor ?? _sessionOwner,
-                () => IsSessionActive() && loadGeneration == _pageLoadGeneration);
+                    () => IsSessionActive() && loadGeneration == _pageLoadGeneration);
         }
 
         _currentPageLoadedAt = Timing.TotalTime;
+        _pendingPageFillCheckGeneration = loadGeneration;
+        _pendingPageFillCheckAt = Timing.TotalTime + PageFillCheckDelaySeconds;
+        _pendingPageFillCheckExpectedCount = CountFlatItems(pageItems);
+        _pendingPageFillCheckPageIndex = _sessionCurrentPageIndex;
+        _pendingPageFillCheckRetries = 0;
 
         return true;
+    }
+
+    private void TryRunPendingPageFillCheck()
+    {
+        if (!IsSessionActive())
+        {
+            _pendingPageFillCheckGeneration = -1;
+            return;
+        }
+
+        if (_pendingPageFillCheckGeneration != _pageLoadGeneration) { return; }
+        if (Timing.TotalTime < _pendingPageFillCheckAt) { return; }
+        if (_pendingPageFillCheckPageIndex != _sessionCurrentPageIndex)
+        {
+            _pendingPageFillCheckGeneration = -1;
+            return;
+        }
+
+        var inventory = GetTerminalInventory();
+        if (inventory == null)
+        {
+            _pendingPageFillCheckGeneration = -1;
+            return;
+        }
+
+        int actualCount = CountFlatItems(ItemSerializer.SerializeInventory(_sessionOwner, inventory));
+        if (actualCount >= _pendingPageFillCheckExpectedCount)
+        {
+            _pendingPageFillCheckGeneration = -1;
+            return;
+        }
+
+        if (_pendingPageFillCheckRetries >= MaxPageFillCheckRetries)
+        {
+            string warnLine =
+                $"{Constants.LogPrefix} Page fill under target db='{_resolvedDatabaseId}' terminal={item?.ID} " +
+                $"page={Math.Max(1, _sessionCurrentPageIndex + 1)}/{Math.Max(1, _sessionPages.Count)} " +
+                $"expected={_pendingPageFillCheckExpectedCount} actual={actualCount} retries={_pendingPageFillCheckRetries}";
+            DebugConsole.NewMessage(warnLine, Microsoft.Xna.Framework.Color.Orange);
+            ModFileLog.Write("Terminal", warnLine);
+            _pendingPageFillCheckGeneration = -1;
+            return;
+        }
+
+        int nextRetry = _pendingPageFillCheckRetries + 1;
+        string retryLine =
+            $"{Constants.LogPrefix} Page fill retry db='{_resolvedDatabaseId}' terminal={item?.ID} " +
+            $"page={Math.Max(1, _sessionCurrentPageIndex + 1)}/{Math.Max(1, _sessionPages.Count)} " +
+            $"expected={_pendingPageFillCheckExpectedCount} actual={actualCount} retry={nextRetry}";
+        DebugConsole.NewMessage(retryLine, Microsoft.Xna.Framework.Color.Yellow);
+        ModFileLog.Write("Terminal", retryLine);
+
+        if (LoadCurrentPageIntoInventory(_sessionOwner))
+        {
+            _pendingPageFillCheckRetries = nextRetry;
+        }
+        else
+        {
+            _pendingPageFillCheckGeneration = -1;
+        }
     }
 
     private void CaptureCurrentPageFromInventory()
@@ -1543,6 +1632,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             : new List<int>();
         ReplaceSessionEntriesBySourceIndices(sourceIndices, serialized);
         SpawnService.ClearInventory(inventory);
+        _pendingPageFillCheckGeneration = -1;
 
         // Keep current page index stable after source mutation.
         BuildPagesBySlotUsage(_sessionEntries, inventory, _sessionCurrentPageIndex);
@@ -1836,6 +1926,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         _sessionCurrentPageIndex = -1;
         _sessionTotalEntryCount = 0;
         _sessionAutomationConsumedCount = 0;
+        _pendingPageFillCheckGeneration = -1;
     }
 
     private void UpdateSummaryFromStore()
@@ -1870,6 +1961,12 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private void TrySyncSummary(bool force = false)
     {
         if (GameMain.NetworkMember?.IsServer != true) { return; }
+        if (!CanCreateServerSummaryEvent())
+        {
+            _pendingSummarySync = true;
+            _nextPendingSummarySyncAt = Timing.TotalTime + PendingSummarySyncRetrySeconds;
+            return;
+        }
 
         bool changed = force ||
                        _lastSyncedDatabaseId != _resolvedDatabaseId ||
@@ -1890,15 +1987,53 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         _lastSyncedRemainingPageItems = _cachedRemainingPageItems;
 
 #if SERVER
-        item.CreateServerEvent(this, new SummaryEventData(
-            _resolvedDatabaseId,
-            _cachedItemCount,
-            _cachedLocked,
-            _cachedSessionOpen,
-            _cachedPageIndex,
-            _cachedPageTotal,
-            _cachedRemainingPageItems));
+        try
+        {
+            item.CreateServerEvent(this, new SummaryEventData(
+                _resolvedDatabaseId,
+                _cachedItemCount,
+                _cachedLocked,
+                _cachedSessionOpen,
+                _cachedPageIndex,
+                _cachedPageTotal,
+                _cachedRemainingPageItems));
+            _pendingSummarySync = false;
+        }
+        catch (Exception ex)
+        {
+            _pendingSummarySync = true;
+            _nextPendingSummarySyncAt = Timing.TotalTime + PendingSummarySyncRetrySeconds;
+            ModFileLog.Write("Terminal", $"{Constants.LogPrefix} Summary sync deferred db='{_resolvedDatabaseId}' terminal={item?.ID}: {ex.Message}");
+        }
 #endif
+    }
+
+    private bool CanCreateServerSummaryEvent()
+    {
+        if (item == null || item.Removed) { return false; }
+        if (item.ID <= 0) { return false; }
+
+        // During entity spawn the item may exist but still be marked as not fully initialized.
+        try
+        {
+            if (ItemFullyInitializedProperty != null && ItemFullyInitializedProperty.PropertyType == typeof(bool))
+            {
+                object value = ItemFullyInitializedProperty.GetValue(item);
+                if (value is bool ready && !ready) { return false; }
+            }
+
+            if (ItemFullyInitializedField != null && ItemFullyInitializedField.FieldType == typeof(bool))
+            {
+                object value = ItemFullyInitializedField.GetValue(item);
+                if (value is bool ready && !ready) { return false; }
+            }
+        }
+        catch
+        {
+            // Ignore reflection issues and fall back to age-based guard.
+        }
+
+        return Timing.TotalTime - _creationTime >= 0.15;
     }
 
     private Inventory GetTerminalInventory()
