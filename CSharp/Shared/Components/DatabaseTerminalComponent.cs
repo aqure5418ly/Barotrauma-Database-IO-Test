@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using Barotrauma;
 using Barotrauma.Items.Components;
 using Barotrauma.Networking;
@@ -123,7 +124,16 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private double _pendingTakeoverUntil;
     private double _currentPageLoadedAt;
 
+    // Source-of-truth entries for this terminal session.
+    private readonly List<ItemData> _sessionEntries = new List<ItemData>();
+    // View indices into _sessionEntries used for sorting/paging.
+    private readonly List<int> _viewIndices = new List<int>();
+    // Materialized pages for UI/container load.
     private readonly List<List<ItemData>> _sessionPages = new List<List<ItemData>>();
+    // For each materialized page, track corresponding source indices in _sessionEntries.
+    private readonly List<List<int>> _sessionPageSourceIndices = new List<List<int>>();
+    // identifier -> searchable text (identifier + localized names)
+    private readonly Dictionary<string, string> _searchTextCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     private int _sessionCurrentPageIndex = -1;
     private int _sessionTotalEntryCount;
     private int _pageLoadGeneration;
@@ -394,17 +404,14 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             return 0;
         }
 
+        var protectedIndices = GetCurrentPageSourceIndexSet();
         int count = 0;
-        for (int pageIndex = 0; pageIndex < _sessionPages.Count; pageIndex++)
+        for (int i = 0; i < _sessionEntries.Count; i++)
         {
-            if (pageIndex == _sessionCurrentPageIndex) { continue; }
-            var page = _sessionPages[pageIndex];
-            if (page == null) { continue; }
-            foreach (var entry in page)
-            {
-                if (entry == null || !predicate(entry)) { continue; }
-                count += Math.Max(1, entry.StackSize);
-            }
+            if (protectedIndices.Contains(i)) { continue; }
+            var entry = _sessionEntries[i];
+            if (entry == null || !predicate(entry)) { continue; }
+            count += Math.Max(1, entry.StackSize);
         }
 
         return count;
@@ -430,18 +437,29 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         int remaining = amount;
         while (remaining > 0)
         {
-            if (!TryFindAutomationCandidate(predicate, policy, out int pageIndex, out int entryIndex))
+            if (!TryFindAutomationCandidate(predicate, policy, out int sourceIndex))
             {
                 break;
             }
 
-            var page = _sessionPages[pageIndex];
-            var entry = page[entryIndex];
+            if (sourceIndex < 0 || sourceIndex >= _sessionEntries.Count)
+            {
+                break;
+            }
+
+            var entry = _sessionEntries[sourceIndex];
+            if (entry == null)
+            {
+                _sessionEntries.RemoveAt(sourceIndex);
+                ShiftPageSourceIndicesAfterRemoval(sourceIndex);
+                continue;
+            }
 
             if (entry.ContainedItems != null && entry.ContainedItems.Count > 0)
             {
                 taken.Add(entry.Clone());
-                page.RemoveAt(entryIndex);
+                _sessionEntries.RemoveAt(sourceIndex);
+                ShiftPageSourceIndicesAfterRemoval(sourceIndex);
                 remaining--;
                 continue;
             }
@@ -451,7 +469,8 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             {
                 taken.Add(entry.Clone());
                 remaining -= stackSize;
-                page.RemoveAt(entryIndex);
+                _sessionEntries.RemoveAt(sourceIndex);
+                ShiftPageSourceIndicesAfterRemoval(sourceIndex);
                 continue;
             }
 
@@ -464,7 +483,8 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
             if (entry.StackSize <= 0)
             {
-                page.RemoveAt(entryIndex);
+                _sessionEntries.RemoveAt(sourceIndex);
+                ShiftPageSourceIndicesAfterRemoval(sourceIndex);
             }
         }
 
@@ -473,6 +493,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             return false;
         }
 
+        RebuildViewIndices();
         _sessionAutomationConsumedCount += CountFlatItems(taken);
         UpdateSummaryFromStore();
         UpdateDescriptionLocal();
@@ -483,28 +504,21 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private bool TryFindAutomationCandidate(
         Func<ItemData, bool> predicate,
         DatabaseStore.TakePolicy policy,
-        out int pageIndex,
-        out int entryIndex)
+        out int sourceIndex)
     {
-        pageIndex = -1;
-        entryIndex = -1;
+        sourceIndex = -1;
         if (predicate == null) { return false; }
+        var protectedIndices = GetCurrentPageSourceIndexSet();
 
         if (policy == DatabaseStore.TakePolicy.Fifo)
         {
-            for (int p = 0; p < _sessionPages.Count; p++)
+            for (int i = 0; i < _sessionEntries.Count; i++)
             {
-                if (p == _sessionCurrentPageIndex) { continue; }
-                var page = _sessionPages[p];
-                if (page == null) { continue; }
-                for (int i = 0; i < page.Count; i++)
-                {
-                    var entry = page[i];
-                    if (entry == null || !predicate(entry)) { continue; }
-                    pageIndex = p;
-                    entryIndex = i;
-                    return true;
-                }
+                if (protectedIndices.Contains(i)) { continue; }
+                var entry = _sessionEntries[i];
+                if (entry == null || !predicate(entry)) { continue; }
+                sourceIndex = i;
+                return true;
             }
 
             return false;
@@ -514,49 +528,41 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         int bestQuality = 0;
         const float eps = 0.0001f;
 
-        for (int p = 0; p < _sessionPages.Count; p++)
+        for (int i = 0; i < _sessionEntries.Count; i++)
         {
-            if (p == _sessionCurrentPageIndex) { continue; }
-            var page = _sessionPages[p];
-            if (page == null) { continue; }
+            if (protectedIndices.Contains(i)) { continue; }
+            var entry = _sessionEntries[i];
+            if (entry == null || !predicate(entry)) { continue; }
 
-            for (int i = 0; i < page.Count; i++)
+            if (sourceIndex < 0)
             {
-                var entry = page[i];
-                if (entry == null || !predicate(entry)) { continue; }
+                sourceIndex = i;
+                bestCondition = entry.Condition;
+                bestQuality = entry.Quality;
+                continue;
+            }
 
-                if (pageIndex < 0)
-                {
-                    pageIndex = p;
-                    entryIndex = i;
-                    bestCondition = entry.Condition;
-                    bestQuality = entry.Quality;
-                    continue;
-                }
+            bool replace;
+            if (policy == DatabaseStore.TakePolicy.HighestConditionFirst)
+            {
+                replace = entry.Condition > bestCondition + eps ||
+                          (Math.Abs(entry.Condition - bestCondition) <= eps && entry.Quality > bestQuality);
+            }
+            else
+            {
+                replace = entry.Condition < bestCondition - eps ||
+                          (Math.Abs(entry.Condition - bestCondition) <= eps && entry.Quality < bestQuality);
+            }
 
-                bool replace;
-                if (policy == DatabaseStore.TakePolicy.HighestConditionFirst)
-                {
-                    replace = entry.Condition > bestCondition + eps ||
-                              (Math.Abs(entry.Condition - bestCondition) <= eps && entry.Quality > bestQuality);
-                }
-                else
-                {
-                    replace = entry.Condition < bestCondition - eps ||
-                              (Math.Abs(entry.Condition - bestCondition) <= eps && entry.Quality < bestQuality);
-                }
-
-                if (replace)
-                {
-                    pageIndex = p;
-                    entryIndex = i;
-                    bestCondition = entry.Condition;
-                    bestQuality = entry.Quality;
-                }
+            if (replace)
+            {
+                sourceIndex = i;
+                bestCondition = entry.Condition;
+                bestQuality = entry.Quality;
             }
         }
 
-        return pageIndex >= 0 && entryIndex >= 0;
+        return sourceIndex >= 0;
     }
 
     private void OpenSessionInternal(Character character, bool forceTakeover = false)
@@ -818,10 +824,27 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             return true;
         }
 
-        if (!IsSessionActive()) { return false; }
         if (action != TerminalPanelAction.CloseSession && !HasRequiredPower()) { return false; }
-        if (!CanCharacterControlSession(actor)) { return false; }
         if (Timing.TotalTime < _nextPanelActionAllowedTime) { return false; }
+
+        if (!IsSessionActive())
+        {
+            bool closedApplied = action switch
+            {
+                TerminalPanelAction.CycleSortMode => TryCycleSortModeWhenClosed(),
+                TerminalPanelAction.ToggleSortOrder => TryToggleSortOrderWhenClosed(),
+                TerminalPanelAction.CompactItems => TryCompactStoreWhenClosed(),
+                _ => false
+            };
+
+            if (closedApplied)
+            {
+                _nextPanelActionAllowedTime = Timing.TotalTime + PanelActionCooldownSeconds;
+            }
+            return closedApplied;
+        }
+
+        if (!CanCharacterControlSession(actor)) { return false; }
 
         bool applied;
         switch (action)
@@ -897,8 +920,12 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             _ => TerminalPanelAction.None
         };
         if (action == TerminalPanelAction.None) { return; }
-        bool isOpenAction = action == TerminalPanelAction.OpenSession || action == TerminalPanelAction.ForceOpenSession;
-        if (!isOpenAction && !IsSessionActive()) { return; }
+        bool allowWhenClosed = action == TerminalPanelAction.OpenSession ||
+                               action == TerminalPanelAction.ForceOpenSession ||
+                               action == TerminalPanelAction.CycleSortMode ||
+                               action == TerminalPanelAction.ToggleSortOrder ||
+                               action == TerminalPanelAction.CompactItems;
+        if (!allowWhenClosed && !IsSessionActive()) { return; }
 
         Character actor = _sessionOwner;
         if (actor != null && (actor.Removed || actor.IsDead))
@@ -985,12 +1012,18 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (!CanRunPageMutatingAction()) { return false; }
 
         int targetIndex = _sessionCurrentPageIndex + delta;
+        var inventory = GetTerminalInventory();
+        if (inventory == null) { return false; }
+
+        // Capture first, then fully rebuild page mapping from source to avoid stale page/index state.
+        CaptureCurrentPageFromInventory();
+
         if (targetIndex < 0 || targetIndex >= _sessionPages.Count)
         {
+            LoadCurrentPageIntoInventory(actor);
             return false;
         }
 
-        CaptureCurrentPageFromInventory();
         _sessionCurrentPageIndex = targetIndex;
         LoadCurrentPageIntoInventory(actor);
 
@@ -1014,7 +1047,9 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         string keyword = (SearchKeyword ?? "").Trim();
         if (string.IsNullOrWhiteSpace(keyword)) { return false; }
 
-        int originalIndex = _sessionCurrentPageIndex;
+        var inventory = GetTerminalInventory();
+        if (inventory == null) { return false; }
+
         CaptureCurrentPageFromInventory();
 
         int pageCount = _sessionPages.Count;
@@ -1034,7 +1069,6 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             }
         }
 
-        _sessionCurrentPageIndex = originalIndex;
         LoadCurrentPageIntoInventory(actor);
         return false;
     }
@@ -1055,16 +1089,113 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         return TryRebuildPagesAfterResort(actor);
     }
 
+    private bool TryCycleSortModeWhenClosed()
+    {
+        if (IsSessionActive()) { return false; }
+        SortModeIndex = (NormalizeSortModeIndex(SortModeIndex) + 1) % 4;
+        UpdateSummaryFromStore();
+        UpdateDescriptionLocal();
+        TrySyncSummary(force: true);
+        return true;
+    }
+
+    private bool TryToggleSortOrderWhenClosed()
+    {
+        if (IsSessionActive()) { return false; }
+        SortDescending = !SortDescending;
+        UpdateSummaryFromStore();
+        UpdateDescriptionLocal();
+        TrySyncSummary(force: true);
+        return true;
+    }
+
+    private bool TryCompactStoreWhenClosed()
+    {
+        if (IsSessionActive()) { return false; }
+
+        if (!DatabaseStore.TryAcquireTerminal(_resolvedDatabaseId, item.ID))
+        {
+            string blockedLine = $"{Constants.LogPrefix} Compact blocked: '{_resolvedDatabaseId}' is locked by another terminal session.";
+            DebugConsole.NewMessage(blockedLine, Microsoft.Xna.Framework.Color.Orange);
+            ModFileLog.Write("Terminal", blockedLine);
+            return false;
+        }
+
+        try
+        {
+            var allEntries = DatabaseStore.TakeAllForTerminalSession(_resolvedDatabaseId, item.ID);
+            int beforeEntries = allEntries.Count;
+            int beforeItems = CountFlatItems(allEntries);
+            var beforeDiag = GetCompactionDiagnostics(allEntries);
+
+            var compacted = DatabaseStore.CompactSnapshot(allEntries);
+            compacted.Sort((a, b) => CompareBySortMode(a, b, (TerminalSortMode)NormalizeSortModeIndex(SortModeIndex), SortDescending));
+            int afterEntries = compacted.Count;
+            int afterItems = CountFlatItems(compacted);
+            int mergedEntries = Math.Max(0, beforeEntries - afterEntries);
+
+            if (!DatabaseStore.WriteBackFromTerminalContainer(_resolvedDatabaseId, compacted, item.ID))
+            {
+                DatabaseStore.AppendItems(_resolvedDatabaseId, compacted);
+            }
+
+            string compactLine =
+                $"{Constants.LogPrefix} Closed compact db='{_resolvedDatabaseId}' terminal={item?.ID} " +
+                $"beforeEntries={beforeEntries} beforeItems={beforeItems} afterEntries={afterEntries} afterItems={afterItems} mergedEntries={mergedEntries} " +
+                $"eligible={beforeDiag.eligible} blockedCond={beforeDiag.blockedCondition} blockedContained={beforeDiag.blockedContained} " +
+                $"uniqueEligibleKeys={beforeDiag.uniqueKeys} potentialMergeEntries={beforeDiag.potentialMergeEntries} " +
+                $"sort={GetSortModeLabel((TerminalSortMode)NormalizeSortModeIndex(SortModeIndex))} desc={SortDescending}";
+            DebugConsole.NewMessage(
+                compactLine,
+                mergedEntries > 0 ? Microsoft.Xna.Framework.Color.LightGreen : Microsoft.Xna.Framework.Color.Yellow);
+            ModFileLog.Write("Terminal", compactLine);
+
+            UpdateSummaryFromStore();
+            UpdateDescriptionLocal();
+            TrySyncSummary(force: true);
+            return true;
+        }
+        finally
+        {
+            DatabaseStore.ReleaseTerminal(_resolvedDatabaseId, item.ID);
+        }
+    }
+
     private bool TryCompactSessionItems(Character actor)
     {
         if (!IsSessionActive()) { return false; }
         if (!CanRunPageMutatingAction()) { return false; }
 
+        var inventory = GetTerminalInventory();
+        if (inventory == null) { return false; }
+
+        int preferredPage = _sessionCurrentPageIndex;
         CaptureCurrentPageFromInventory();
-        var allEntries = FlattenAllPages();
-        allEntries = DatabaseStore.CompactSnapshot(allEntries);
-        allEntries.Sort((a, b) => CompareBySortMode(a, b, (TerminalSortMode)NormalizeSortModeIndex(SortModeIndex), SortDescending));
-        InitializePages(allEntries, actor ?? _sessionOwner);
+        var beforeData = FlattenAllPages();
+        int beforeEntries = beforeData.Count;
+        int beforeItems = CountFlatItems(beforeData);
+        var beforeDiag = GetCompactionDiagnostics(beforeData);
+
+        var compacted = DatabaseStore.CompactSnapshot(beforeData);
+        compacted.Sort((a, b) => CompareBySortMode(a, b, (TerminalSortMode)NormalizeSortModeIndex(SortModeIndex), SortDescending));
+        int afterEntries = compacted.Count;
+        int afterItems = CountFlatItems(compacted);
+        int mergedEntries = Math.Max(0, beforeEntries - afterEntries);
+
+        BuildPagesBySlotUsage(compacted, inventory, preferredPage);
+        LoadCurrentPageIntoInventory(actor ?? _sessionOwner);
+
+        string compactLine =
+            $"{Constants.LogPrefix} Session compact db='{_resolvedDatabaseId}' terminal={item?.ID} " +
+            $"beforeEntries={beforeEntries} beforeItems={beforeItems} afterEntries={afterEntries} afterItems={afterItems} mergedEntries={mergedEntries} " +
+            $"eligible={beforeDiag.eligible} blockedCond={beforeDiag.blockedCondition} blockedContained={beforeDiag.blockedContained} " +
+            $"uniqueEligibleKeys={beforeDiag.uniqueKeys} potentialMergeEntries={beforeDiag.potentialMergeEntries} " +
+            $"sort={GetSortModeLabel((TerminalSortMode)NormalizeSortModeIndex(SortModeIndex))} desc={SortDescending} " +
+            $"search='{(SearchKeyword ?? "").Trim()}' page={Math.Max(1, _sessionCurrentPageIndex + 1)}/{Math.Max(1, _sessionPages.Count)}";
+        DebugConsole.NewMessage(
+            compactLine,
+            mergedEntries > 0 ? Microsoft.Xna.Framework.Color.LightGreen : Microsoft.Xna.Framework.Color.Yellow);
+        ModFileLog.Write("Terminal", compactLine);
 
         UpdateSummaryFromStore();
         UpdateDescriptionLocal();
@@ -1075,10 +1206,14 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private bool TryRebuildPagesAfterResort(Character actor)
     {
         if (!CanRunPageMutatingAction()) { return false; }
+        var inventory = GetTerminalInventory();
+        if (inventory == null) { return false; }
+
+        int preferredPage = _sessionCurrentPageIndex;
         CaptureCurrentPageFromInventory();
-        var allEntries = FlattenAllPages();
-        allEntries.Sort((a, b) => CompareBySortMode(a, b, (TerminalSortMode)NormalizeSortModeIndex(SortModeIndex), SortDescending));
-        InitializePages(allEntries, actor ?? _sessionOwner);
+        // Sort mode/order only reorders the view; do not rewrite storage order here.
+        BuildPagesBySlotUsage(_sessionEntries, inventory, preferredPage);
+        LoadCurrentPageIntoInventory(actor ?? _sessionOwner);
 
         UpdateSummaryFromStore();
         UpdateDescriptionLocal();
@@ -1122,16 +1257,103 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         return descending ? -cmp : cmp;
     }
 
+    private bool EntryMatchesKeyword(ItemData entry, string keyword)
+    {
+        if (entry == null) { return false; }
+        string needle = (keyword ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(needle)) { return true; }
+
+        string haystack = GetSearchTextForIdentifier(entry.Identifier);
+        if (string.IsNullOrWhiteSpace(haystack)) { return false; }
+        return haystack.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private string GetSearchTextForIdentifier(string identifier)
+    {
+        string id = (identifier ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(id)) { return ""; }
+
+        if (_searchTextCache.TryGetValue(id, out string cached))
+        {
+            return cached ?? "";
+        }
+
+        var terms = new List<string>();
+        AddSearchTerm(terms, id);
+
+        string entityNameKey = $"entityname.{id}";
+        AddSearchTerm(terms, TextManager.Get(entityNameKey)?.Value);
+        AddSearchTerm(terms, TextManager.Get(entityNameKey.ToLowerInvariant())?.Value);
+
+        var prefab = ItemPrefab.FindByIdentifier(id.ToIdentifier()) as ItemPrefab;
+        if (prefab != null)
+        {
+            AddSearchTerm(terms, TryReadPrefabName(prefab, "Name"));
+            AddSearchTerm(terms, TryReadPrefabName(prefab, "name"));
+            AddSearchTerm(terms, TryReadPrefabName(prefab, "OriginalName"));
+            AddSearchTerm(terms, TryReadPrefabName(prefab, "originalName"));
+        }
+
+        string combined = string.Join("\n", terms.Distinct(StringComparer.OrdinalIgnoreCase));
+        _searchTextCache[id] = combined;
+        return combined;
+    }
+
+    private static string TryReadPrefabName(ItemPrefab prefab, string memberName)
+    {
+        if (prefab == null || string.IsNullOrWhiteSpace(memberName)) { return ""; }
+
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+
+        var prop = prefab.GetType().GetProperty(memberName, flags);
+        if (prop != null)
+        {
+            return ExtractTextValue(prop.GetValue(prefab));
+        }
+
+        var field = prefab.GetType().GetField(memberName, flags);
+        if (field != null)
+        {
+            return ExtractTextValue(field.GetValue(prefab));
+        }
+
+        return "";
+    }
+
+    private static string ExtractTextValue(object value)
+    {
+        if (value == null) { return ""; }
+        if (value is string text) { return text; }
+
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        var valueProp = value.GetType().GetProperty("Value", flags);
+        if (valueProp != null && valueProp.PropertyType == typeof(string))
+        {
+            return valueProp.GetValue(value) as string ?? "";
+        }
+
+        return value.ToString() ?? "";
+    }
+
+    private static void AddSearchTerm(List<string> terms, string value)
+    {
+        if (terms == null) { return; }
+        string trimmed = (value ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(trimmed)) { return; }
+        terms.Add(trimmed);
+    }
+
     private bool PageMatchesKeyword(int pageIndex, string keyword)
     {
-        if (pageIndex < 0 || pageIndex >= _sessionPages.Count) { return false; }
-        var page = _sessionPages[pageIndex];
-        if (page == null || page.Count == 0) { return false; }
+        if (pageIndex < 0 || pageIndex >= _sessionPageSourceIndices.Count) { return false; }
+        var sourceIndices = _sessionPageSourceIndices[pageIndex];
+        if (sourceIndices == null || sourceIndices.Count == 0) { return false; }
 
-        foreach (var entry in page)
+        foreach (int sourceIndex in sourceIndices)
         {
-            string id = entry?.Identifier ?? "";
-            if (id.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)
+            if (sourceIndex < 0 || sourceIndex >= _sessionEntries.Count) { continue; }
+            var entry = _sessionEntries[sourceIndex];
+            if (EntryMatchesKeyword(entry, keyword))
             {
                 return true;
             }
@@ -1316,32 +1538,35 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (inventory == null) { return; }
 
         var serialized = ItemSerializer.SerializeInventory(_sessionOwner, inventory);
-        _sessionPages[_sessionCurrentPageIndex] = CloneItems(serialized);
+        var sourceIndices = _sessionPageSourceIndices.Count > _sessionCurrentPageIndex
+            ? _sessionPageSourceIndices[_sessionCurrentPageIndex]
+            : new List<int>();
+        ReplaceSessionEntriesBySourceIndices(sourceIndices, serialized);
         SpawnService.ClearInventory(inventory);
+
+        // Keep current page index stable after source mutation.
+        BuildPagesBySlotUsage(_sessionEntries, inventory, _sessionCurrentPageIndex);
     }
 
     private List<ItemData> FlattenAllPages()
     {
-        var result = new List<ItemData>();
-        foreach (var page in _sessionPages)
-        {
-            result.AddRange(CloneItems(page));
-        }
-        return result;
+        return CloneItems(_sessionEntries);
     }
 
     private int CountPendingPageItems()
     {
-        if (!IsSessionActive() || _sessionPages.Count == 0 || _sessionCurrentPageIndex < 0)
+        if (!IsSessionActive() || _sessionEntries.Count == 0)
         {
             return 0;
         }
 
+        var protectedIndices = GetCurrentPageSourceIndexSet();
         int count = 0;
-        for (int i = 0; i < _sessionPages.Count; i++)
+        foreach (int sourceIndex in _viewIndices)
         {
-            if (i == _sessionCurrentPageIndex) { continue; }
-            count += _sessionPages[i]?.Sum(entry => Math.Max(1, entry?.StackSize ?? 1)) ?? 0;
+            if (protectedIndices.Contains(sourceIndex)) { continue; }
+            if (sourceIndex < 0 || sourceIndex >= _sessionEntries.Count) { continue; }
+            count += Math.Max(1, _sessionEntries[sourceIndex]?.StackSize ?? 1);
         }
         return count;
     }
@@ -1352,52 +1577,178 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         return Math.Max(1, Math.Min(invCapacity, TerminalPageSize));
     }
 
-    private void BuildPagesBySlotUsage(List<ItemData> sourceItems, Inventory inventory)
+    private void BuildPagesBySlotUsage(List<ItemData> sourceItems, Inventory inventory, int preferredPageIndex = 0)
+    {
+        var clonedSource = CloneItems(sourceItems ?? new List<ItemData>());
+        _sessionEntries.Clear();
+        _sessionEntries.AddRange(clonedSource);
+        RebuildViewIndices();
+        MaterializePagesFromViewIndices(inventory, preferredPageIndex);
+    }
+
+    private void RebuildViewIndices()
+    {
+        _viewIndices.Clear();
+        string keyword = (SearchKeyword ?? "").Trim();
+        bool useKeyword = !string.IsNullOrWhiteSpace(keyword);
+        for (int i = 0; i < _sessionEntries.Count; i++)
+        {
+            var entry = _sessionEntries[i];
+            if (entry == null) { continue; }
+            if (useKeyword && !EntryMatchesKeyword(entry, keyword)) { continue; }
+            _viewIndices.Add(i);
+        }
+
+        _viewIndices.Sort((leftIndex, rightIndex) =>
+            CompareBySortMode(
+                leftIndex >= 0 && leftIndex < _sessionEntries.Count ? _sessionEntries[leftIndex] : null,
+                rightIndex >= 0 && rightIndex < _sessionEntries.Count ? _sessionEntries[rightIndex] : null,
+                (TerminalSortMode)NormalizeSortModeIndex(SortModeIndex),
+                SortDescending));
+    }
+
+    private void MaterializePagesFromViewIndices(Inventory inventory, int preferredPageIndex)
     {
         _sessionPages.Clear();
+        _sessionPageSourceIndices.Clear();
         _sessionCurrentPageIndex = -1;
-
-        var source = CloneItems(sourceItems ?? new List<ItemData>());
-        _sessionTotalEntryCount = source.Sum(entry => Math.Max(1, entry?.StackSize ?? 1));
+        _sessionTotalEntryCount = _sessionEntries.Sum(entry => Math.Max(1, entry?.StackSize ?? 1));
         int pageSlotBudget = ResolvePageSize(inventory);
+        int pageEntryBudget = Math.Max(1, TerminalPageSize);
 
-        if (source.Count == 0)
+        if (_viewIndices.Count == 0)
         {
             _sessionPages.Add(new List<ItemData>());
+            _sessionPageSourceIndices.Add(new List<int>());
             _sessionCurrentPageIndex = 0;
             return;
         }
 
         var currentPage = new List<ItemData>();
+        var currentSourceIndices = new List<int>();
         int usedSlots = 0;
+        int usedEntries = 0;
 
-        foreach (var entry in source.Where(e => e != null))
+        foreach (int sourceIndex in _viewIndices)
         {
+            if (sourceIndex < 0 || sourceIndex >= _sessionEntries.Count) { continue; }
+            var entry = _sessionEntries[sourceIndex];
+            if (entry == null) { continue; }
+
             int neededSlots = EstimateSlotUsage(entry, inventory);
-            if (currentPage.Count > 0 && usedSlots + neededSlots > pageSlotBudget)
+            bool wouldOverflowSlots = currentPage.Count > 0 && usedSlots + neededSlots > pageSlotBudget;
+            bool wouldOverflowEntries = usedEntries >= pageEntryBudget;
+            if (wouldOverflowSlots || wouldOverflowEntries)
             {
                 _sessionPages.Add(currentPage);
+                _sessionPageSourceIndices.Add(currentSourceIndices);
                 currentPage = new List<ItemData>();
+                currentSourceIndices = new List<int>();
                 usedSlots = 0;
+                usedEntries = 0;
             }
 
             currentPage.Add(entry.Clone());
+            currentSourceIndices.Add(sourceIndex);
             usedSlots += neededSlots;
+            usedEntries++;
 
-            if (usedSlots >= pageSlotBudget)
+            if (usedSlots >= pageSlotBudget || usedEntries >= pageEntryBudget)
             {
                 _sessionPages.Add(currentPage);
+                _sessionPageSourceIndices.Add(currentSourceIndices);
                 currentPage = new List<ItemData>();
+                currentSourceIndices = new List<int>();
                 usedSlots = 0;
+                usedEntries = 0;
             }
         }
 
         if (currentPage.Count > 0 || _sessionPages.Count == 0)
         {
             _sessionPages.Add(currentPage);
+            _sessionPageSourceIndices.Add(currentSourceIndices);
         }
 
-        _sessionCurrentPageIndex = 0;
+        if (_sessionPages.Count <= 0)
+        {
+            _sessionPages.Add(new List<ItemData>());
+            _sessionPageSourceIndices.Add(new List<int>());
+        }
+
+        if (preferredPageIndex < 0) { preferredPageIndex = 0; }
+        if (preferredPageIndex >= _sessionPages.Count) { preferredPageIndex = _sessionPages.Count - 1; }
+        _sessionCurrentPageIndex = preferredPageIndex;
+    }
+
+    private HashSet<int> GetCurrentPageSourceIndexSet()
+    {
+        if (_sessionCurrentPageIndex < 0 || _sessionCurrentPageIndex >= _sessionPageSourceIndices.Count)
+        {
+            return new HashSet<int>();
+        }
+
+        return new HashSet<int>(_sessionPageSourceIndices[_sessionCurrentPageIndex].Where(idx => idx >= 0));
+    }
+
+    private void ShiftPageSourceIndicesAfterRemoval(int removedSourceIndex)
+    {
+        if (removedSourceIndex < 0) { return; }
+        foreach (var page in _sessionPageSourceIndices)
+        {
+            if (page == null) { continue; }
+            for (int i = 0; i < page.Count; i++)
+            {
+                int idx = page[i];
+                if (idx == removedSourceIndex)
+                {
+                    // Should not happen because current page is protected, but keep safe.
+                    page[i] = -1;
+                }
+                else if (idx > removedSourceIndex)
+                {
+                    page[i] = idx - 1;
+                }
+            }
+
+            page.RemoveAll(idx => idx < 0);
+        }
+    }
+
+    private void ReplaceSessionEntriesBySourceIndices(List<int> sourceIndices, List<ItemData> replacement)
+    {
+        var removeSet = new HashSet<int>((sourceIndices ?? new List<int>())
+            .Where(idx => idx >= 0 && idx < _sessionEntries.Count));
+
+        var replacementItems = CloneItems(replacement ?? new List<ItemData>());
+        if (removeSet.Count == 0)
+        {
+            _sessionEntries.AddRange(replacementItems);
+            return;
+        }
+
+        int insertAt = removeSet.Min();
+        var rebuilt = new List<ItemData>(_sessionEntries.Count - removeSet.Count + replacementItems.Count);
+        bool inserted = false;
+        for (int i = 0; i < _sessionEntries.Count; i++)
+        {
+            if (!inserted && i == insertAt)
+            {
+                rebuilt.AddRange(CloneItems(replacementItems));
+                inserted = true;
+            }
+
+            if (removeSet.Contains(i)) { continue; }
+            rebuilt.Add(_sessionEntries[i]?.Clone());
+        }
+
+        if (!inserted)
+        {
+            rebuilt.AddRange(CloneItems(replacementItems));
+        }
+
+        _sessionEntries.Clear();
+        _sessionEntries.AddRange(rebuilt);
     }
 
     private int EstimateSlotUsage(ItemData entry, Inventory inventory)
@@ -1443,10 +1794,25 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         CaptureCurrentPageFromInventory();
 
         var remainingData = FlattenAllPages();
-        if (!DatabaseStore.WriteBackFromTerminalContainer(_resolvedDatabaseId, remainingData, item.ID))
+        int capturedTopLevelEntries = remainingData.Count;
+        int capturedFlatItems = CountFlatItems(remainingData);
+
+        var compactedData = DatabaseStore.CompactSnapshot(remainingData);
+        int compactedTopLevelEntries = compactedData.Count;
+        int compactedFlatItems = CountFlatItems(compactedData);
+
+        bool wroteBackToLockedStore = DatabaseStore.WriteBackFromTerminalContainer(_resolvedDatabaseId, compactedData, item.ID);
+        if (!wroteBackToLockedStore)
         {
-            DatabaseStore.AppendItems(_resolvedDatabaseId, remainingData);
+            DatabaseStore.AppendItems(_resolvedDatabaseId, compactedData);
         }
+
+        ModFileLog.Write(
+            "Terminal",
+            $"{Constants.LogPrefix} Session writeback db='{_resolvedDatabaseId}' terminal={item?.ID} " +
+            $"capturedEntries={capturedTopLevelEntries} capturedItems={capturedFlatItems} " +
+            $"compactedEntries={compactedTopLevelEntries} compactedItems={compactedFlatItems} " +
+            $"writtenBackItems={compactedFlatItems} lockedWrite={wroteBackToLockedStore}");
 
         var inventory = GetTerminalInventory();
         if (inventory != null)
@@ -1463,7 +1829,10 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             ModFileLog.Write("Terminal", line);
         }
 
+        _sessionEntries.Clear();
+        _viewIndices.Clear();
         _sessionPages.Clear();
+        _sessionPageSourceIndices.Clear();
         _sessionCurrentPageIndex = -1;
         _sessionTotalEntryCount = 0;
         _sessionAutomationConsumedCount = 0;
@@ -1630,6 +1999,43 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             count += Math.Max(1, item.StackSize);
         }
         return count;
+    }
+
+    private static (int eligible, int blockedCondition, int blockedContained, int uniqueKeys, int potentialMergeEntries)
+        GetCompactionDiagnostics(IEnumerable<ItemData> items)
+    {
+        int eligible = 0;
+        int blockedCondition = 0;
+        int blockedContained = 0;
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (items != null)
+        {
+            foreach (var entry in items)
+            {
+                if (entry == null) { continue; }
+                bool hasContained = entry.ContainedItems != null && entry.ContainedItems.Count > 0;
+                if (hasContained)
+                {
+                    blockedContained++;
+                    continue;
+                }
+
+                if (entry.Condition < 99.9f)
+                {
+                    blockedCondition++;
+                    continue;
+                }
+
+                eligible++;
+                string key = $"{entry.Identifier}_{entry.Quality}";
+                keys.Add(key);
+            }
+        }
+
+        int uniqueKeys = keys.Count;
+        int potentialMergeEntries = Math.Max(0, eligible - uniqueKeys);
+        return (eligible, blockedCondition, blockedContained, uniqueKeys, potentialMergeEntries);
     }
 
     private static ItemData ExtractStackPart(ItemData source, int count)

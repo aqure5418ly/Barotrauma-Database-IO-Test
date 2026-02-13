@@ -21,8 +21,19 @@
   <dbiotest.terminal.count>库存实体数</dbiotest.terminal.count>
   <dbiotest.terminal.page>页码</dbiotest.terminal.page>
   <dbiotest.terminal.remainingpages>未载入页物品数</dbiotest.terminal.remainingpages>
+  <dbiotest.terminal.search>搜索</dbiotest.terminal.search>
   <dbiotest.terminal.locked>该数据库已被其他终端会话占用。</dbiotest.terminal.locked>
   <dbiotest.terminal.closed>会话已关闭。</dbiotest.terminal.closed>
+  <dbiotest.btn.open>开启</dbiotest.btn.open>
+  <dbiotest.btn.force>强制</dbiotest.btn.force>
+  <dbiotest.btn.prev>上一页</dbiotest.btn.prev>
+  <dbiotest.btn.next>下一页</dbiotest.btn.next>
+  <dbiotest.btn.findprev>上一个匹配</dbiotest.btn.findprev>
+  <dbiotest.btn.findnext>下一个匹配</dbiotest.btn.findnext>
+  <dbiotest.btn.sort>排序</dbiotest.btn.sort>
+  <dbiotest.btn.dir>方向</dbiotest.btn.dir>
+  <dbiotest.btn.compact>整理</dbiotest.btn.compact>
+  <dbiotest.btn.close>关闭</dbiotest.btn.close>
 
   <dbiotest.power.status>供电</dbiotest.power.status>
   <dbiotest.power.online>在线</dbiotest.power.online>

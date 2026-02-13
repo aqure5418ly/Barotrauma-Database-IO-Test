@@ -73,30 +73,30 @@
     <Body width="64" height="88" density="20" />
     <Holdable slots="Any,RightHand,LeftHand" msg="ItemMsgPickUpUse" pickkey="Use">
       <CustomInterface canbeselected="false" drawhudwhenequipped="true" allowuioverlap="true">
-        <GuiFrame relativesize="0.5,0.3" anchor="BottomLeft" relativeoffset="0.05,0.10" style="ItemUI" />
-        <TextBox text="Search" propertyname="SearchKeyword" targetitemcomponent="DatabaseTerminalComponent" maxtextlength="40" />
-        <Button text="Prev">
+        <GuiFrame relativesize="0.42,0.40" anchor="BottomLeft" relativeoffset="0.05,0.10" style="ItemUI" />
+        <TextBox text="dbiotest.terminal.search" propertyname="SearchKeyword" targetitemcomponent="DatabaseTerminalComponent" maxtextlength="40" />
+        <Button text="dbiotest.btn.prev">
           <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="1" />
         </Button>
-        <Button text="Next">
+        <Button text="dbiotest.btn.next">
           <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="2" />
         </Button>
-        <Button text="FindPrev">
+        <Button text="dbiotest.btn.findprev">
           <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="6" />
         </Button>
-        <Button text="FindNext">
+        <Button text="dbiotest.btn.findnext">
           <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="7" />
         </Button>
-        <Button text="Sort">
+        <Button text="dbiotest.btn.sort">
           <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="8" />
         </Button>
-        <Button text="Dir">
+        <Button text="dbiotest.btn.dir">
           <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="9" />
         </Button>
-        <Button text="Compact">
+        <Button text="dbiotest.btn.compact">
           <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="10" />
         </Button>
-        <Button text="Close">
+        <Button text="dbiotest.btn.close">
           <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="3" />
         </Button>
       </CustomInterface>
@@ -202,27 +202,46 @@
       keepopenwhenequipped="true"
       movableframe="true"
       allowuioverlap="true">
-      <GuiFrame relativesize="0.5,0.4" anchor="Center" style="ItemUI" />
+      <GuiFrame relativesize="0.4,0.3" relativeoffset="0.03,0.06" anchor="Center" style="ItemUI" />
       <SubContainer capacity="20" slotsperrow="5" maxstacksize="63">
         <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
       </SubContainer>
     </ItemContainer>
     <CustomInterface canbeselected="true" allowuioverlap="true">
-      <GuiFrame relativesize="0.30,0.14" anchor="BottomLeft" relativeoffset="0.04,0.08" style="ItemUI" />
-      <Button text="Open">
+      <GuiFrame relativesize="0.20,0.20" anchor="BottomLeft" relativeoffset="0.04,0.08" style="ItemUI" />
+      <Button text="dbiotest.btn.open">
         <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="4" />
       </Button>
-      <Button text="Force">
+      <Button text="dbiotest.btn.force">
         <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="5" />
       </Button>
-      <Button text="Prev">
+      <Button text="dbiotest.btn.close">
+        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="3" />
+      </Button>
+    </CustomInterface>
+    <CustomInterface canbeselected="true" allowuioverlap="true">
+      <GuiFrame relativesize="0.30,0.34" anchor="BottomLeft" relativeoffset="0.26,0.08" style="ItemUI" />
+      <TextBox text="dbiotest.terminal.search" propertyname="SearchKeyword" targetitemcomponent="DatabaseTerminalComponent" maxtextlength="40" />
+      <Button text="dbiotest.btn.prev">
         <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="1" />
       </Button>
-      <Button text="Next">
+      <Button text="dbiotest.btn.next">
         <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="2" />
       </Button>
-      <Button text="Close">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="3" />
+      <Button text="dbiotest.btn.findprev">
+        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="6" />
+      </Button>
+      <Button text="dbiotest.btn.findnext">
+        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="7" />
+      </Button>
+      <Button text="dbiotest.btn.sort">
+        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="8" />
+      </Button>
+      <Button text="dbiotest.btn.dir">
+        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="9" />
+      </Button>
+      <Button text="dbiotest.btn.compact">
+        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="10" />
       </Button>
     </CustomInterface>
     <Powered minvoltage="0.5" powerconsumption="30" />
@@ -244,84 +263,6 @@
       closedTerminalIdentifier="DatabaseTerminalFixed" />
   </Item>
 
-  <Item
-    identifier="DatabaseTerminalFixedSession"
-    category="Machine,Electrical"
-    tags="database_terminal,database_terminal_fixed,database_terminal_session,machine"
-    hideinmenus="true"
-    showcontentsintooltip="true"
-    linkable="true"
-    waterproof="true"
-    fireproof="true"
-    scale="0.75">
-    <InventoryIcon texture="Content/Items/InventoryIconAtlas2.png" sourcerect="323,193,60,61" origin="0.5,0.5" />
-    <Sprite texture="Content/Items/Command/CommandDevices.png" sourcerect="707,254,279,160" origin="0.5,0.5" depth="0.6" />
-    <Body width="150" height="92" density="34" />
-    <Holdable selectkey="Action" pickkey="Use" slots="RightHand+LeftHand" msg="ItemMsgDetachWrench" PickingTime="3.0" aimpos="60,0" handle1="0,0" attachable="true" aimable="false">
-      <RequiredItem identifier="wrench" type="Equipped" />
-    </Holdable>
-    <ItemContainer
-      opentopped="true"
-      capacity="0"
-      maxstacksize="1"
-      ExtraStackSize="63"
-      slotsperrow="5"
-      canbeselected="true"
-      hideitems="true"
-      msg="ItemMsgInteractSelect"
-      keepopenwhenequipped="true"
-      movableframe="true"
-      allowuioverlap="true">
-      <GuiFrame relativesize="0.5,0.4" anchor="Center" style="ItemUI" />
-      <SubContainer capacity="20" slotsperrow="5" maxstacksize="63">
-        <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
-      </SubContainer>
-    </ItemContainer>
-    <CustomInterface canbeselected="true" allowuioverlap="true">
-      <GuiFrame relativesize="0.36,0.22" anchor="BottomLeft" relativeoffset="0.04,0.08" style="ItemUI" />
-      <TextBox text="Search" propertyname="SearchKeyword" targetitemcomponent="DatabaseTerminalComponent" maxtextlength="40" />
-      <Button text="Prev">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="1" />
-      </Button>
-      <Button text="Next">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="2" />
-      </Button>
-      <Button text="FindPrev">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="6" />
-      </Button>
-      <Button text="FindNext">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="7" />
-      </Button>
-      <Button text="Sort">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="8" />
-      </Button>
-      <Button text="Dir">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="9" />
-      </Button>
-      <Button text="Compact">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="10" />
-      </Button>
-      <Button text="Close">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="3" />
-      </Button>
-    </CustomInterface>
-    <Powered minvoltage="0.5" powerconsumption="30" />
-    <ConnectionPanel selectkey="Action" canbeselected="true" msg="ItemMsgRewireScrewdriver" hudpriority="10">
-      <GuiFrame relativesize="0.22,0.28" minsize="380,320" maxsize="480,420" anchor="Center" style="ConnectionPanel" />
-      <RequiredItem identifier="screwdriver" type="Equipped" />
-      <input name="power_in" displayname="connection.powerin" />
-      <output name="condition_out" displayname="connection.conditionout" />
-    </ConnectionPanel>
-    <DatabaseTerminalComponent
-      databaseId="default"
-      terminalSessionTimeout="180"
-      terminalPageSize="20"
-      sessionVariant="true"
-      requirePower="true"
-      minRequiredVoltage="0.5"
-      openSessionIdentifier="DatabaseTerminalFixedSession"
-      closedTerminalIdentifier="DatabaseTerminalFixed" />
-  </Item>
 
   <Item
     identifier="DatabaseAutoRestocker"

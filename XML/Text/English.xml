@@ -21,8 +21,19 @@
   <dbiotest.terminal.count>Stored Item Count</dbiotest.terminal.count>
   <dbiotest.terminal.page>Page</dbiotest.terminal.page>
   <dbiotest.terminal.remainingpages>Pending Page Items</dbiotest.terminal.remainingpages>
+  <dbiotest.terminal.search>Search</dbiotest.terminal.search>
   <dbiotest.terminal.locked>Locked by another terminal session.</dbiotest.terminal.locked>
   <dbiotest.terminal.closed>Session closed.</dbiotest.terminal.closed>
+  <dbiotest.btn.open>Open</dbiotest.btn.open>
+  <dbiotest.btn.force>Force</dbiotest.btn.force>
+  <dbiotest.btn.prev>Prev</dbiotest.btn.prev>
+  <dbiotest.btn.next>Next</dbiotest.btn.next>
+  <dbiotest.btn.findprev>FindPrev</dbiotest.btn.findprev>
+  <dbiotest.btn.findnext>FindNext</dbiotest.btn.findnext>
+  <dbiotest.btn.sort>Sort</dbiotest.btn.sort>
+  <dbiotest.btn.dir>Dir</dbiotest.btn.dir>
+  <dbiotest.btn.compact>Compact</dbiotest.btn.compact>
+  <dbiotest.btn.close>Close</dbiotest.btn.close>
   <dbiotest.power.status>Power</dbiotest.power.status>
   <dbiotest.power.online>Online</dbiotest.power.online>
   <dbiotest.power.offline>Offline</dbiotest.power.offline>

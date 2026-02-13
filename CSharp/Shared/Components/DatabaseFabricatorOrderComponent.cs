@@ -55,6 +55,21 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
             _nextHookCheckTime = Timing.TotalTime + 0.5;
             EnsureActivateButtonHooked();
         }
+
+        // XML CustomInterface button runs on client. Forward it explicitly to the server.
+        if (XmlActionRequest != 0 && Timing.TotalTime >= _nextXmlActionAllowedTime)
+        {
+            int action = XmlActionRequest;
+            XmlActionRequest = 0;
+            _nextXmlActionAllowedTime = Timing.TotalTime + XmlActionCooldownSeconds;
+            if (action == 1)
+            {
+                ModFileLog.Write(
+                    "Fabricator",
+                    $"{DatabaseIOTest.Constants.LogPrefix} db fill client request db='{_resolvedDatabaseId}' itemId={item?.ID}");
+                TrySendOrderFromClient();
+            }
+        }
 #endif
 
         if (!IsServerAuthority) { return; }
@@ -65,6 +80,9 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
             _nextXmlActionAllowedTime = Timing.TotalTime + XmlActionCooldownSeconds;
             if (action == 1)
             {
+                ModFileLog.Write(
+                    "Fabricator",
+                    $"{DatabaseIOTest.Constants.LogPrefix} db fill server request db='{_resolvedDatabaseId}' itemId={item?.ID}");
                 HandleOrderFromServerSelection(Character.Controlled);
             }
         }
@@ -99,9 +117,21 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
 
     private void TrySendOrderFromClient()
     {
-        if (_fabricator == null) { return; }
+        if (_fabricator == null)
+        {
+            ModFileLog.Write(
+                "Fabricator",
+                $"{DatabaseIOTest.Constants.LogPrefix} client order ignored: fabricator component missing db='{_resolvedDatabaseId}' itemId={item?.ID}");
+            return;
+        }
         Identifier identifier = _fabricator.SelectedItemIdentifier;
-        if (identifier.IsEmpty) { return; }
+        if (identifier.IsEmpty)
+        {
+            ModFileLog.Write(
+                "Fabricator",
+                $"{DatabaseIOTest.Constants.LogPrefix} client order ignored: empty selection db='{_resolvedDatabaseId}' itemId={item?.ID}");
+            return;
+        }
 
         int amount = Math.Max(1, _fabricator.AmountToFabricate);
         if (GameMain.NetworkMember == null)
@@ -139,7 +169,16 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
         if (!IsServerAuthority) { return; }
         string identifier = msg.ReadString();
         int amount = msg.ReadInt32();
-        if (string.IsNullOrWhiteSpace(identifier) || amount <= 0) { return; }
+        if (string.IsNullOrWhiteSpace(identifier) || amount <= 0)
+        {
+            ModFileLog.Write(
+                "Fabricator",
+                $"{DatabaseIOTest.Constants.LogPrefix} net order ignored by='{c?.Name ?? c?.Character?.Name ?? "unknown"}' target='{identifier ?? ""}' amount={amount} db='{_resolvedDatabaseId}' itemId={item?.ID}");
+            return;
+        }
+        ModFileLog.Write(
+            "Fabricator",
+            $"{DatabaseIOTest.Constants.LogPrefix} net order request by='{c?.Name ?? c?.Character?.Name ?? "unknown"}' target='{identifier}' amount={amount} db='{_resolvedDatabaseId}' itemId={item?.ID}");
         HandleOrderServer(identifier, amount, c?.Character);
     }
 
@@ -247,10 +286,157 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
         }
         if (_fabricator == null) { return; }
 
-        Identifier identifier = _fabricator.SelectedItemIdentifier;
-        if (identifier.IsEmpty) { return; }
-        int amount = Math.Max(1, _fabricator.AmountToFabricate);
-        HandleOrderServer(identifier.Value, amount, user);
+        if (!TryResolveServerSelectedRecipe(_fabricator, out string identifier, out int amount))
+        {
+            DebugConsole.NewMessage(
+                $"{DatabaseIOTest.Constants.LogPrefix} DB Fill failed: could not resolve current fabricator selection.",
+                Microsoft.Xna.Framework.Color.Orange);
+            ModFileLog.Write(
+                "Fabricator",
+                $"{DatabaseIOTest.Constants.LogPrefix} db fill resolve failed db='{_resolvedDatabaseId}' itemId={item?.ID}");
+            return;
+        }
+
+        HandleOrderServer(identifier, amount, user);
+    }
+
+    private static bool TryResolveServerSelectedRecipe(Fabricator fabricator, out string identifier, out int amount)
+    {
+        identifier = "";
+        amount = 1;
+        if (fabricator == null) { return false; }
+
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+
+        bool TryReadIdentifierFromValue(object value, out string id)
+        {
+            id = "";
+            if (value == null) { return false; }
+
+            if (value is Identifier baroId)
+            {
+                if (baroId.IsEmpty) { return false; }
+                id = baroId.Value;
+                return !string.IsNullOrWhiteSpace(id);
+            }
+
+            if (value is string str)
+            {
+                id = str?.Trim() ?? "";
+                return !string.IsNullOrWhiteSpace(id);
+            }
+
+            // Some versions expose selected recipe object directly.
+            if (value is FabricationRecipe recipe && recipe.TargetItem?.Identifier != null)
+            {
+                id = recipe.TargetItem.Identifier.Value;
+                return !string.IsNullOrWhiteSpace(id);
+            }
+
+            return false;
+        }
+
+        // 1) direct identifier property/field
+        foreach (string memberName in new[] { "SelectedItemIdentifier", "selectedItemIdentifier" })
+        {
+            var prop = fabricator.GetType().GetProperty(memberName, flags);
+            if (prop != null && TryReadIdentifierFromValue(prop.GetValue(fabricator), out identifier))
+            {
+                break;
+            }
+
+            var field = fabricator.GetType().GetField(memberName, flags);
+            if (field != null && TryReadIdentifierFromValue(field.GetValue(fabricator), out identifier))
+            {
+                break;
+            }
+        }
+
+        // 2) selected recipe property/field
+        if (string.IsNullOrWhiteSpace(identifier))
+        {
+            foreach (string memberName in new[] { "SelectedRecipe", "selectedRecipe", "SelectedItem", "selectedItem" })
+            {
+                var prop = fabricator.GetType().GetProperty(memberName, flags);
+                if (prop != null && TryReadIdentifierFromValue(prop.GetValue(fabricator), out identifier))
+                {
+                    break;
+                }
+
+                var field = fabricator.GetType().GetField(memberName, flags);
+                if (field != null && TryReadIdentifierFromValue(field.GetValue(fabricator), out identifier))
+                {
+                    break;
+                }
+            }
+        }
+
+        // 3) selected index -> resolve from internal recipe list
+        if (string.IsNullOrWhiteSpace(identifier))
+        {
+            int selectedIndex = -1;
+            foreach (string memberName in new[] { "SelectedItemIndex", "selectedItemIndex", "selectedIndex" })
+            {
+                var prop = fabricator.GetType().GetProperty(memberName, flags);
+                if (prop != null)
+                {
+                    object value = prop.GetValue(fabricator);
+                    if (value != null && int.TryParse(value.ToString(), out selectedIndex))
+                    {
+                        break;
+                    }
+                }
+
+                var field = fabricator.GetType().GetField(memberName, flags);
+                if (field != null)
+                {
+                    object value = field.GetValue(fabricator);
+                    if (value != null && int.TryParse(value.ToString(), out selectedIndex))
+                    {
+                        break;
+                    }
+                }
+            }
+
+            if (selectedIndex >= 0)
+            {
+                var recipes = GetFabricatorRecipes(fabricator).ToList();
+                if (selectedIndex < recipes.Count)
+                {
+                    var recipe = recipes[selectedIndex];
+                    identifier = recipe?.TargetItem?.Identifier.Value ?? "";
+                }
+            }
+        }
+
+        // amount
+        foreach (string memberName in new[] { "AmountToFabricate", "amountToFabricate", "SelectedAmount", "selectedAmount" })
+        {
+            var prop = fabricator.GetType().GetProperty(memberName, flags);
+            if (prop != null)
+            {
+                object value = prop.GetValue(fabricator);
+                if (value != null && int.TryParse(value.ToString(), out int parsed))
+                {
+                    amount = Math.Max(1, parsed);
+                    break;
+                }
+            }
+
+            var field = fabricator.GetType().GetField(memberName, flags);
+            if (field != null)
+            {
+                object value = field.GetValue(fabricator);
+                if (value != null && int.TryParse(value.ToString(), out int parsed))
+                {
+                    amount = Math.Max(1, parsed);
+                    break;
+                }
+            }
+        }
+
+        identifier = identifier?.Trim() ?? "";
+        return !string.IsNullOrWhiteSpace(identifier);
     }
 
     private static IEnumerable<FabricationRecipe.RequiredItem> GetRequiredItems(FabricationRecipe recipe)
