@@ -93,10 +93,10 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     [Editable, Serialize("DatabaseTerminal", IsPropertySaveable.Yes, description: "Closed terminal identifier.")]
     public string ClosedTerminalIdentifier { get; set; } = "DatabaseTerminal";
 
-    [Serialize("", IsPropertySaveable.Yes, description: "Persisted shared database encoded string.")]
+    [Editable, Serialize("", IsPropertySaveable.Yes, description: "Persisted shared database encoded string.")]
     public string SerializedDatabase { get; set; } = "";
 
-    [Serialize(0, IsPropertySaveable.Yes, description: "Persisted database version.")]
+    [Editable, Serialize(0, IsPropertySaveable.Yes, description: "Persisted database version.")]
     public int DatabaseVersion { get; set; } = 0;
 
     [Serialize(0, IsPropertySaveable.No, description: "XML button action request (1=Prev,2=Next,3=Close,4=Open,5=ForceOpen,6=PrevMatch,7=NextMatch,8=SortMode,9=SortOrder,10=Compact).")]
@@ -413,6 +413,10 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         {
             DatabaseVersion = data.Version;
             SerializedDatabase = DatabaseStore.SerializeData(data);
+            ModFileLog.Write(
+                "Store",
+                $"{Constants.LogPrefix} PersistTerminalState db='{_resolvedDatabaseId}' terminal={item?.ID} " +
+                $"version={DatabaseVersion} items={data.ItemCount} serializedLen={(SerializedDatabase?.Length ?? 0)}");
         }
 
         _cachedItemCount = data.ItemCount;
