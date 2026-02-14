@@ -1,0 +1,449 @@
+diff --git a/alc/alc.cpp b/alc/alc.cpp
+index 30d363af..f759a484 100644
+--- a/alc/alc.cpp
++++ b/alc/alc.cpp
+@@ -197,9 +197,11 @@ BackendInfo BackendList[] = {
+     { "oss", OSSBackendFactory::getFactory },
+ #endif
+ #ifdef HAVE_DSOUND
++#error no dsound >:(
+     { "dsound", DSoundBackendFactory::getFactory },
+ #endif
+ #ifdef HAVE_WINMM
++#error no winmm >:(
+     { "winmm", WinMMBackendFactory::getFactory },
+ #endif
+ #ifdef HAVE_PORTAUDIO
+@@ -1015,7 +1017,7 @@ void alc_initconfig(void)
+         }
+         TRACE("Supported backends: %s\n", names.c_str());
+     }
+-    ReadALConfig();
++    //ReadALConfig();
+ 
+     if(auto suspendmode = al::getenv("__ALSOFT_SUSPEND_CONTEXT"))
+     {
+@@ -2580,6 +2582,20 @@ START_API_FUNC
+ }
+ END_API_FUNC
+ 
++static void (*errorReasonCallback)(const char*) = 0;
++
++void alcCallErrorReasonCallback(std::string reason)
++{
++    if (errorReasonCallback != 0) { errorReasonCallback(reason.c_str()); }
++}
++
++ALC_API void ALC_APIENTRY alcSetErrorReasonCallback(void (*c)(const char*))
++START_API_FUNC
++{
++    errorReasonCallback = c;
++    return;
++}
++END_API_FUNC
+ 
+ ALC_API void ALC_APIENTRY alcSuspendContext(ALCcontext *context)
+ START_API_FUNC
+@@ -2589,7 +2605,9 @@ START_API_FUNC
+ 
+     ContextRef ctx{VerifyContext(context)};
+     if(!ctx)
++    {
+         alcSetError(nullptr, ALC_INVALID_CONTEXT);
++    }
+     else
+         ctx->deferUpdates();
+ }
+@@ -2603,7 +2621,9 @@ START_API_FUNC
+ 
+     ContextRef ctx{VerifyContext(context)};
+     if(!ctx)
++    {
+         alcSetError(nullptr, ALC_INVALID_CONTEXT);
++    }
+     else
+         ctx->processUpdates();
+ }
+@@ -2730,6 +2750,7 @@ static size_t GetIntegerv(ALCdevice *device, ALCenum param, const al::span<int>
+ 
+     if(values.empty())
+     {
++        alcCallErrorReasonCallback("alcGetIntegerv failed: values empty");
+         alcSetError(device, ALC_INVALID_VALUE);
+         return 0;
+     }
+@@ -3717,12 +3738,14 @@ START_API_FUNC
+ 
+     if(!CaptureFactory)
+     {
++        alcCallErrorReasonCallback("alcCaptureOpenDevice failed: CaptureBackend name is null");
+         alcSetError(nullptr, ALC_INVALID_VALUE);
+         return nullptr;
+     }
+ 
+     if(samples <= 0)
+     {
++        alcCallErrorReasonCallback("alcCaptureOpenDevice failed: samples <= 0");
+         alcSetError(nullptr, ALC_INVALID_VALUE);
+         return nullptr;
+     }
+@@ -3739,6 +3762,7 @@ START_API_FUNC
+     auto decompfmt = DecomposeDevFormat(format);
+     if(!decompfmt)
+     {
++        alcCallErrorReasonCallback("alcCaptureOpenDevice failed: DecomposeDevFormat failed");
+         alcSetError(nullptr, ALC_INVALID_ENUM);
+         return nullptr;
+     }
+@@ -3763,6 +3787,7 @@ START_API_FUNC
+     }
+     catch(al::backend_exception &e) {
+         WARN("Failed to open capture device: %s\n", e.what());
++        alcCallErrorReasonCallback(std::string("alcCaptureOpenDevice failed: exception thrown (")+e.what()+")");
+         alcSetError(nullptr, e.errorCode());
+         return nullptr;
+     }
+@@ -3786,11 +3811,13 @@ START_API_FUNC
+     auto iter = std::lower_bound(DeviceList.begin(), DeviceList.end(), device);
+     if(iter == DeviceList.end() || *iter != device)
+     {
++        alcCallErrorReasonCallback("alcCaptureCloseDevice failed: iterator couldn't find correct device");
+         alcSetError(nullptr, ALC_INVALID_DEVICE);
+         return ALC_FALSE;
+     }
+     if((*iter)->Type != Capture)
+     {
++        alcCallErrorReasonCallback("alcCaptureCloseDevice failed: device is not capture device");
+         alcSetError(*iter, ALC_INVALID_DEVICE);
+         return ALC_FALSE;
+     }
+@@ -3814,13 +3841,17 @@ START_API_FUNC
+     DeviceRef dev{VerifyDevice(device)};
+     if(!dev || dev->Type != Capture)
+     {
++        alcCallErrorReasonCallback("alcCaptureStart failed: device is not capture device");
+         alcSetError(dev.get(), ALC_INVALID_DEVICE);
+         return;
+     }
+ 
+     std::lock_guard<std::mutex> _{dev->StateLock};
+     if(!dev->Connected.load(std::memory_order_acquire))
++    {
++        alcCallErrorReasonCallback("alcCaptureStart failed: device could not be loaded");
+         alcSetError(dev.get(), ALC_INVALID_DEVICE);
++    }
+     else if(!dev->Flags.get<DeviceRunning>())
+     {
+         try {
+@@ -3829,6 +3860,7 @@ START_API_FUNC
+             dev->Flags.set<DeviceRunning>();
+         }
+         catch(al::backend_exception& e) {
++            alcCallErrorReasonCallback(std::string("alcCaptureStart failed: backend start failed (")+e.what()+")");
+             aluHandleDisconnect(dev.get(), "%s", e.what());
+             alcSetError(dev.get(), ALC_INVALID_DEVICE);
+         }
+@@ -3841,7 +3873,10 @@ START_API_FUNC
+ {
+     DeviceRef dev{VerifyDevice(device)};
+     if(!dev || dev->Type != Capture)
++    {
++        alcCallErrorReasonCallback("alcCaptureStop failed: device is not capture device");
+         alcSetError(dev.get(), ALC_INVALID_DEVICE);
++    }
+     else
+     {
+         std::lock_guard<std::mutex> _{dev->StateLock};
+@@ -3858,6 +3893,7 @@ START_API_FUNC
+     DeviceRef dev{VerifyDevice(device)};
+     if(!dev || dev->Type != Capture)
+     {
++        alcCallErrorReasonCallback("alcCaptureSamples failed: device is not capture device");
+         alcSetError(dev.get(), ALC_INVALID_DEVICE);
+         return;
+     }
+diff --git a/alc/backends/wasapi.cpp b/alc/backends/wasapi.cpp
+index 8e43aa7c..45950062 100644
+--- a/alc/backends/wasapi.cpp
++++ b/alc/backends/wasapi.cpp
+@@ -54,6 +54,12 @@
+ #include <string>
+ #include <thread>
+ #include <vector>
++#include <string>
++#include <sstream>
++#include <future>
++#include <algorithm>
++#include <functional>
++#include <condition_variable>
+ 
+ #include "alcmain.h"
+ #include "alexcpt.h"
+@@ -65,6 +71,13 @@
+ #include "strutils.h"
+ #include "threads.h"
+ 
++extern void alcCallErrorReasonCallback(std::string reason);
++
++static std::string toStringHex(unsigned long i) {
++    std::stringstream stream;
++    stream << "0x" << std::hex << i;
++    return stream.str();
++}
+ 
+ /* Some headers seem to define these as macros for __uuidof, which is annoying
+  * since some headers don't declare them at all. Hopefully the ifdef is enough
+@@ -792,6 +805,7 @@ void WasapiPlayback::open(const ALCchar *name)
+ 
+         mDevId.clear();
+ 
++        alcCallErrorReasonCallback("WASAPI playback device init failed: HRESULT "+toStringHex(hr));
+         throw al::backend_exception{ALC_INVALID_VALUE, "Device init failed: 0x%08lx", hr};
+     }
+ }
+@@ -897,7 +911,7 @@ HRESULT WasapiPlayback::resetProxy()
+             mDevice->FmtChans = DevFmtX51;
+         else if(chancount >= 6 && (chanmask&X51RearMask) == X5DOT1REAR)
+             mDevice->FmtChans = DevFmtX51Rear;
+-        else if(chancount >= 4 && (chanmask&QuadMask) == QUAD)
++        else if(chancount >= 4/* && (chanmask&QuadMask) == QUAD*/)
+             mDevice->FmtChans = DevFmtQuad;
+         else if(chancount >= 2 && (chanmask&StereoMask) == STEREO)
+             mDevice->FmtChans = DevFmtStereo;
+@@ -1005,9 +1019,11 @@ HRESULT WasapiPlayback::resetProxy()
+         CoTaskMemFree(wfx);
+         wfx = nullptr;
+ 
+-        mDevice->Frequency = OutputType.Format.nSamplesPerSec;
+-        const uint32_t chancount{OutputType.Format.nChannels};
+-        const DWORD chanmask{OutputType.dwChannelMask};
++        const WAVEFORMATEXTENSIBLE& constOutputType = OutputType;
++
++        mDevice->Frequency = constOutputType.Format.nSamplesPerSec;
++        const uint32_t chancount{constOutputType.Format.nChannels};
++        const DWORD chanmask{constOutputType.dwChannelMask};
+         if(chancount >= 8 && (chanmask&X71Mask) == X7DOT1)
+             mDevice->FmtChans = DevFmtX71;
+         else if(chancount >= 7 && (chanmask&X61Mask) == X6DOT1)
+@@ -1016,7 +1032,7 @@ HRESULT WasapiPlayback::resetProxy()
+             mDevice->FmtChans = DevFmtX51;
+         else if(chancount >= 6 && (chanmask&X51RearMask) == X5DOT1REAR)
+             mDevice->FmtChans = DevFmtX51Rear;
+-        else if(chancount >= 4 && (chanmask&QuadMask) == QUAD)
++        else if(chancount >= 4/* && (chanmask&QuadMask) == QUAD*/)
+             mDevice->FmtChans = DevFmtQuad;
+         else if(chancount >= 2 && (chanmask&StereoMask) == STEREO)
+             mDevice->FmtChans = DevFmtStereo;
+@@ -1024,54 +1040,59 @@ HRESULT WasapiPlayback::resetProxy()
+             mDevice->FmtChans = DevFmtMono;
+         else
+         {
+-            ERR("Unhandled extensible channels: %d -- 0x%08lx\n", OutputType.Format.nChannels,
+-                OutputType.dwChannelMask);
+-            mDevice->FmtChans = DevFmtStereo;
+-            OutputType.Format.nChannels = 2;
+-            OutputType.dwChannelMask = STEREO;
++            ERR("Unhandled extensible channels: %d -- 0x%08lx\n", constOutputType.Format.nChannels,
++                constOutputType.dwChannelMask);
++            /*mDevice->FmtChans = DevFmtStereo;
++            constOutputType.Format.nChannels = 2;
++            constOutputType.dwChannelMask = STEREO;*/
+         }
+ 
+-        if(IsEqualGUID(OutputType.SubFormat, KSDATAFORMAT_SUBTYPE_PCM))
++        if(IsEqualGUID(constOutputType.SubFormat, KSDATAFORMAT_SUBTYPE_PCM))
+         {
+-            if(OutputType.Format.wBitsPerSample == 8)
++            if(constOutputType.Format.wBitsPerSample == 8)
+                 mDevice->FmtType = DevFmtUByte;
+-            else if(OutputType.Format.wBitsPerSample == 16)
++            else if(constOutputType.Format.wBitsPerSample == 16)
+                 mDevice->FmtType = DevFmtShort;
+-            else if(OutputType.Format.wBitsPerSample == 32)
++            else if(constOutputType.Format.wBitsPerSample == 32)
+                 mDevice->FmtType = DevFmtInt;
+             else
+             {
++                ERR("Unhandled bits per sample: %d\n", constOutputType.Format.wBitsPerSample);
+                 mDevice->FmtType = DevFmtShort;
+-                OutputType.Format.wBitsPerSample = 16;
++                //OutputType.Format.wBitsPerSample = 16;
+             }
+         }
+-        else if(IsEqualGUID(OutputType.SubFormat, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT))
++        else if(IsEqualGUID(constOutputType.SubFormat, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT))
+         {
+             mDevice->FmtType = DevFmtFloat;
+-            OutputType.Format.wBitsPerSample = 32;
++            if (constOutputType.Format.wBitsPerSample != 32) {
++                ERR("Incorrect bits per sample for SUBTYPE_IEEE_FLOAT: %d\n", constOutputType.Format.wBitsPerSample);
++            }
+         }
+         else
+         {
+-            ERR("Unhandled format sub-type: %s\n", GuidPrinter{OutputType.SubFormat}.c_str());
++            ERR("Unhandled format sub-type: %s\n", GuidPrinter{constOutputType.SubFormat}.c_str());
+             mDevice->FmtType = DevFmtShort;
+-            if(OutputType.Format.wFormatTag != WAVE_FORMAT_EXTENSIBLE)
+-                OutputType.Format.wFormatTag = WAVE_FORMAT_PCM;
+-            OutputType.Format.wBitsPerSample = 16;
+-            OutputType.SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
++            /*if(constOutputType.Format.wFormatTag != WAVE_FORMAT_EXTENSIBLE)
++                constOutputType.Format.wFormatTag = WAVE_FORMAT_PCM;
++            constOutputType.Format.wBitsPerSample = 16;
++            constOutputType.SubFormat = KSDATAFORMAT_SUBTYPE_PCM;*/
+         }
+         OutputType.Samples.wValidBitsPerSample = OutputType.Format.wBitsPerSample;
+     }
+-    mFrameStep = OutputType.Format.nChannels;
++    const WAVEFORMATEXTENSIBLE& constOutputType2 = OutputType;
++
++    mFrameStep = constOutputType2.Format.nChannels;
+ 
+     EndpointFormFactor formfactor{UnknownFormFactor};
+     get_device_formfactor(mMMDev, &formfactor);
+     mDevice->IsHeadphones = (mDevice->FmtChans == DevFmtStereo
+         && (formfactor == Headphones || formfactor == Headset));
+ 
+-    setChannelOrderFromWFXMask(OutputType.dwChannelMask);
++    setChannelOrderFromWFXMask(constOutputType2.dwChannelMask);
+ 
+     hr = mClient->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+-        buf_time.count(), 0, &OutputType.Format, nullptr);
++        buf_time.count(), 0, &constOutputType2.Format, nullptr);
+     if(FAILED(hr))
+     {
+         ERR("Failed to initialize audio client: 0x%08lx\n", hr);
+@@ -1326,7 +1347,9 @@ void WasapiCapture::open(const ALCchar *name)
+     mNotifyEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+     if(mNotifyEvent == nullptr)
+     {
+-        ERR("Failed to create notify event: %lu\n", GetLastError());
++        DWORD error = GetLastError();
++        ERR("Failed to create notify event: %lu\n", error);
++        alcCallErrorReasonCallback(std::string("WASAPI capture open failed: failed to create notify event (")+toStringHex(error)+")");
+         hr = E_FAIL;
+     }
+ 
+@@ -1373,12 +1396,14 @@ void WasapiCapture::open(const ALCchar *name)
+ 
+         mDevId.clear();
+ 
++        alcCallErrorReasonCallback(std::string("WASAPI capture open failed: HRESULT ")+toStringHex(hr)+" (1)");
+         throw al::backend_exception{ALC_INVALID_VALUE, "Device init failed: 0x%08lx", hr};
+     }
+ 
+     hr = pushMessage(MsgType::ResetDevice).get();
+     if(FAILED(hr))
+     {
++        alcCallErrorReasonCallback(std::string("WASAPI capture open failed: HRESULT ")+toStringHex(hr)+" (2)");
+         if(hr == E_OUTOFMEMORY)
+             throw al::backend_exception{ALC_OUT_OF_MEMORY, "Out of memory"};
+         throw al::backend_exception{ALC_INVALID_VALUE, "Device reset failed"};
+@@ -1410,6 +1435,7 @@ HRESULT WasapiCapture::openProxy()
+ 
+     if(FAILED(hr))
+     {
++        alcCallErrorReasonCallback(std::string("WASAPI capture proxy open failed: HRESULT ")+toStringHex(hr));
+         if(mMMDev)
+             mMMDev->Release();
+         mMMDev = nullptr;
+@@ -1439,6 +1465,7 @@ HRESULT WasapiCapture::resetProxy()
+     HRESULT hr{mMMDev->Activate(IID_IAudioClient, CLSCTX_INPROC_SERVER, nullptr, &ptr)};
+     if(FAILED(hr))
+     {
++        alcCallErrorReasonCallback(std::string("WASAPI capture proxy reset failed: failed to reactivate audio client (HRESULT ")+toStringHex(hr)+")");
+         ERR("Failed to reactivate audio client: 0x%08lx\n", hr);
+         return hr;
+     }
+@@ -1521,8 +1548,14 @@ HRESULT WasapiCapture::resetProxy()
+     hr = mClient->IsFormatSupported(AUDCLNT_SHAREMODE_SHARED, &OutputType.Format, &wfx);
+     if(FAILED(hr))
+     {
+-        ERR("Failed to check format support: 0x%08lx\n", hr);
+-        return hr;
++        alcCallErrorReasonCallback(std::string("WASAPI capture proxy reset error: failed to check format support (HRESULT ")+toStringHex(hr)+")");
++        hr = mClient->GetMixFormat(&wfx);
++        if (FAILED(hr))
++        {
++            alcCallErrorReasonCallback(std::string("WASAPI capture proxy reset failed: failed to get mix format (HRESULT ")+toStringHex(hr)+")");
++            ERR("Failed to check format support: 0x%08lx\n", hr);
++            return hr;
++        }
+     }
+ 
+     mSampleConv = nullptr;
+@@ -1619,6 +1652,7 @@ HRESULT WasapiCapture::resetProxy()
+         buf_time.count(), 0, &OutputType.Format, nullptr);
+     if(FAILED(hr))
+     {
++        alcCallErrorReasonCallback(std::string("WASAPI capture proxy reset failed: failed to initialize audio client (HRESULT ")+toStringHex(hr)+")");
+         ERR("Failed to initialize audio client: 0x%08lx\n", hr);
+         return hr;
+     }
+@@ -1630,6 +1664,7 @@ HRESULT WasapiCapture::resetProxy()
+         hr = mClient->GetBufferSize(&buffer_len);
+     if(FAILED(hr))
+     {
++        alcCallErrorReasonCallback(std::string("WASAPI capture proxy reset failed: failed to get buffer size (HRESULT ")+toStringHex(hr)+")");
+         ERR("Failed to get buffer size: 0x%08lx\n", hr);
+         return hr;
+     }
+@@ -1641,6 +1676,7 @@ HRESULT WasapiCapture::resetProxy()
+     hr = mClient->SetEventHandle(mNotifyEvent);
+     if(FAILED(hr))
+     {
++        alcCallErrorReasonCallback(std::string("WASAPI capture proxy reset failed: failed to set event handle (HRESULT ")+toStringHex(hr)+")");
+         ERR("Failed to set event handle: 0x%08lx\n", hr);
+         return hr;
+     }
+@@ -1653,7 +1689,10 @@ void WasapiCapture::start()
+ {
+     const HRESULT hr{pushMessage(MsgType::StartDevice).get()};
+     if(FAILED(hr))
++    {
++        alcCallErrorReasonCallback(std::string("WASAPI capture start failed: HRESULT ")+toStringHex(hr));
+         throw al::backend_exception{ALC_INVALID_DEVICE, "Failed to start recording: 0x%lx", hr};
++    }
+ }
+ 
+ HRESULT WasapiCapture::startProxy()
+@@ -1663,6 +1702,7 @@ HRESULT WasapiCapture::startProxy()
+     HRESULT hr{mClient->Start()};
+     if(FAILED(hr))
+     {
++        alcCallErrorReasonCallback(std::string("WASAPI capture start failed: failed to start audio client (HRESULT ")+toStringHex(hr)+")");
+         ERR("Failed to start audio client: 0x%08lx\n", hr);
+         return hr;
+     }
+@@ -1676,9 +1716,17 @@ HRESULT WasapiCapture::startProxy()
+             mKillNow.store(false, std::memory_order_release);
+             mThread = std::thread{std::mem_fn(&WasapiCapture::recordProc), this};
+         }
++        catch(std::exception& e) {
++            mCapture->Release();
++            mCapture = nullptr;
++            alcCallErrorReasonCallback(std::string("WASAPI capture start failed: failed to start thread (")+e.what()+")");
++            ERR("Failed to start thread\n");
++            hr = E_FAIL;
++        }
+         catch(...) {
+             mCapture->Release();
+             mCapture = nullptr;
++            alcCallErrorReasonCallback(std::string("WASAPI capture start failed: failed to start thread (unknown exception type)"));
+             ERR("Failed to start thread\n");
+             hr = E_FAIL;
+         }
+@@ -1737,6 +1785,12 @@ bool WasapiBackendFactory::init()
+         InitResult = future.get();
+     }
+     catch(...) {
++        //TODO: log this?
++    }
++
++    if (FAILED(InitResult))
++    {
++        alcCallErrorReasonCallback(std::string("WASAPI backend factory init failed: HRESULT ")+toStringHex(InitResult));
+     }
+ 
+     return SUCCEEDED(InitResult) ? ALC_TRUE : ALC_FALSE;

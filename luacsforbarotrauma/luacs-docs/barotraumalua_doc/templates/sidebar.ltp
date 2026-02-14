@@ -1,0 +1,160 @@
+
+{%
+local function isKindExpandable(kind)
+  return kind ~= "Manual"
+end
+
+local function isSectionEmpty(mod, sections)
+  if type(sections) == "table" then
+    for _, v in pairs(mod.items) do
+      for _, section in pairs(sections) do
+        if v.section_id == section then
+          return false
+        end
+      end
+    end
+  else
+    local section = sections
+    for _, v in pairs(mod.items) do
+      if v.section_id == section then
+        return false
+      end
+    end
+  end
+  return true
+end
+
+local function kinds()
+  local kinds = {"Manual", "Code", "Enum"}
+
+  local kindIndices = {}
+  for i, v in pairs(kinds) do
+    kindIndices[v] = i
+  end
+
+  local t = {}
+  for kind, mods, type in ldoc.kinds() do
+    local entry = {kind, mods, type}
+    local idx = kindIndices[kind]
+
+    if idx then
+      t[idx] = entry
+    else
+      t[#t + 1] = entry
+    end
+  end
+
+  local idx
+  return function(t, i)
+    i = i + 1
+    local v = t[i]
+    if v then
+      return i, table.unpack(v)
+    end
+  end, t, 0
+end
+%}
+
+<nav>
+  <header>
+    {% if (not ldoc.root) then %}
+      <h1><a href="{* ldoc.url('') *}">Lua For Barotrauma Documentation</a></h1>
+    {% end %}
+    <input id="search" type="search" autocomplete="off" placeholder="Search..." />
+  </header>
+
+  <section>
+    {% for _, kind, mods, type in kinds() do %}
+      {% if (ldoc.allowed_in_contents(type, mod)) then %}
+        <details class="category" open>
+          <summary>
+            <h2>{{kind}}</h2>
+          </summary>
+
+          <ul>
+            {% for currentMod in mods() do %}
+              {% local name = ldoc.display_name(currentMod) %}
+              <li>
+                {% if (isKindExpandable(kind)) then %}
+                  <details {{currentMod.name == (mod or {}).name and "open" or ""}}>
+                  <summary><a href="{* ldoc.ref_to_module(currentMod) *}">{{name}}</a></summary>
+
+                  <ul>
+                {% else %}
+                  <a href="{* ldoc.ref_to_module(currentMod) *}">{{name}}</a>
+                {% end %}
+
+                {% if (isKindExpandable(kind)) then
+                  currentMod.items:sort(function(a, b)
+                    return a.name < b.name
+                  end)
+                end %}
+
+                {% if not isSectionEmpty(currentMod, "function") then %}
+                <li>
+                  <label class="colorful-label">FUNCTIONS</label>
+                </li>
+                {% end %}
+
+                {% for k, v in pairs(currentMod.items) do %}
+                  {% if (v.section_id == "function") then %}
+                    <li>
+                      {* ldoc.sidebar_item(v, currentMod) *}
+                    </li>
+                  {% end %}
+                {% end %}
+
+                {% if not isSectionEmpty(currentMod, "table") then %}
+                <li>
+                  <label class="colorful-label">TABLES</label>
+                </li>
+                {% end %}
+
+                {% for k, v in pairs(currentMod.items) do %}
+                  {% if (v.section_id == "table") then %}
+                    <li>
+                      {* ldoc.sidebar_item(v, currentMod) *}
+                    </li>
+                  {% end %}
+                {% end %}
+
+                {% if not isSectionEmpty(currentMod, "field") then %}
+                <li>
+                  <label class="colorful-label">FIELDS</label>
+                </li>
+                {% end %}
+
+                {% for k, v in pairs(currentMod.items) do %}
+                  {% if (v.section_id == "field") then %}
+                    <li>
+                      {* ldoc.sidebar_item(v, currentMod) *}
+                    </li>
+                  {% end %}
+                {% end %}
+
+                {% if not isSectionEmpty(currentMod, "hook") then %}
+                <li>
+                  <label class="colorful-label">HOOKS</label>
+                </li>
+                {% end %}
+
+                {% for k, v in pairs(currentMod.items) do %}
+                  {% if (v.section_id == "hook") then %}
+                    <li>
+                      {* ldoc.sidebar_item(v, currentMod) *}
+                    </li>
+                  {% end %}
+                {% end %}
+
+                {% if (isKindExpandable(kind)) then %}
+                  </ul>
+                  </details>
+                {% end %}
+              </li>
+            {% end %}
+          </ul>
+        </details>
+      {% end %}
+    {% end %}
+  </section>
+</nav>
