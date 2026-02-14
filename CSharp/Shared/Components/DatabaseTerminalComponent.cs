@@ -155,6 +155,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private int _pendingPageFillCheckExpectedCount;
     private int _pendingPageFillCheckPageIndex = -1;
     private int _pendingPageFillCheckRetries;
+    private bool _currentPageFillVerified;
 
     private string _lastSyncedDatabaseId;
     private int _lastSyncedItemCount = -1;
@@ -1518,6 +1519,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private void InitializePages(List<ItemData> sourceItems, Character actor)
     {
         _sessionWritebackCommitted = false;
+        _currentPageFillVerified = false;
         var inventory = GetTerminalInventory();
         BuildPagesBySlotUsage(sourceItems, inventory);
         LoadCurrentPageIntoInventory(actor);
@@ -1528,6 +1530,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (!SessionVariant) { return; }
 
         _sessionWritebackCommitted = false;
+        _currentPageFillVerified = false;
         var inventory = GetTerminalInventory();
         var currentItems = ItemSerializer.SerializeInventory(_sessionOwner, inventory);
         BuildPagesBySlotUsage(currentItems, inventory);
@@ -1560,6 +1563,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         _pendingPageFillCheckExpectedCount = CountFlatItems(pageItems);
         _pendingPageFillCheckPageIndex = _sessionCurrentPageIndex;
         _pendingPageFillCheckRetries = 0;
+        _currentPageFillVerified = _pendingPageFillCheckExpectedCount <= 0;
 
         return true;
     }
@@ -1569,6 +1573,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (!IsSessionActive())
         {
             _pendingPageFillCheckGeneration = -1;
+            _currentPageFillVerified = false;
             return;
         }
 
@@ -1590,6 +1595,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         int actualCount = CountFlatItems(ItemSerializer.SerializeInventory(_sessionOwner, inventory));
         if (actualCount >= _pendingPageFillCheckExpectedCount)
         {
+            _currentPageFillVerified = true;
             _pendingPageFillCheckGeneration = -1;
             return;
         }
@@ -1602,6 +1608,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                 $"expected={_pendingPageFillCheckExpectedCount} actual={actualCount} retries={_pendingPageFillCheckRetries}";
             DebugConsole.NewMessage(warnLine, Microsoft.Xna.Framework.Color.Orange);
             ModFileLog.Write("Terminal", warnLine);
+            _currentPageFillVerified = false;
             _pendingPageFillCheckGeneration = -1;
             return;
         }
@@ -1633,12 +1640,24 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (inventory == null) { return; }
 
         var serialized = ItemSerializer.SerializeInventory(_sessionOwner, inventory);
+        int expectedCurrentPageCount = CountFlatItems(_sessionPages[_sessionCurrentPageIndex]);
+        int actualCurrentPageCount = CountFlatItems(serialized);
+        if (expectedCurrentPageCount > 0 && actualCurrentPageCount == 0 && !_currentPageFillVerified)
+        {
+            ModFileLog.Write(
+                "Terminal",
+                $"{Constants.LogPrefix} Preserve source page on capture db='{_resolvedDatabaseId}' terminal={item?.ID} " +
+                $"expected={expectedCurrentPageCount} actual={actualCurrentPageCount} verified={_currentPageFillVerified}.");
+            serialized = CloneItems(_sessionPages[_sessionCurrentPageIndex]);
+        }
+
         var sourceIndices = _sessionPageSourceIndices.Count > _sessionCurrentPageIndex
             ? _sessionPageSourceIndices[_sessionCurrentPageIndex]
             : new List<int>();
         ReplaceSessionEntriesBySourceIndices(sourceIndices, serialized);
         SpawnService.ClearInventory(inventory);
         _pendingPageFillCheckGeneration = -1;
+        _currentPageFillVerified = false;
 
         // Keep current page index stable after source mutation.
         BuildPagesBySlotUsage(_sessionEntries, inventory, _sessionCurrentPageIndex);

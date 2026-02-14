@@ -50,7 +50,8 @@ namespace DatabaseIOTest.Services
             _roundDecisionSource = "";
             ClearVolatile();
             RebuildFromPersistedTerminals();
-            ModFileLog.Write("Store", $"{Constants.LogPrefix} BeginRound source='{source}' dbCount={_store.Count}");
+            int totalItems = _store.Values.Sum(db => db?.ItemCount ?? 0);
+            ModFileLog.Write("Store", $"{Constants.LogPrefix} BeginRound source='{source}' dbCount={_store.Count} totalItems={totalItems}");
         }
 
         public static void CommitRound(string source = "unknown")
@@ -63,7 +64,8 @@ namespace DatabaseIOTest.Services
             // Use non-converting close to force deterministic writeback before persistence.
             int closed = ForceCloseAllActiveSessions($"commit:{source}", convertToClosedItem: false);
             PersistStoreToTerminals();
-            ModFileLog.Write("Store", $"{Constants.LogPrefix} CommitRound source='{source}' forcedClosed={closed} dbCount={_store.Count}");
+            int totalItems = _store.Values.Sum(db => db?.ItemCount ?? 0);
+            ModFileLog.Write("Store", $"{Constants.LogPrefix} CommitRound source='{source}' forcedClosed={closed} dbCount={_store.Count} totalItems={totalItems}");
         }
 
         public static void RollbackRound(string reason = "unknown")
@@ -76,7 +78,8 @@ namespace DatabaseIOTest.Services
             int closed = ForceCloseAllActiveSessions($"rollback:{reason}", convertToClosedItem: false);
             ClearVolatile();
             RebuildFromPersistedTerminals();
-            ModFileLog.Write("Store", $"{Constants.LogPrefix} RollbackRound reason='{reason}' forcedClosed={closed} dbCount={_store.Count}");
+            int totalItems = _store.Values.Sum(db => db?.ItemCount ?? 0);
+            ModFileLog.Write("Store", $"{Constants.LogPrefix} RollbackRound reason='{reason}' forcedClosed={closed} dbCount={_store.Count} totalItems={totalItems}");
         }
 
         public static void OnRoundEndObserved(string source = "roundEnd")
@@ -158,7 +161,8 @@ namespace DatabaseIOTest.Services
                 SyncTerminals(id);
             }
 
-            ModFileLog.Write("Store", $"{Constants.LogPrefix} RebuildFromPersistedTerminals terminals={seenTerminals} dbCount={rebuiltDatabases}");
+            int totalItems = _store.Values.Sum(db => db?.ItemCount ?? 0);
+            ModFileLog.Write("Store", $"{Constants.LogPrefix} RebuildFromPersistedTerminals terminals={seenTerminals} dbCount={rebuiltDatabases} totalItems={totalItems}");
         }
 
         public static string SerializeData(DatabaseData data)
@@ -336,6 +340,12 @@ namespace DatabaseIOTest.Services
             }
 
             SyncTerminals(id);
+
+            int storeItems = _store.TryGetValue(id, out var merged) ? merged?.ItemCount ?? 0 : 0;
+            ModFileLog.Write(
+                "Store",
+                $"{Constants.LogPrefix} RegisterTerminal db='{id}' terminal={terminal.TerminalEntityId} " +
+                $"serializedVersion={dataFromTerminal.Version} serializedItems={dataFromTerminal.ItemCount} storeItems={storeItems}");
         }
 
         public static void UnregisterTerminal(DatabaseTerminalComponent terminal)
