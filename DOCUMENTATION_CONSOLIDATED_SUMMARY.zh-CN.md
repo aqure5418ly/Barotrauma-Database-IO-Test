@@ -568,3 +568,43 @@
 - 技术路线最优先应是：**M1/M2（正确性） -> M3/M4（同步与视图） -> M5/M6（并发与生态）**。
 - Track-B（虚拟终端）是中长期高收益方向，但前提是服务端数据权威和协议层先稳定。
 
+---
+
+## 16. 当前进度核查（聚焦 M1，结合 luacsforbarotrauma 文档/API）
+
+> 核查基线：`REFACTOR_PLAN_SAVE_CONSISTENCY.md` 的 M1 拆分任务（T1.1~T1.4）。
+
+### 16.1 M1 任务状态判定
+
+| 任务 | 当前状态 | 代码/文档依据 | 判定 |
+|---|---|---|---|
+| T1.1 生命周期桥接 API | `BeginRound/CommitRound/RollbackRound` 已实现，且有 `ClearVolatile/RebuildFromPersistedTerminals`。 | `CSharp/Shared/Services/DatabaseStore.cs` | ✅ 已完成 |
+| T1.2 保存语义 Patch 绑定 | 目前仅有“尝试安装 patch”的占位逻辑；未真正把 `wasSaved` 分支绑定到 commit/rollback。 | `CSharp/Shared/DatabaseIOMod.cs` | ⚠️ 部分完成（关键路径未落地） |
+| T1.3 `roundStart` 兜底 | 实现了会话令牌驱动的 `EnsureRoundInitialized` + `BeginRound` 重建；同时保留 mod-load 启动路径。 | `CSharp/Shared/Services/DatabaseStore.cs` + `CSharp/Shared/DatabaseIOMod.cs` | ✅ 基本完成 |
+| T1.4 rollback 前强制收尾会话 | `BeginRound/CommitRound/RollbackRound` 均先 `ForceCloseAllActiveSessions`，并清锁同步。 | `CSharp/Shared/Services/DatabaseStore.cs` | ✅ 已完成 |
+
+### 16.2 luacsforbarotrauma 文档/API 交叉验证结论
+
+1. **Hook.Patch 在 LuaCs 文档中是可用且建议的正式路径**。  
+   `Hooks.lua` 与 manual 都给出了 `Hook.Patch` 的参数模式（含可选 identifier、parameterTypes、Before/After）。这说明“通过 patch 绑定保存决策”在能力层面是成立的。 
+
+2. **Lua 层公开的 `Game.EndGame()` 无 `wasSaved` 参数**。  
+   `Game.lua` 仅暴露无参 `Game.EndGame()`；因此 M1 文档里提到的 `GameServer.EndGame(... wasSaved ...)` 更像是 **C# 侧内部签名目标**，不能直接从 Lua API 文档推导出最终参数列表。 
+
+3. **当前代码尚未进入“真正 patch 成功”阶段**。  
+   `DatabaseIOMod.TryInstallSaveDecisionPatch()` 目前只做类型与方法存在性探测并记录日志，尚无 `Hook.Patch` 调用与回调绑定实现，所以 Save/No-Save 正确性的退出条件还未满足。 
+
+### 16.3 对“m1 已经进行了一部分”的精确结论
+
+- 你们对 M1 的判断是准确的：**目前约完成 3/4（T1.1、T1.3、T1.4 已落地；T1.2 未打通）**。
+- 阻塞点集中在 **保存语义事件桥接**，不是数据模型本身。
+
+### 16.4 下一步最小闭环建议（仅补齐 T1.2）
+
+1. 在 `TryInstallSaveDecisionPatch` 中落地真正的 `Hook.Patch` 调用（优先 Before/After 二选一并固定 parameterTypes）。
+2. 回调里按可用参数识别保存结果：
+   - `saved=true` -> `DatabaseStore.CommitRound("endgame-saved")`
+   - `saved=false` -> `DatabaseStore.RollbackRound("endgame-unsaved")`
+3. 若当前版本签名不稳定，先实现 Plan-B：
+   - `roundEnd` 事件 + 保守回滚（默认 rollback，只有明确 save 才 commit）
+   - 同时在日志中输出命中的签名/分支，作为后续版本适配依据。
