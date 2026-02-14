@@ -16,9 +16,12 @@ namespace DatabaseIOTest.Services
         }
 
         private static readonly Dictionary<string, DatabaseData> _store = new Dictionary<string, DatabaseData>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, DatabaseData> _committedStore = new Dictionary<string, DatabaseData>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, int> _activeTerminals = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, List<WeakReference<DatabaseTerminalComponent>>> _terminals =
             new Dictionary<string, List<WeakReference<DatabaseTerminalComponent>>>(StringComparer.OrdinalIgnoreCase);
+        private static int _lastSessionToken = int.MinValue;
+        private static bool _roundInitialized;
 
         public static string Normalize(string databaseId)
         {
@@ -28,8 +31,78 @@ namespace DatabaseIOTest.Services
         public static void Clear()
         {
             _store.Clear();
+            _committedStore.Clear();
             _activeTerminals.Clear();
             _terminals.Clear();
+            _roundInitialized = false;
+            _lastSessionToken = int.MinValue;
+        }
+
+        public static void BeginRound(string reason = "")
+        {
+            ForceCloseAllActiveSessions($"begin-round:{reason}");
+            ClearVolatile();
+            RebuildFromPersistedTerminals();
+
+            _committedStore.Clear();
+            CopyDictionary(_store, _committedStore);
+            _roundInitialized = true;
+
+            ModFileLog.Write("Store", $"{Constants.LogPrefix} BeginRound reason='{reason}' dbs={_store.Count}");
+        }
+
+        public static void CommitRound(string reason = "")
+        {
+            ForceCloseAllActiveSessions($"commit-round:{reason}");
+
+            _committedStore.Clear();
+            CopyDictionary(_store, _committedStore);
+            PersistCommittedToTerminals();
+
+            ModFileLog.Write("Store", $"{Constants.LogPrefix} CommitRound reason='{reason}' dbs={_committedStore.Count}");
+        }
+
+        public static void RollbackRound(string reason = "")
+        {
+            ForceCloseAllActiveSessions($"rollback-round:{reason}");
+
+            _store.Clear();
+            CopyDictionary(_committedStore, _store);
+            _activeTerminals.Clear();
+            SyncAllTerminals();
+
+            ModFileLog.Write("Store", $"{Constants.LogPrefix} RollbackRound reason='{reason}' dbs={_store.Count}");
+        }
+
+        public static void ClearVolatile()
+        {
+            _store.Clear();
+            _activeTerminals.Clear();
+        }
+
+        public static void RebuildFromPersistedTerminals()
+        {
+            foreach (var pair in _terminals)
+            {
+                var id = Normalize(pair.Key);
+                var refsList = pair.Value;
+                if (refsList == null) { continue; }
+
+                CleanupDeadReferences(refsList);
+                foreach (var weak in refsList)
+                {
+                    if (!weak.TryGetTarget(out var terminal) || terminal == null)
+                    {
+                        continue;
+                    }
+
+                    var data = DeserializeData(terminal.SerializedDatabase, id);
+                    data.Items = CompactItems(CloneItemList(data.Items));
+                    MergeRebuildData(id, data);
+                }
+            }
+
+            SyncAllTerminals();
         }
 
         public static string SerializeData(DatabaseData data)
@@ -63,6 +136,9 @@ namespace DatabaseIOTest.Services
         public static void RegisterTerminal(DatabaseTerminalComponent terminal)
         {
             if (terminal == null) { return; }
+
+            EnsureRoundInitialized();
+
             string id = Normalize(terminal.DatabaseId);
             terminal.ResolveDatabaseId(id);
 
@@ -90,6 +166,16 @@ namespace DatabaseIOTest.Services
             }
 
             SyncTerminals(id);
+        }
+
+        private static void EnsureRoundInitialized()
+        {
+            int sessionToken = GameMain.GameSession?.GetHashCode() ?? 0;
+            if (!_roundInitialized || sessionToken != _lastSessionToken)
+            {
+                _lastSessionToken = sessionToken;
+                BeginRound($"session-token:{sessionToken}");
+            }
         }
 
         public static void UnregisterTerminal(DatabaseTerminalComponent terminal)
@@ -452,6 +538,82 @@ namespace DatabaseIOTest.Services
                 data.Items = new List<ItemData>();
             }
             return data;
+        }
+
+        private static void SyncAllTerminals()
+        {
+            foreach (var key in _terminals.Keys.ToList())
+            {
+                SyncTerminals(key);
+            }
+        }
+
+        private static void PersistCommittedToTerminals()
+        {
+            foreach (var pair in _committedStore)
+            {
+                if (!_store.ContainsKey(pair.Key))
+                {
+                    _store[pair.Key] = CloneDatabaseData(pair.Value);
+                }
+            }
+
+            SyncAllTerminals();
+        }
+
+        private static void ForceCloseAllActiveSessions(string reason)
+        {
+            foreach (var kv in _activeTerminals.ToList())
+            {
+                if (TryGetTerminalByEntityId(kv.Key, kv.Value, out var terminal) && terminal != null)
+                {
+                    terminal.RequestForceCloseForTakeover(reason, null);
+                }
+            }
+
+            _activeTerminals.Clear();
+        }
+
+        private static void MergeRebuildData(string databaseId, DatabaseData candidate)
+        {
+            if (candidate == null) { return; }
+
+            if (!_store.TryGetValue(databaseId, out var existing))
+            {
+                _store[databaseId] = CloneDatabaseData(candidate);
+                return;
+            }
+
+            int existingItems = existing.Items?.Count ?? 0;
+            int candidateItems = candidate.Items?.Count ?? 0;
+            if (candidate.Version > existing.Version ||
+                (candidate.Version == existing.Version && candidateItems > existingItems))
+            {
+                _store[databaseId] = CloneDatabaseData(candidate);
+            }
+        }
+
+        private static void CopyDictionary(Dictionary<string, DatabaseData> source, Dictionary<string, DatabaseData> target)
+        {
+            foreach (var pair in source)
+            {
+                target[pair.Key] = CloneDatabaseData(pair.Value);
+            }
+        }
+
+        private static DatabaseData CloneDatabaseData(DatabaseData source)
+        {
+            if (source == null)
+            {
+                return new DatabaseData { DatabaseId = Constants.DefaultDatabaseId, Version = 0, Items = new List<ItemData>() };
+            }
+
+            return new DatabaseData
+            {
+                DatabaseId = Normalize(source.DatabaseId),
+                Version = source.Version,
+                Items = CloneItemList(source.Items)
+            };
         }
 
         private static void SyncTerminals(string databaseId)
