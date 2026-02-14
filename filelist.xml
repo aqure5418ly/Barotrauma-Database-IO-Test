@@ -1,5 +1,5 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<contentpackage name="Database IO Test" modversion="0.1.0" corepackage="False" steamworkshopid="3665390145" gameversion="1.11.5.0">
+<contentpackage name="Database IO Test" modversion="0.1.1" corepackage="False" steamworkshopid="3665390145" gameversion="1.11.5.0">
   <Item file="%ModDir%/XML/Items.xml" />
   <Item file="%ModDir%/XML/FabricatorOverrides.xml" />
   <Text file="%ModDir%/XML/Text/English.xml" />
