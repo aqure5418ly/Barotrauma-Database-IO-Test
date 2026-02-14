@@ -25,5 +25,8 @@
     <Reference Include="Lidgren.NetStandard">
       <HintPath>..\..\..\Lidgren.NetStandard.dll</HintPath>
     </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>..\..\..\0Harmony.dll</HintPath>
+    </Reference>
   </ItemGroup>
 </Project>

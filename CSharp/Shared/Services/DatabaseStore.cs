@@ -19,6 +19,9 @@ namespace DatabaseIOTest.Services
         private static readonly Dictionary<string, int> _activeTerminals = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, List<WeakReference<DatabaseTerminalComponent>>> _terminals =
             new Dictionary<string, List<WeakReference<DatabaseTerminalComponent>>>(StringComparer.OrdinalIgnoreCase);
+        private static bool _roundDecisionApplied;
+        private static string _roundDecisionSource = "";
+        private static bool _saveDecisionBindingEnabled;
 
         public static string Normalize(string databaseId)
         {
@@ -30,6 +33,132 @@ namespace DatabaseIOTest.Services
             _store.Clear();
             _activeTerminals.Clear();
             _terminals.Clear();
+            _roundDecisionApplied = false;
+            _roundDecisionSource = "";
+            _saveDecisionBindingEnabled = false;
+        }
+
+        public static void ClearVolatile()
+        {
+            _store.Clear();
+            _activeTerminals.Clear();
+        }
+
+        public static void BeginRound(string source = "roundStart")
+        {
+            _roundDecisionApplied = false;
+            _roundDecisionSource = "";
+            ClearVolatile();
+            RebuildFromPersistedTerminals();
+            ModFileLog.Write("Store", $"{Constants.LogPrefix} BeginRound source='{source}' dbCount={_store.Count}");
+        }
+
+        public static void CommitRound(string source = "unknown")
+        {
+            if (!TryMarkRoundDecision("commit", source))
+            {
+                return;
+            }
+
+            // Use non-converting close to force deterministic writeback before persistence.
+            int closed = ForceCloseAllActiveSessions($"commit:{source}", convertToClosedItem: false);
+            PersistStoreToTerminals();
+            ModFileLog.Write("Store", $"{Constants.LogPrefix} CommitRound source='{source}' forcedClosed={closed} dbCount={_store.Count}");
+        }
+
+        public static void RollbackRound(string reason = "unknown")
+        {
+            if (!TryMarkRoundDecision("rollback", reason))
+            {
+                return;
+            }
+
+            int closed = ForceCloseAllActiveSessions($"rollback:{reason}", convertToClosedItem: false);
+            ClearVolatile();
+            RebuildFromPersistedTerminals();
+            ModFileLog.Write("Store", $"{Constants.LogPrefix} RollbackRound reason='{reason}' forcedClosed={closed} dbCount={_store.Count}");
+        }
+
+        public static void OnRoundEndObserved(string source = "roundEnd")
+        {
+            if (_roundDecisionApplied)
+            {
+                return;
+            }
+
+            ModFileLog.Write("Store", $"{Constants.LogPrefix} RoundEnd observed without explicit save decision source='{source}'. Waiting for roundStart fallback rebuild.");
+        }
+
+        public static void SetSaveDecisionBindingEnabled(bool enabled)
+        {
+            _saveDecisionBindingEnabled = enabled;
+            ModFileLog.Write("Store", $"{Constants.LogPrefix} Save decision binding enabled={enabled}");
+        }
+
+        public static void RebuildFromPersistedTerminals()
+        {
+            _store.Clear();
+            _activeTerminals.Clear();
+
+            int seenTerminals = 0;
+            int rebuiltDatabases = 0;
+            var ids = _terminals.Keys.Select(Normalize).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+            foreach (string id in ids)
+            {
+                if (!_terminals.TryGetValue(id, out var registered))
+                {
+                    continue;
+                }
+
+                CleanupDeadReferences(registered);
+                DatabaseData best = null;
+
+                foreach (var weak in registered)
+                {
+                    if (!weak.TryGetTarget(out var terminal) || terminal == null)
+                    {
+                        continue;
+                    }
+
+                    seenTerminals++;
+                    string fallbackId = Normalize(string.IsNullOrWhiteSpace(terminal.DatabaseId) ? id : terminal.DatabaseId);
+                    var candidate = DeserializeData(terminal.SerializedDatabase, fallbackId);
+                    candidate.Items = CompactItems(CloneItemList(candidate.Items));
+
+                    if (best == null ||
+                        candidate.Version > best.Version ||
+                        (candidate.Version == best.Version && candidate.ItemCount > best.ItemCount))
+                    {
+                        best = candidate;
+                    }
+                }
+
+                if (best == null)
+                {
+                    best = new DatabaseData
+                    {
+                        DatabaseId = id,
+                        Version = 0,
+                        Items = new List<ItemData>()
+                    };
+                }
+
+                best.DatabaseId = id;
+                if (best.Items == null)
+                {
+                    best.Items = new List<ItemData>();
+                }
+                _store[id] = best;
+                rebuiltDatabases++;
+            }
+
+            foreach (string id in ids)
+            {
+                SyncTerminals(id);
+            }
+
+            ModFileLog.Write("Store", $"{Constants.LogPrefix} RebuildFromPersistedTerminals terminals={seenTerminals} dbCount={rebuiltDatabases}");
         }
 
         public static string SerializeData(DatabaseData data)
@@ -57,6 +186,77 @@ namespace DatabaseIOTest.Services
             catch
             {
                 return new DatabaseData { DatabaseId = Normalize(fallbackDatabaseId) };
+            }
+        }
+
+        private static bool TryMarkRoundDecision(string decision, string source)
+        {
+            if (_roundDecisionApplied)
+            {
+                ModFileLog.Write(
+                    "Store",
+                    $"{Constants.LogPrefix} Ignored duplicate round decision '{decision}' source='{source}', already='{_roundDecisionSource}'.");
+                return false;
+            }
+
+            _roundDecisionApplied = true;
+            _roundDecisionSource = $"{decision}:{source}";
+            return true;
+        }
+
+        private static int ForceCloseAllActiveSessions(string reason, bool convertToClosedItem)
+        {
+            if (_activeTerminals.Count <= 0)
+            {
+                return 0;
+            }
+
+            int closed = 0;
+            var touchedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var activeSnapshot = _activeTerminals.ToList();
+
+            foreach (var pair in activeSnapshot)
+            {
+                string id = Normalize(pair.Key);
+                int terminalEntityId = pair.Value;
+                touchedIds.Add(id);
+
+                if (TryGetTerminalByEntityId(id, terminalEntityId, out var terminal) && terminal != null)
+                {
+                    try
+                    {
+                        bool ok = terminal.RequestForceCloseForTakeover(reason, requester: null, convertToClosedItem: convertToClosedItem);
+                        if (ok)
+                        {
+                            closed++;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        ModFileLog.Write("Store", $"{Constants.LogPrefix} ForceClose session failed db='{id}' terminal={terminalEntityId}: {ex.Message}");
+                    }
+                }
+
+                _activeTerminals.Remove(id);
+            }
+
+            foreach (string id in touchedIds)
+            {
+                SyncTerminals(id);
+            }
+
+            return closed;
+        }
+
+        private static void PersistStoreToTerminals()
+        {
+            var ids = _terminals.Keys.Select(Normalize).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            foreach (string id in ids)
+            {
+                var data = GetOrCreate(id);
+                data.Items = CompactItems(CloneItemList(data.Items));
+                _store[id] = data;
+                SyncTerminals(id, persistSerializedState: true);
             }
         }
 
@@ -454,18 +654,19 @@ namespace DatabaseIOTest.Services
             return data;
         }
 
-        private static void SyncTerminals(string databaseId)
+        private static void SyncTerminals(string databaseId, bool persistSerializedState = false)
         {
             string id = Normalize(databaseId);
             var data = GetOrCreate(id);
             if (!_terminals.TryGetValue(id, out var registered)) { return; }
+            bool persistNow = persistSerializedState || !_saveDecisionBindingEnabled;
 
             CleanupDeadReferences(registered);
             foreach (var weak in registered)
             {
                 if (weak.TryGetTarget(out var terminal))
                 {
-                    terminal.ApplyStoreSnapshot(data);
+                    terminal.ApplyStoreSnapshot(data, persistNow);
                 }
             }
         }

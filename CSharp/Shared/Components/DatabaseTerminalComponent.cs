@@ -402,13 +402,16 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         DatabaseId = _resolvedDatabaseId;
     }
 
-    public void ApplyStoreSnapshot(DatabaseData data)
+    public void ApplyStoreSnapshot(DatabaseData data, bool persistSerializedState = false)
     {
         if (!IsServerAuthority || data == null) { return; }
 
         ResolveDatabaseId(data.DatabaseId);
-        DatabaseVersion = data.Version;
-        SerializedDatabase = DatabaseStore.SerializeData(data);
+        if (persistSerializedState)
+        {
+            DatabaseVersion = data.Version;
+            SerializedDatabase = DatabaseStore.SerializeData(data);
+        }
 
         _cachedItemCount = data.ItemCount;
         _cachedLocked = DatabaseStore.IsLocked(_resolvedDatabaseId);
@@ -2448,13 +2451,13 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         }
     }
 
-    public bool RequestForceCloseForTakeover(string reason, Character requester)
+    public bool RequestForceCloseForTakeover(string reason, Character requester, bool convertToClosedItem = true)
     {
         if (!IsServerAuthority) { return false; }
 
         if (SessionVariant)
         {
-            CloseSessionInternal(reason, true, requester ?? _sessionOwner);
+            CloseSessionInternal(reason, convertToClosedItem, requester ?? _sessionOwner);
             return true;
         }
 
