@@ -19,22 +19,17 @@ namespace DatabaseIOTest.Patches
         static IEnumerable<MethodBase> TargetMethods()
         {
             var matches = new List<MethodBase>();
-
-            foreach (var serverType in ResolveGameServerTypes())
-            {
-                var fromType = serverType
-                    .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                    .Where(m => string.Equals(m.Name, "EndGame", StringComparison.Ordinal))
-                    .Where(m => m.GetParameters().Any(p => p.ParameterType == typeof(bool)))
-                    .Cast<MethodBase>();
-                matches.AddRange(fromType);
-            }
+            AddMatchingMethods(matches, "Barotrauma.Networking.GameServer", "EndGame", requireBoolParameter: true);
+            AddMatchingMethods(matches, "Barotrauma.GameServer", "EndGame", requireBoolParameter: true);
+            AddMatchingMethods(matches, "Barotrauma.GameMain", "QuitToMainMenu", requireBoolParameter: true);
+            AddMatchingMethods(matches, "Barotrauma.SaveUtil", "SaveGame", requireBoolParameter: true);
+            AddMatchingMethods(matches, "Barotrauma.GameSession", "Save", requireBoolParameter: true);
 
             matches = matches.Distinct().ToList();
 
             if (matches.Count <= 0)
             {
-                LogMissingTargetOnce("No EndGame(bool, ...) overload matched for save decision patch.");
+                LogMissingTargetOnce("No save-decision patch target methods matched.");
                 return Enumerable.Empty<MethodBase>();
             }
 
@@ -49,22 +44,68 @@ namespace DatabaseIOTest.Patches
             {
                 return;
             }
+            if (__originalMethod == null)
+            {
+                return;
+            }
 
-            bool? wasSaved = TryResolveWasSaved(__originalMethod, __args);
-            if (!wasSaved.HasValue)
+            string declaringType = __originalMethod.DeclaringType?.FullName ?? "";
+            string methodName = __originalMethod.Name ?? "";
+
+            if (declaringType.IndexOf("GameServer", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                string.Equals(methodName, "EndGame", StringComparison.Ordinal))
             {
-                ModFileLog.Write(
-                    "Core",
-                    $"{Constants.LogPrefix} EndGame patch fallback commit: cannot resolve wasSaved on method '{__originalMethod?.Name ?? "unknown"}'.");
-                DatabaseStore.CommitRound("harmony:EndGame(unknown)->commitFallback");
+                bool? wasSaved = TryResolveBoolArgument(__originalMethod, __args, "wasSaved", "save");
+                if (wasSaved == true)
+                {
+                    DatabaseStore.CommitRound("harmony:GameServer.EndGame(wasSaved=true)");
+                }
+                else if (wasSaved == false)
+                {
+                    // EndGame can fire before actual save write path.
+                    // Keep decision deferred unless an explicit no-save quit is observed.
+                    DatabaseStore.OnRoundEndObserved("harmony:GameServer.EndGame(wasSaved=false,deferred)");
+                }
+                else
+                {
+                    DatabaseStore.OnRoundEndObserved("harmony:GameServer.EndGame(wasSaved=unknown,deferred)");
+                }
+                return;
             }
-            else if (wasSaved.Value)
+
+            if (string.Equals(declaringType, "Barotrauma.GameMain", StringComparison.Ordinal) &&
+                string.Equals(methodName, "QuitToMainMenu", StringComparison.Ordinal))
             {
-                DatabaseStore.CommitRound("harmony:EndGame");
+                bool? save = TryResolveBoolArgument(__originalMethod, __args, "save");
+                if (save == true)
+                {
+                    DatabaseStore.CommitRound("harmony:GameMain.QuitToMainMenu(save=true)");
+                }
+                else if (save == false)
+                {
+                    DatabaseStore.RollbackRound("harmony:GameMain.QuitToMainMenu(save=false)");
+                }
+                else
+                {
+                    ModFileLog.Write(
+                        "Core",
+                        $"{Constants.LogPrefix} QuitToMainMenu patch skipped: cannot resolve save flag.");
+                }
+                return;
             }
-            else
+
+            if (string.Equals(declaringType, "Barotrauma.SaveUtil", StringComparison.Ordinal) &&
+                string.Equals(methodName, "SaveGame", StringComparison.Ordinal))
             {
-                DatabaseStore.RollbackRound("harmony:EndGame(wasSaved=false)");
+                DatabaseStore.CommitRound("harmony:SaveUtil.SaveGame");
+                return;
+            }
+
+            if (string.Equals(declaringType, "Barotrauma.GameSession", StringComparison.Ordinal) &&
+                string.Equals(methodName, "Save", StringComparison.Ordinal))
+            {
+                DatabaseStore.CommitRound("harmony:GameSession.Save");
+                return;
             }
         }
 
@@ -73,53 +114,30 @@ namespace DatabaseIOTest.Patches
             return GameMain.NetworkMember == null || GameMain.NetworkMember.IsServer;
         }
 
-        private static IEnumerable<Type> ResolveGameServerTypes()
+        private static void AddMatchingMethods(
+            List<MethodBase> matches,
+            string typeFullName,
+            string methodName,
+            bool requireBoolParameter)
         {
-            var result = new List<Type>();
-
-            void AddIfPresent(string fullName)
+            Type type = AccessTools.TypeByName(typeFullName);
+            if (type == null)
             {
-                Type type = AccessTools.TypeByName(fullName);
-                if (type != null)
-                {
-                    result.Add(type);
-                }
+                return;
             }
 
-            AddIfPresent("Barotrauma.GameServer");
-            AddIfPresent("Barotrauma.Networking.GameServer");
-
-            if (result.Count <= 0)
+            var methods = type
+                .GetMethods(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                .Where(m => string.Equals(m.Name, methodName, StringComparison.Ordinal));
+            if (requireBoolParameter)
             {
-                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                {
-                    Type[] asmTypes;
-                    try
-                    {
-                        asmTypes = asm.GetTypes();
-                    }
-                    catch (ReflectionTypeLoadException ex)
-                    {
-                        asmTypes = ex.Types.Where(t => t != null).ToArray();
-                    }
-                    catch
-                    {
-                        continue;
-                    }
-
-                    foreach (var t in asmTypes)
-                    {
-                        if (t == null) { continue; }
-                        if (!string.Equals(t.Name, "GameServer", StringComparison.Ordinal)) { continue; }
-                        result.Add(t);
-                    }
-                }
+                methods = methods.Where(m => m.GetParameters().Any(p => p.ParameterType == typeof(bool)));
             }
 
-            return result.Distinct();
+            matches.AddRange(methods.Cast<MethodBase>());
         }
 
-        private static bool? TryResolveWasSaved(MethodBase method, object[] args)
+        private static bool? TryResolveBoolArgument(MethodBase method, object[] args, params string[] preferredParameterNames)
         {
             if (method == null || args == null || args.Length <= 0)
             {
@@ -127,7 +145,7 @@ namespace DatabaseIOTest.Patches
             }
 
             var parameters = method.GetParameters();
-            int boolIndex = -1;
+            int selectedIndex = -1;
 
             for (int i = 0; i < parameters.Length && i < args.Length; i++)
             {
@@ -135,21 +153,35 @@ namespace DatabaseIOTest.Patches
                 if (p.ParameterType != typeof(bool)) { continue; }
 
                 string name = p.Name ?? "";
-                if (name.IndexOf("save", StringComparison.OrdinalIgnoreCase) >= 0)
+                if (preferredParameterNames != null &&
+                    preferredParameterNames.Any(pref =>
+                        !string.IsNullOrWhiteSpace(pref) &&
+                        name.IndexOf(pref, StringComparison.OrdinalIgnoreCase) >= 0))
                 {
-                    boolIndex = i;
+                    selectedIndex = i;
                     break;
-                }
-
-                if (boolIndex < 0)
-                {
-                    boolIndex = i;
                 }
             }
 
-            if (boolIndex >= 0 && boolIndex < args.Length)
+            if (selectedIndex < 0)
             {
-                object value = args[boolIndex];
+                int boolCount = 0;
+                int lastBoolIndex = -1;
+                for (int i = 0; i < parameters.Length && i < args.Length; i++)
+                {
+                    if (parameters[i].ParameterType != typeof(bool)) { continue; }
+                    boolCount++;
+                    lastBoolIndex = i;
+                }
+                if (boolCount == 1)
+                {
+                    selectedIndex = lastBoolIndex;
+                }
+            }
+
+            if (selectedIndex >= 0 && selectedIndex < args.Length)
+            {
+                object value = args[selectedIndex];
                 if (value is bool directBool)
                 {
                     return directBool;
@@ -161,20 +193,7 @@ namespace DatabaseIOTest.Patches
                 }
             }
 
-            bool? fromSingleBool = null;
-            for (int i = 0; i < args.Length; i++)
-            {
-                if (args[i] is bool b)
-                {
-                    if (fromSingleBool.HasValue)
-                    {
-                        return null;
-                    }
-                    fromSingleBool = b;
-                }
-            }
-
-            return fromSingleBool;
+            return null;
         }
 
         private static void LogMissingTargetOnce(string message)

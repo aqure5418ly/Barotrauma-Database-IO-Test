@@ -138,6 +138,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private int _sessionTotalEntryCount;
     private int _pageLoadGeneration;
     private int _sessionAutomationConsumedCount;
+    private bool _sessionWritebackCommitted;
 
     private int _cachedItemCount;
     private bool _cachedLocked;
@@ -1516,6 +1517,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     private void InitializePages(List<ItemData> sourceItems, Character actor)
     {
+        _sessionWritebackCommitted = false;
         var inventory = GetTerminalInventory();
         BuildPagesBySlotUsage(sourceItems, inventory);
         LoadCurrentPageIntoInventory(actor);
@@ -1525,6 +1527,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     {
         if (!SessionVariant) { return; }
 
+        _sessionWritebackCommitted = false;
         var inventory = GetTerminalInventory();
         var currentItems = ItemSerializer.SerializeInventory(_sessionOwner, inventory);
         BuildPagesBySlotUsage(currentItems, inventory);
@@ -1884,6 +1887,14 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     private void CommitSessionInventoryToStore()
     {
+        if (_sessionWritebackCommitted)
+        {
+            ModFileLog.Write(
+                "Terminal",
+                $"{Constants.LogPrefix} Session writeback skipped db='{_resolvedDatabaseId}' terminal={item?.ID} reason='already committed'.");
+            return;
+        }
+
         CaptureCurrentPageFromInventory();
 
         var remainingData = FlattenAllPages();
@@ -1930,6 +1941,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         _sessionTotalEntryCount = 0;
         _sessionAutomationConsumedCount = 0;
         _pendingPageFillCheckGeneration = -1;
+        _sessionWritebackCommitted = true;
     }
 
     private void UpdateSummaryFromStore()

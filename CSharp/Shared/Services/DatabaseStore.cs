@@ -191,11 +191,57 @@ namespace DatabaseIOTest.Services
 
         private static bool TryMarkRoundDecision(string decision, string source)
         {
+            string normalizedDecision = (decision ?? "").Trim().ToLowerInvariant();
+            bool incomingRollback = normalizedDecision == "rollback";
+            bool incomingCommit = normalizedDecision == "commit";
+            bool existingRollback = _roundDecisionApplied &&
+                                    _roundDecisionSource.StartsWith("rollback:", StringComparison.OrdinalIgnoreCase);
+            bool existingCommit = _roundDecisionApplied &&
+                                  _roundDecisionSource.StartsWith("commit:", StringComparison.OrdinalIgnoreCase);
+
+            if (incomingRollback)
+            {
+                if (existingRollback)
+                {
+                    ModFileLog.Write(
+                        "Store",
+                        $"{Constants.LogPrefix} Ignored duplicate round decision '{decision}' source='{source}', already='{_roundDecisionSource}'.");
+                    return false;
+                }
+
+                // Rollback is authoritative over a prior commit when explicit no-save is observed.
+                _roundDecisionApplied = true;
+                _roundDecisionSource = $"{decision}:{source}";
+                return true;
+            }
+
+            if (incomingCommit)
+            {
+                if (existingRollback)
+                {
+                    ModFileLog.Write(
+                        "Store",
+                        $"{Constants.LogPrefix} Ignored late commit '{decision}' source='{source}' after rollback='{_roundDecisionSource}'.");
+                    return false;
+                }
+
+                if (existingCommit)
+                {
+                    ModFileLog.Write(
+                        "Store",
+                        $"{Constants.LogPrefix} Refreshing commit decision '{decision}' source='{source}', previous='{_roundDecisionSource}'.");
+                }
+
+                _roundDecisionApplied = true;
+                _roundDecisionSource = $"{decision}:{source}";
+                return true;
+            }
+
             if (_roundDecisionApplied)
             {
                 ModFileLog.Write(
                     "Store",
-                    $"{Constants.LogPrefix} Ignored duplicate round decision '{decision}' source='{source}', already='{_roundDecisionSource}'.");
+                    $"{Constants.LogPrefix} Ignored unknown round decision '{decision}' source='{source}', already='{_roundDecisionSource}'.");
                 return false;
             }
 
