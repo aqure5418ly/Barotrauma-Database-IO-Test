@@ -229,6 +229,7 @@ namespace DatabaseIOTest.Services
             new Dictionary<string, DatabaseData>(StringComparer.OrdinalIgnoreCase);
         private static bool _roundDecisionApplied;
         private static string _roundDecisionSource = "";
+        private static int _roundDecisionPriority;
         private static bool _saveDecisionBindingEnabled;
         private static bool _pendingRestoreArmed;
 
@@ -247,6 +248,7 @@ namespace DatabaseIOTest.Services
             _pendingCommittedSnapshot.Clear();
             _roundDecisionApplied = false;
             _roundDecisionSource = "";
+            _roundDecisionPriority = 0;
             _saveDecisionBindingEnabled = false;
             _pendingRestoreArmed = false;
         }
@@ -261,6 +263,7 @@ namespace DatabaseIOTest.Services
         {
             _roundDecisionApplied = false;
             _roundDecisionSource = "";
+            _roundDecisionPriority = 0;
             ClearVolatile();
             RebuildFromPersistedTerminals();
             TryRestoreFromPendingCommitSnapshot();
@@ -444,6 +447,8 @@ namespace DatabaseIOTest.Services
         private static bool TryMarkRoundDecision(string decision, string source)
         {
             string normalizedDecision = (decision ?? "").Trim().ToLowerInvariant();
+            string normalizedSource = string.IsNullOrWhiteSpace(source) ? "unknown" : source.Trim();
+            int incomingPriority = GetRoundDecisionPriority(normalizedDecision, normalizedSource);
             bool incomingRollback = normalizedDecision == "rollback";
             bool incomingCommit = normalizedDecision == "commit";
             bool existingRollback = _roundDecisionApplied &&
@@ -455,15 +460,40 @@ namespace DatabaseIOTest.Services
             {
                 if (existingRollback)
                 {
+                    if (incomingPriority > _roundDecisionPriority)
+                    {
+                        string previous = _roundDecisionSource;
+                        int previousPriority = _roundDecisionPriority;
+                        _roundDecisionSource = $"{decision}:{normalizedSource}";
+                        _roundDecisionPriority = incomingPriority;
+                        ModFileLog.Write(
+                            "Store",
+                            $"{Constants.LogPrefix} Upgraded rollback decision source='{normalizedSource}' " +
+                            $"priority={incomingPriority} previous='{previous}' previousPriority={previousPriority}.");
+                    }
+                    else
+                    {
+                        ModFileLog.Write(
+                            "Store",
+                            $"{Constants.LogPrefix} Ignored duplicate rollback decision source='{normalizedSource}' " +
+                            $"priority={incomingPriority}, already='{_roundDecisionSource}' priority={_roundDecisionPriority}.");
+                    }
+
+                    return false;
+                }
+
+                if (existingCommit)
+                {
                     ModFileLog.Write(
                         "Store",
-                        $"{Constants.LogPrefix} Ignored duplicate round decision '{decision}' source='{source}', already='{_roundDecisionSource}'.");
-                    return false;
+                        $"{Constants.LogPrefix} Rollback overrides prior commit source='{normalizedSource}' " +
+                        $"priority={incomingPriority}, previous='{_roundDecisionSource}' priority={_roundDecisionPriority}.");
                 }
 
                 // Rollback is authoritative over a prior commit when explicit no-save is observed.
                 _roundDecisionApplied = true;
-                _roundDecisionSource = $"{decision}:{source}";
+                _roundDecisionSource = $"{decision}:{normalizedSource}";
+                _roundDecisionPriority = incomingPriority;
                 return true;
             }
 
@@ -473,19 +503,38 @@ namespace DatabaseIOTest.Services
                 {
                     ModFileLog.Write(
                         "Store",
-                        $"{Constants.LogPrefix} Ignored late commit '{decision}' source='{source}' after rollback='{_roundDecisionSource}'.");
+                        $"{Constants.LogPrefix} Ignored late commit source='{normalizedSource}' priority={incomingPriority} " +
+                        $"after rollback='{_roundDecisionSource}' priority={_roundDecisionPriority}.");
                     return false;
                 }
 
                 if (existingCommit)
                 {
-                    ModFileLog.Write(
-                        "Store",
-                        $"{Constants.LogPrefix} Refreshing commit decision '{decision}' source='{source}', previous='{_roundDecisionSource}'.");
+                    if (incomingPriority > _roundDecisionPriority)
+                    {
+                        string previous = _roundDecisionSource;
+                        int previousPriority = _roundDecisionPriority;
+                        _roundDecisionSource = $"{decision}:{normalizedSource}";
+                        _roundDecisionPriority = incomingPriority;
+                        ModFileLog.Write(
+                            "Store",
+                            $"{Constants.LogPrefix} Upgraded commit decision source='{normalizedSource}' " +
+                            $"priority={incomingPriority} previous='{previous}' previousPriority={previousPriority}; dedup skip re-commit.");
+                    }
+                    else
+                    {
+                        ModFileLog.Write(
+                            "Store",
+                            $"{Constants.LogPrefix} Ignored duplicate commit decision source='{normalizedSource}' " +
+                            $"priority={incomingPriority}, already='{_roundDecisionSource}' priority={_roundDecisionPriority}.");
+                    }
+
+                    return false;
                 }
 
                 _roundDecisionApplied = true;
-                _roundDecisionSource = $"{decision}:{source}";
+                _roundDecisionSource = $"{decision}:{normalizedSource}";
+                _roundDecisionPriority = incomingPriority;
                 return true;
             }
 
@@ -493,13 +542,53 @@ namespace DatabaseIOTest.Services
             {
                 ModFileLog.Write(
                     "Store",
-                    $"{Constants.LogPrefix} Ignored unknown round decision '{decision}' source='{source}', already='{_roundDecisionSource}'.");
+                    $"{Constants.LogPrefix} Ignored unknown round decision '{normalizedDecision}' source='{normalizedSource}', " +
+                    $"already='{_roundDecisionSource}' priority={_roundDecisionPriority}.");
                 return false;
             }
 
             _roundDecisionApplied = true;
-            _roundDecisionSource = $"{decision}:{source}";
+            _roundDecisionSource = $"{normalizedDecision}:{normalizedSource}";
+            _roundDecisionPriority = incomingPriority;
             return true;
+        }
+
+        private static int GetRoundDecisionPriority(string normalizedDecision, string source)
+        {
+            string key = (source ?? "").Trim();
+            if (normalizedDecision == "rollback")
+            {
+                if (key.IndexOf("gameserver.endgame(wassaved=false)", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return 320;
+                }
+                if (key.IndexOf("hook:roundend", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return 160;
+                }
+
+                return 120;
+            }
+
+            if (normalizedDecision == "commit")
+            {
+                if (key.IndexOf("gameserver.endgame(wassaved=true)", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return 300;
+                }
+                if (key.IndexOf("saveutil.savegame", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return 220;
+                }
+                if (key.IndexOf("gamesession.save", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return 180;
+                }
+
+                return 100;
+            }
+
+            return 10;
         }
 
         private static int ForceCloseAllActiveSessions(string reason, bool convertToClosedItem)
