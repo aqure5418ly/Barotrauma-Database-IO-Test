@@ -8,6 +8,8 @@
   <entitydescription.DatabaseInterfaceFixed>前中期使用的固定式供电接口。</entitydescription.DatabaseInterfaceFixed>
   <entityname.DatabaseTerminalFixed>数据库终端（固定式）</entityname.DatabaseTerminalFixed>
   <entitydescription.DatabaseTerminalFixed>前中期使用的固定式供电终端。</entitydescription.DatabaseTerminalFixed>
+  <entityname.DatabaseStorageAnchor>数据库存储器</entityname.DatabaseStorageAnchor>
+  <entitydescription.DatabaseStorageAnchor>侵入式持久化锚点：将数据库序列化数据直接写入存档。</entitydescription.DatabaseStorageAnchor>
   <entityname.DatabaseAutoRestocker>数据库自动补货器</entityname.DatabaseAutoRestocker>
   <entitydescription.DatabaseAutoRestocker>为链接的容器自动补货。</entitydescription.DatabaseAutoRestocker>
 
@@ -43,6 +45,9 @@
   <dbiotest.panel.prev>上一页</dbiotest.panel.prev>
   <dbiotest.panel.next>下一页</dbiotest.panel.next>
   <dbiotest.panel.close>关闭</dbiotest.panel.close>
+  <dbiotest.anchor.hint>存档内持久化锚点，用于保存数据库序列化数据。</dbiotest.anchor.hint>
+  <dbiotest.anchor.dbid>数据库ID</dbiotest.anchor.dbid>
+  <dbiotest.anchor.count>已持久化物品数</dbiotest.anchor.count>
 
   <dbiotest.restocker.hint>自动补货链接容器。</dbiotest.restocker.hint>
   <dbiotest.restocker.dbid>数据库ID</dbiotest.restocker.dbid>

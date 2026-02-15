@@ -8,6 +8,8 @@
   <entitydescription.DatabaseInterfaceFixed>Stationary powered interface for early/mid game database ingest.</entitydescription.DatabaseInterfaceFixed>
   <entityname.DatabaseTerminalFixed>Database Terminal (Fixed)</entityname.DatabaseTerminalFixed>
   <entitydescription.DatabaseTerminalFixed>Stationary powered terminal for early/mid game database access.</entitydescription.DatabaseTerminalFixed>
+  <entityname.DatabaseStorageAnchor>Database Storage Anchor</entityname.DatabaseStorageAnchor>
+  <entitydescription.DatabaseStorageAnchor>Intrusive persistence anchor that stores serialized database data directly in save.</entitydescription.DatabaseStorageAnchor>
   <entityname.DatabaseAutoRestocker>Database Auto Restocker</entityname.DatabaseAutoRestocker>
   <entitydescription.DatabaseAutoRestocker>Supplies linked containers from the database.</entitydescription.DatabaseAutoRestocker>
 
@@ -41,6 +43,9 @@
   <dbiotest.panel.prev>Prev</dbiotest.panel.prev>
   <dbiotest.panel.next>Next</dbiotest.panel.next>
   <dbiotest.panel.close>Close</dbiotest.panel.close>
+  <dbiotest.anchor.hint>Persistent in-save storage anchor for database data.</dbiotest.anchor.hint>
+  <dbiotest.anchor.dbid>Database ID</dbiotest.anchor.dbid>
+  <dbiotest.anchor.count>Persisted Item Count</dbiotest.anchor.count>
 
   <dbiotest.restocker.hint>Auto restock linked containers.</dbiotest.restocker.hint>
   <dbiotest.restocker.dbid>Database ID</dbiotest.restocker.dbid>

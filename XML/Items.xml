@@ -265,6 +265,31 @@
 
 
   <Item
+    identifier="DatabaseStorageAnchor"
+    category="Machine,Electrical"
+    tags="database_storage_anchor,machine"
+    showcontentsintooltip="true"
+    linkable="false"
+    waterproof="true"
+    fireproof="true"
+    scale="0.75">
+    <InventoryIcon texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="1190,210,180,91" origin="0.5,0.5" />
+    <Sprite texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="1190,210,180,91" origin="0.5,0.5" depth="0.6" />
+    <Fabricate suitablefabricators="fabricator" requiredtime="14">
+      <RequiredSkill identifier="electrical" level="30" />
+      <RequiredSkill identifier="mechanical" level="28" />
+      <RequiredItem identifier="fpgacircuit" amount="1" />
+      <RequiredItem identifier="steel" amount="2" />
+      <RequiredItem identifier="plastic" amount="1" />
+    </Fabricate>
+    <Body width="128" height="92" density="30" />
+    <Holdable selectkey="Action" pickkey="Use" slots="RightHand+LeftHand" msg="ItemMsgDetachWrench" PickingTime="3.0" aimpos="60,0" handle1="0,0" attachable="true" aimable="false">
+      <RequiredItem identifier="wrench" type="Equipped" />
+    </Holdable>
+    <DatabaseStorageAnchorComponent databaseId="default" />
+  </Item>
+
+  <Item
     identifier="DatabaseAutoRestocker"
     category="Machine,Electrical"
     tags="database_restocker,machine,locker,coilgun,railgun,chaingun,flakcannon,pulselaser,depthchargelauncher,turrethardpoint,largeturrethardpoint,coilgunammoloader,coilgunammosource,railgunammoloader,railgunammosource,flakcannonammoloader,flakcannonammosource,chaingunammosource,pulselaserammosource,depthchargeammosource,turretammosource"

@@ -19,9 +19,14 @@ namespace DatabaseIOTest.Services
         private static readonly Dictionary<string, int> _activeTerminals = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, List<WeakReference<DatabaseTerminalComponent>>> _terminals =
             new Dictionary<string, List<WeakReference<DatabaseTerminalComponent>>>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, List<WeakReference<DatabaseStorageAnchorComponent>>> _anchors =
+            new Dictionary<string, List<WeakReference<DatabaseStorageAnchorComponent>>>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, DatabaseData> _pendingCommittedSnapshot =
+            new Dictionary<string, DatabaseData>(StringComparer.OrdinalIgnoreCase);
         private static bool _roundDecisionApplied;
         private static string _roundDecisionSource = "";
         private static bool _saveDecisionBindingEnabled;
+        private static bool _pendingRestoreArmed;
 
         public static string Normalize(string databaseId)
         {
@@ -33,9 +38,12 @@ namespace DatabaseIOTest.Services
             _store.Clear();
             _activeTerminals.Clear();
             _terminals.Clear();
+            _anchors.Clear();
+            _pendingCommittedSnapshot.Clear();
             _roundDecisionApplied = false;
             _roundDecisionSource = "";
             _saveDecisionBindingEnabled = false;
+            _pendingRestoreArmed = false;
         }
 
         public static void ClearVolatile()
@@ -50,6 +58,7 @@ namespace DatabaseIOTest.Services
             _roundDecisionSource = "";
             ClearVolatile();
             RebuildFromPersistedTerminals();
+            TryRestoreFromPendingCommitSnapshot();
             int totalItems = _store.Values.Sum(db => db?.ItemCount ?? 0);
             ModFileLog.Write("Store", $"{Constants.LogPrefix} BeginRound source='{source}' dbCount={_store.Count} totalItems={totalItems}");
         }
@@ -64,6 +73,7 @@ namespace DatabaseIOTest.Services
             // Use non-converting close to force deterministic writeback before persistence.
             int closed = ForceCloseAllActiveSessions($"commit:{source}", convertToClosedItem: false);
             PersistStoreToTerminals();
+            CapturePendingCommitSnapshot();
             int totalItems = _store.Values.Sum(db => db?.ItemCount ?? 0);
             ModFileLog.Write("Store", $"{Constants.LogPrefix} CommitRound source='{source}' forcedClosed={closed} dbCount={_store.Count} totalItems={totalItems}");
         }
@@ -78,6 +88,23 @@ namespace DatabaseIOTest.Services
             int closed = ForceCloseAllActiveSessions($"rollback:{reason}", convertToClosedItem: false);
             ClearVolatile();
             RebuildFromPersistedTerminals();
+            // Keep/apply the last committed snapshot as rollback baseline.
+            // This allows no-save round transitions to restore stable data even when live entities are unloaded.
+            if (_pendingCommittedSnapshot.Count > 0)
+            {
+                _store.Clear();
+                foreach (var pair in _pendingCommittedSnapshot)
+                {
+                    _store[pair.Key] = CloneDatabaseData(pair.Value);
+                }
+
+                foreach (string id in _pendingCommittedSnapshot.Keys.ToList())
+                {
+                    SyncTerminals(id, persistSerializedState: true);
+                }
+            }
+
+            _pendingRestoreArmed = _pendingCommittedSnapshot.Count > 0;
             int totalItems = _store.Values.Sum(db => db?.ItemCount ?? 0);
             ModFileLog.Write("Store", $"{Constants.LogPrefix} RollbackRound reason='{reason}' forcedClosed={closed} dbCount={_store.Count} totalItems={totalItems}");
         }
@@ -104,36 +131,56 @@ namespace DatabaseIOTest.Services
             _activeTerminals.Clear();
 
             int seenTerminals = 0;
+            int seenAnchors = 0;
             int rebuiltDatabases = 0;
-            var ids = _terminals.Keys.Select(Normalize).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var ids = _terminals.Keys
+                .Concat(_anchors.Keys)
+                .Select(Normalize)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
 
             foreach (string id in ids)
             {
-                if (!_terminals.TryGetValue(id, out var registered))
-                {
-                    continue;
-                }
-
-                CleanupDeadReferences(registered);
                 DatabaseData best = null;
 
-                foreach (var weak in registered)
+                if (_anchors.TryGetValue(id, out var registeredAnchors))
                 {
-                    if (!weak.TryGetTarget(out var terminal) || terminal == null)
+                    CleanupDeadReferences(registeredAnchors);
+                    foreach (var weak in registeredAnchors)
                     {
-                        continue;
+                        if (!weak.TryGetTarget(out var anchor) || anchor == null)
+                        {
+                            continue;
+                        }
+
+                        seenAnchors++;
+                        var candidate = anchor.ReadPersistedData();
+                        candidate.Items = CompactItems(CloneItemList(candidate.Items));
+                        if (IsBetterCandidate(candidate, best))
+                        {
+                            best = candidate;
+                        }
                     }
+                }
 
-                    seenTerminals++;
-                    string fallbackId = Normalize(string.IsNullOrWhiteSpace(terminal.DatabaseId) ? id : terminal.DatabaseId);
-                    var candidate = DeserializeData(terminal.SerializedDatabase, fallbackId);
-                    candidate.Items = CompactItems(CloneItemList(candidate.Items));
-
-                    if (best == null ||
-                        candidate.Version > best.Version ||
-                        (candidate.Version == best.Version && candidate.ItemCount > best.ItemCount))
+                if (_terminals.TryGetValue(id, out var registered))
+                {
+                    CleanupDeadReferences(registered);
+                    foreach (var weak in registered)
                     {
-                        best = candidate;
+                        if (!weak.TryGetTarget(out var terminal) || terminal == null)
+                        {
+                            continue;
+                        }
+
+                        seenTerminals++;
+                        string fallbackId = Normalize(string.IsNullOrWhiteSpace(terminal.DatabaseId) ? id : terminal.DatabaseId);
+                        var candidate = DeserializeData(terminal.SerializedDatabase, fallbackId);
+                        candidate.Items = CompactItems(CloneItemList(candidate.Items));
+                        if (IsBetterCandidate(candidate, best))
+                        {
+                            best = candidate;
+                        }
                     }
                 }
 
@@ -162,7 +209,9 @@ namespace DatabaseIOTest.Services
             }
 
             int totalItems = _store.Values.Sum(db => db?.ItemCount ?? 0);
-            ModFileLog.Write("Store", $"{Constants.LogPrefix} RebuildFromPersistedTerminals terminals={seenTerminals} dbCount={rebuiltDatabases} totalItems={totalItems}");
+            ModFileLog.Write(
+                "Store",
+                $"{Constants.LogPrefix} RebuildFromPersistedTerminals terminals={seenTerminals} anchors={seenAnchors} dbCount={rebuiltDatabases} totalItems={totalItems}");
         }
 
         public static string SerializeData(DatabaseData data)
@@ -300,7 +349,15 @@ namespace DatabaseIOTest.Services
 
         private static void PersistStoreToTerminals()
         {
-            var ids = _terminals.Keys.Select(Normalize).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var ids = _terminals.Keys
+                .Concat(_anchors.Keys)
+                .Select(Normalize)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            ModFileLog.Write(
+                "Store",
+                $"{Constants.LogPrefix} PersistStoreToTerminals ids={ids.Count} dbCount={_store.Count} " +
+                $"terminals={_terminals.Count} anchors={_anchors.Count} saveBinding={_saveDecisionBindingEnabled}");
             foreach (string id in ids)
             {
                 var data = GetOrCreate(id);
@@ -334,9 +391,28 @@ namespace DatabaseIOTest.Services
             {
                 _store[id] = dataFromTerminal;
             }
-            else if (dataFromTerminal.Version > storeData.Version && dataFromTerminal.Items.Count > 0)
+            else if (IsBetterCandidate(dataFromTerminal, storeData))
             {
                 _store[id] = dataFromTerminal;
+            }
+
+            if (_pendingRestoreArmed &&
+                dataFromTerminal.ItemCount <= 0 &&
+                _store.TryGetValue(id, out var restoredData) &&
+                (restoredData?.ItemCount ?? 0) > 0)
+            {
+                terminal.ApplyStoreSnapshot(restoredData, persistSerializedState: true);
+                dataFromTerminal = CloneDatabaseData(restoredData);
+                _pendingCommittedSnapshot.Remove(id);
+                if (_pendingCommittedSnapshot.Count <= 0)
+                {
+                    _pendingRestoreArmed = false;
+                }
+
+                ModFileLog.Write(
+                    "Store",
+                    $"{Constants.LogPrefix} RegisterTerminal applied pending snapshot db='{id}' terminal={terminal.TerminalEntityId} " +
+                    $"version={dataFromTerminal.Version} items={dataFromTerminal.ItemCount}");
             }
 
             SyncTerminals(id);
@@ -346,6 +422,64 @@ namespace DatabaseIOTest.Services
                 "Store",
                 $"{Constants.LogPrefix} RegisterTerminal db='{id}' terminal={terminal.TerminalEntityId} " +
                 $"serializedVersion={dataFromTerminal.Version} serializedItems={dataFromTerminal.ItemCount} storeItems={storeItems}");
+        }
+
+        public static void RegisterPersistenceAnchor(DatabaseStorageAnchorComponent anchor)
+        {
+            if (anchor == null) { return; }
+            string id = Normalize(anchor.DatabaseId);
+            anchor.ResolveDatabaseId(id);
+
+            if (!_anchors.TryGetValue(id, out var registered))
+            {
+                registered = new List<WeakReference<DatabaseStorageAnchorComponent>>();
+                _anchors[id] = registered;
+            }
+
+            CleanupDeadReferences(registered);
+            if (!registered.Any(r => r.TryGetTarget(out var a) && a == anchor))
+            {
+                registered.Add(new WeakReference<DatabaseStorageAnchorComponent>(anchor));
+            }
+
+            var dataFromAnchor = anchor.ReadPersistedData();
+            dataFromAnchor.Items = CompactItems(CloneItemList(dataFromAnchor.Items));
+
+            if (!_store.TryGetValue(id, out var storeData))
+            {
+                _store[id] = dataFromAnchor;
+            }
+            else if (IsBetterCandidate(dataFromAnchor, storeData))
+            {
+                _store[id] = dataFromAnchor;
+            }
+
+            if (_pendingRestoreArmed &&
+                dataFromAnchor.ItemCount <= 0 &&
+                _store.TryGetValue(id, out var restoredData) &&
+                (restoredData?.ItemCount ?? 0) > 0)
+            {
+                anchor.ApplyStoreSnapshot(restoredData, persistSerializedState: true);
+                dataFromAnchor = CloneDatabaseData(restoredData);
+                _pendingCommittedSnapshot.Remove(id);
+                if (_pendingCommittedSnapshot.Count <= 0)
+                {
+                    _pendingRestoreArmed = false;
+                }
+
+                ModFileLog.Write(
+                    "Store",
+                    $"{Constants.LogPrefix} RegisterAnchor applied pending snapshot db='{id}' anchor={anchor.AnchorEntityId} " +
+                    $"version={dataFromAnchor.Version} items={dataFromAnchor.ItemCount}");
+            }
+
+            SyncTerminals(id);
+
+            int storeItems = _store.TryGetValue(id, out var merged) ? merged?.ItemCount ?? 0 : 0;
+            ModFileLog.Write(
+                "Store",
+                $"{Constants.LogPrefix} RegisterAnchor db='{id}' anchor={anchor.AnchorEntityId} " +
+                $"serializedVersion={dataFromAnchor.Version} serializedItems={dataFromAnchor.ItemCount} storeItems={storeItems}");
         }
 
         public static void UnregisterTerminal(DatabaseTerminalComponent terminal)
@@ -358,6 +492,19 @@ namespace DatabaseIOTest.Services
             if (registered.Count == 0)
             {
                 _terminals.Remove(id);
+            }
+        }
+
+        public static void UnregisterPersistenceAnchor(DatabaseStorageAnchorComponent anchor)
+        {
+            if (anchor == null) { return; }
+            string id = Normalize(anchor.DatabaseId);
+            if (!_anchors.TryGetValue(id, out var registered)) { return; }
+
+            registered.RemoveAll(r => !r.TryGetTarget(out var a) || a == anchor);
+            if (registered.Count == 0)
+            {
+                _anchors.Remove(id);
             }
         }
 
@@ -695,6 +842,19 @@ namespace DatabaseIOTest.Services
             return CompactItems(CloneItemList(items ?? new List<ItemData>()));
         }
 
+        private static bool IsBetterCandidate(DatabaseData candidate, DatabaseData baseline)
+        {
+            if (candidate == null) { return false; }
+            if (baseline == null) { return true; }
+
+            if (candidate.Version != baseline.Version)
+            {
+                return candidate.Version > baseline.Version;
+            }
+
+            return candidate.ItemCount > baseline.ItemCount;
+        }
+
         private static DatabaseData GetOrCreate(string databaseId)
         {
             string id = Normalize(databaseId);
@@ -710,19 +870,80 @@ namespace DatabaseIOTest.Services
             return data;
         }
 
+        private static void CapturePendingCommitSnapshot()
+        {
+            _pendingCommittedSnapshot.Clear();
+            foreach (var pair in _store)
+            {
+                if (pair.Value == null) { continue; }
+                _pendingCommittedSnapshot[pair.Key] = CloneDatabaseData(pair.Value);
+            }
+
+            _pendingRestoreArmed = _pendingCommittedSnapshot.Count > 0;
+            int pendingItems = _pendingCommittedSnapshot.Values.Sum(db => db?.ItemCount ?? 0);
+            ModFileLog.Write(
+                "Store",
+                $"{Constants.LogPrefix} Captured pending commit snapshot dbCount={_pendingCommittedSnapshot.Count} totalItems={pendingItems}");
+        }
+
+        private static void TryRestoreFromPendingCommitSnapshot()
+        {
+            if (!_pendingRestoreArmed || _pendingCommittedSnapshot.Count <= 0)
+            {
+                return;
+            }
+
+            int currentItems = _store.Values.Sum(db => db?.ItemCount ?? 0);
+            if (currentItems > 0)
+            {
+                // Keep last committed snapshot available for future no-save rollback.
+                return;
+            }
+
+            _store.Clear();
+            foreach (var pair in _pendingCommittedSnapshot)
+            {
+                _store[pair.Key] = CloneDatabaseData(pair.Value);
+            }
+
+            foreach (string id in _pendingCommittedSnapshot.Keys.ToList())
+            {
+                SyncTerminals(id, persistSerializedState: true);
+            }
+
+            int restoredItems = _store.Values.Sum(db => db?.ItemCount ?? 0);
+            ModFileLog.Write(
+                "Store",
+                $"{Constants.LogPrefix} Restored pending commit snapshot dbCount={_store.Count} totalItems={restoredItems}");
+        }
+
         private static void SyncTerminals(string databaseId, bool persistSerializedState = false)
         {
             string id = Normalize(databaseId);
             var data = GetOrCreate(id);
-            if (!_terminals.TryGetValue(id, out var registered)) { return; }
             bool persistNow = persistSerializedState || !_saveDecisionBindingEnabled;
 
-            CleanupDeadReferences(registered);
-            foreach (var weak in registered)
+            if (_terminals.TryGetValue(id, out var registered))
             {
-                if (weak.TryGetTarget(out var terminal))
+                CleanupDeadReferences(registered);
+                foreach (var weak in registered)
                 {
-                    terminal.ApplyStoreSnapshot(data, persistNow);
+                    if (weak.TryGetTarget(out var terminal))
+                    {
+                        terminal.ApplyStoreSnapshot(data, persistNow);
+                    }
+                }
+            }
+
+            if (_anchors.TryGetValue(id, out var anchors))
+            {
+                CleanupDeadReferences(anchors);
+                foreach (var weak in anchors)
+                {
+                    if (weak.TryGetTarget(out var anchor))
+                    {
+                        anchor.ApplyStoreSnapshot(data, persistSerializedState: true);
+                    }
                 }
             }
         }
@@ -738,6 +959,11 @@ namespace DatabaseIOTest.Services
         }
 
         private static void CleanupDeadReferences(List<WeakReference<DatabaseTerminalComponent>> refsList)
+        {
+            refsList.RemoveAll(r => !r.TryGetTarget(out _));
+        }
+
+        private static void CleanupDeadReferences(List<WeakReference<DatabaseStorageAnchorComponent>> refsList)
         {
             refsList.RemoveAll(r => !r.TryGetTarget(out _));
         }
@@ -791,6 +1017,26 @@ namespace DatabaseIOTest.Services
                 list.Add(item?.Clone());
             }
             return list;
+        }
+
+        private static DatabaseData CloneDatabaseData(DatabaseData source)
+        {
+            if (source == null)
+            {
+                return new DatabaseData
+                {
+                    DatabaseId = Constants.DefaultDatabaseId,
+                    Version = 0,
+                    Items = new List<ItemData>()
+                };
+            }
+
+            return new DatabaseData
+            {
+                DatabaseId = Normalize(source.DatabaseId),
+                Version = source.Version,
+                Items = CloneItemList(source.Items)
+            };
         }
 
         private static List<ItemData> CompactItems(List<ItemData> items)

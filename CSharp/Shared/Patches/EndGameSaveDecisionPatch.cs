@@ -62,9 +62,9 @@ namespace DatabaseIOTest.Patches
                 }
                 else if (wasSaved == false)
                 {
-                    // EndGame can fire before actual save write path.
-                    // Keep decision deferred unless an explicit no-save quit is observed.
-                    DatabaseStore.OnRoundEndObserved("harmony:GameServer.EndGame(wasSaved=false,deferred)");
+                    // No-save branch must be authoritative; later SaveUtil/GameSession calls can still occur
+                    // for non-campaign save paths and should not convert this round into a commit.
+                    DatabaseStore.RollbackRound("harmony:GameServer.EndGame(wasSaved=false)");
                 }
                 else
                 {
