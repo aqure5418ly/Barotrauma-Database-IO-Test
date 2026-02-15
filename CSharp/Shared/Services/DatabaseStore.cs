@@ -15,7 +15,211 @@ namespace DatabaseIOTest.Services
             LowestConditionFirst = 2
         }
 
-        private static readonly Dictionary<string, DatabaseData> _store = new Dictionary<string, DatabaseData>(StringComparer.OrdinalIgnoreCase);
+        private enum StateMutationKind
+        {
+            Ensure = 0,
+            Set = 1,
+            Clear = 2,
+            Merge = 3,
+            Extract = 4,
+            Rebuild = 5,
+            Restore = 6,
+            Compact = 7
+        }
+
+        private sealed class StateMutation
+        {
+            public StateMutation(
+                long sequence,
+                string databaseId,
+                StateMutationKind kind,
+                string source,
+                int beforeVersion,
+                int beforeCount,
+                int afterVersion,
+                int afterCount)
+            {
+                Sequence = sequence;
+                DatabaseId = databaseId;
+                Kind = kind;
+                Source = source ?? "";
+                BeforeVersion = beforeVersion;
+                BeforeCount = beforeCount;
+                AfterVersion = afterVersion;
+                AfterCount = afterCount;
+                TimestampUtc = DateTime.UtcNow;
+            }
+
+            public long Sequence { get; }
+            public string DatabaseId { get; }
+            public StateMutationKind Kind { get; }
+            public string Source { get; }
+            public int BeforeVersion { get; }
+            public int BeforeCount { get; }
+            public int AfterVersion { get; }
+            public int AfterCount { get; }
+            public DateTime TimestampUtc { get; }
+        }
+
+        private sealed class StateEntry
+        {
+            public StateEntry(string databaseId, DatabaseData data)
+            {
+                DatabaseId = databaseId;
+                Data = data;
+            }
+
+            public string DatabaseId { get; }
+            public DatabaseData Data { get; set; }
+            public StateMutation LastMutation { get; set; }
+        }
+
+        private sealed class DatabaseState
+        {
+            private readonly Dictionary<string, StateEntry> _entries =
+                new Dictionary<string, StateEntry>(StringComparer.OrdinalIgnoreCase);
+            private long _nextMutationSequence = 1;
+
+            public int Count => _entries.Count;
+
+            public IEnumerable<string> Keys => _entries.Keys;
+
+            public IEnumerable<KeyValuePair<string, StateEntry>> Entries => _entries;
+
+            public IEnumerable<DatabaseData> Values => _entries.Values
+                .Where(entry => entry?.Data != null)
+                .Select(entry => entry.Data);
+
+            public void Clear(string source)
+            {
+                if (_entries.Count <= 0)
+                {
+                    return;
+                }
+
+                foreach (var pair in _entries)
+                {
+                    if (pair.Value?.Data == null) { continue; }
+                    pair.Value.LastMutation = BuildMutation(
+                        pair.Key,
+                        StateMutationKind.Clear,
+                        source,
+                        pair.Value.Data.Version,
+                        pair.Value.Data.ItemCount,
+                        0,
+                        0);
+                }
+
+                _entries.Clear();
+            }
+
+            public bool TryGetData(string databaseId, out DatabaseData data)
+            {
+                if (_entries.TryGetValue(databaseId, out var entry) && entry?.Data != null)
+                {
+                    data = entry.Data;
+                    return true;
+                }
+
+                data = null;
+                return false;
+            }
+
+            public DatabaseData GetOrCreateData(string databaseId, string source)
+            {
+                if (!_entries.TryGetValue(databaseId, out var entry) || entry == null || entry.Data == null)
+                {
+                    var created = new DatabaseData
+                    {
+                        DatabaseId = databaseId,
+                        Version = 0,
+                        Items = new List<ItemData>()
+                    };
+
+                    entry = new StateEntry(databaseId, created)
+                    {
+                        LastMutation = BuildMutation(databaseId, StateMutationKind.Ensure, source, 0, 0, created.Version, created.ItemCount)
+                    };
+                    _entries[databaseId] = entry;
+                }
+
+                if (entry.Data.Items == null)
+                {
+                    entry.Data.Items = new List<ItemData>();
+                }
+
+                return entry.Data;
+            }
+
+            public void SetData(string databaseId, DatabaseData data, StateMutationKind kind, string source)
+            {
+                if (!_entries.TryGetValue(databaseId, out var entry) || entry == null)
+                {
+                    entry = new StateEntry(databaseId, null);
+                    _entries[databaseId] = entry;
+                }
+
+                int beforeVersion = entry.Data?.Version ?? 0;
+                int beforeCount = entry.Data?.ItemCount ?? 0;
+
+                var next = data ?? new DatabaseData();
+                next.DatabaseId = databaseId;
+                if (next.Items == null)
+                {
+                    next.Items = new List<ItemData>();
+                }
+
+                entry.Data = next;
+                entry.LastMutation = BuildMutation(
+                    databaseId,
+                    kind,
+                    source,
+                    beforeVersion,
+                    beforeCount,
+                    next.Version,
+                    next.ItemCount);
+            }
+
+            public void RecordMutation(string databaseId, StateMutationKind kind, string source, int beforeVersion, int beforeCount)
+            {
+                if (!_entries.TryGetValue(databaseId, out var entry) || entry?.Data == null)
+                {
+                    return;
+                }
+
+                entry.LastMutation = BuildMutation(
+                    databaseId,
+                    kind,
+                    source,
+                    beforeVersion,
+                    beforeCount,
+                    entry.Data.Version,
+                    entry.Data.ItemCount);
+            }
+
+            private StateMutation BuildMutation(
+                string databaseId,
+                StateMutationKind kind,
+                string source,
+                int beforeVersion,
+                int beforeCount,
+                int afterVersion,
+                int afterCount)
+            {
+                return new StateMutation(
+                    _nextMutationSequence++,
+                    databaseId,
+                    kind,
+                    source,
+                    beforeVersion,
+                    beforeCount,
+                    afterVersion,
+                    afterCount);
+            }
+        }
+
+        private static readonly DatabaseState _workingState = new DatabaseState();
+        private static readonly DatabaseState _committedState = new DatabaseState();
         private static readonly Dictionary<string, int> _activeTerminals = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, List<WeakReference<DatabaseTerminalComponent>>> _terminals =
             new Dictionary<string, List<WeakReference<DatabaseTerminalComponent>>>(StringComparer.OrdinalIgnoreCase);
@@ -35,7 +239,8 @@ namespace DatabaseIOTest.Services
 
         public static void Clear()
         {
-            _store.Clear();
+            _workingState.Clear("store:clear");
+            _committedState.Clear("store:clear");
             _activeTerminals.Clear();
             _terminals.Clear();
             _anchors.Clear();
@@ -48,7 +253,7 @@ namespace DatabaseIOTest.Services
 
         public static void ClearVolatile()
         {
-            _store.Clear();
+            _workingState.Clear("store:clearVolatile");
             _activeTerminals.Clear();
         }
 
@@ -59,8 +264,16 @@ namespace DatabaseIOTest.Services
             ClearVolatile();
             RebuildFromPersistedTerminals();
             TryRestoreFromPendingCommitSnapshot();
-            int totalItems = _store.Values.Sum(db => db?.ItemCount ?? 0);
-            ModFileLog.Write("Store", $"{Constants.LogPrefix} BeginRound source='{source}' dbCount={_store.Count} totalItems={totalItems}");
+            int totalItems = GetWorkingTotalItems();
+            int committedItems = GetCommittedTotalItems();
+            ModFileLog.Write(
+                "Store",
+                $"{Constants.LogPrefix} BeginRound source='{source}' workingDbCount={_workingState.Count} " +
+                $"workingItems={totalItems} committedDbCount={_committedState.Count} committedItems={committedItems}");
+            ModFileLog.WriteDebug(
+                "Store",
+                $"{Constants.LogPrefix} BeginRound debug source='{source}' pendingRestoreArmed={_pendingRestoreArmed} " +
+                $"pendingSnapshotDbCount={_pendingCommittedSnapshot.Count} saveBinding={_saveDecisionBindingEnabled}");
         }
 
         public static void CommitRound(string source = "unknown")
@@ -72,10 +285,19 @@ namespace DatabaseIOTest.Services
 
             // Use non-converting close to force deterministic writeback before persistence.
             int closed = ForceCloseAllActiveSessions($"commit:{source}", convertToClosedItem: false);
-            PersistStoreToTerminals();
+            PromoteWorkingToCommitted(source);
+            PersistCommittedStateToAnchors();
             CapturePendingCommitSnapshot();
-            int totalItems = _store.Values.Sum(db => db?.ItemCount ?? 0);
-            ModFileLog.Write("Store", $"{Constants.LogPrefix} CommitRound source='{source}' forcedClosed={closed} dbCount={_store.Count} totalItems={totalItems}");
+            int totalItems = GetWorkingTotalItems();
+            int committedItems = GetCommittedTotalItems();
+            ModFileLog.Write(
+                "Store",
+                $"{Constants.LogPrefix} CommitRound source='{source}' forcedClosed={closed} workingDbCount={_workingState.Count} " +
+                $"workingItems={totalItems} committedDbCount={_committedState.Count} committedItems={committedItems}");
+            ModFileLog.WriteDebug(
+                "Store",
+                $"{Constants.LogPrefix} CommitRound debug source='{source}' pendingSnapshotDbCount={_pendingCommittedSnapshot.Count} " +
+                $"pendingRestoreArmed={_pendingRestoreArmed}");
         }
 
         public static void RollbackRound(string reason = "unknown")
@@ -86,27 +308,26 @@ namespace DatabaseIOTest.Services
             }
 
             int closed = ForceCloseAllActiveSessions($"rollback:{reason}", convertToClosedItem: false);
-            ClearVolatile();
-            RebuildFromPersistedTerminals();
-            // Keep/apply the last committed snapshot as rollback baseline.
-            // This allows no-save round transitions to restore stable data even when live entities are unloaded.
-            if (_pendingCommittedSnapshot.Count > 0)
+            if (_committedState.Count <= 0)
             {
-                _store.Clear();
-                foreach (var pair in _pendingCommittedSnapshot)
-                {
-                    _store[pair.Key] = CloneDatabaseData(pair.Value);
-                }
-
-                foreach (string id in _pendingCommittedSnapshot.Keys.ToList())
-                {
-                    SyncTerminals(id, persistSerializedState: true);
-                }
+                RebuildFromPersistedTerminals();
             }
 
+            TryRestoreFromPendingCommitSnapshot();
+            RestoreWorkingFromCommitted($"rollback:{reason}");
+            SyncAllKnownDatabases();
+
             _pendingRestoreArmed = _pendingCommittedSnapshot.Count > 0;
-            int totalItems = _store.Values.Sum(db => db?.ItemCount ?? 0);
-            ModFileLog.Write("Store", $"{Constants.LogPrefix} RollbackRound reason='{reason}' forcedClosed={closed} dbCount={_store.Count} totalItems={totalItems}");
+            int totalItems = GetWorkingTotalItems();
+            int committedItems = GetCommittedTotalItems();
+            ModFileLog.Write(
+                "Store",
+                $"{Constants.LogPrefix} RollbackRound reason='{reason}' forcedClosed={closed} workingDbCount={_workingState.Count} " +
+                $"workingItems={totalItems} committedDbCount={_committedState.Count} committedItems={committedItems}");
+            ModFileLog.WriteDebug(
+                "Store",
+                $"{Constants.LogPrefix} RollbackRound debug reason='{reason}' pendingRestoreArmed={_pendingRestoreArmed} " +
+                $"pendingSnapshotDbCount={_pendingCommittedSnapshot.Count}");
         }
 
         public static void OnRoundEndObserved(string source = "roundEnd")
@@ -127,14 +348,13 @@ namespace DatabaseIOTest.Services
 
         public static void RebuildFromPersistedTerminals()
         {
-            _store.Clear();
+            _workingState.Clear("store:rebuild:working");
+            _committedState.Clear("store:rebuild:committed");
             _activeTerminals.Clear();
 
-            int seenTerminals = 0;
             int seenAnchors = 0;
             int rebuiltDatabases = 0;
-            var ids = _terminals.Keys
-                .Concat(_anchors.Keys)
+            var ids = _anchors.Keys
                 .Select(Normalize)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
@@ -163,27 +383,6 @@ namespace DatabaseIOTest.Services
                     }
                 }
 
-                if (_terminals.TryGetValue(id, out var registered))
-                {
-                    CleanupDeadReferences(registered);
-                    foreach (var weak in registered)
-                    {
-                        if (!weak.TryGetTarget(out var terminal) || terminal == null)
-                        {
-                            continue;
-                        }
-
-                        seenTerminals++;
-                        string fallbackId = Normalize(string.IsNullOrWhiteSpace(terminal.DatabaseId) ? id : terminal.DatabaseId);
-                        var candidate = DeserializeData(terminal.SerializedDatabase, fallbackId);
-                        candidate.Items = CompactItems(CloneItemList(candidate.Items));
-                        if (IsBetterCandidate(candidate, best))
-                        {
-                            best = candidate;
-                        }
-                    }
-                }
-
                 if (best == null)
                 {
                     best = new DatabaseData
@@ -199,19 +398,19 @@ namespace DatabaseIOTest.Services
                 {
                     best.Items = new List<ItemData>();
                 }
-                _store[id] = best;
+                _committedState.SetData(id, CloneDatabaseData(best), StateMutationKind.Rebuild, "store:rebuild:committed");
                 rebuiltDatabases++;
             }
 
-            foreach (string id in ids)
-            {
-                SyncTerminals(id);
-            }
+            RestoreWorkingFromCommitted("store:rebuild");
+            SyncAllKnownDatabases();
 
-            int totalItems = _store.Values.Sum(db => db?.ItemCount ?? 0);
+            int totalItems = GetWorkingTotalItems();
+            int committedItems = GetCommittedTotalItems();
             ModFileLog.Write(
                 "Store",
-                $"{Constants.LogPrefix} RebuildFromPersistedTerminals terminals={seenTerminals} anchors={seenAnchors} dbCount={rebuiltDatabases} totalItems={totalItems}");
+                $"{Constants.LogPrefix} RebuildFromPersistedTerminals anchors={seenAnchors} " +
+                $"committedDbCount={rebuiltDatabases} committedItems={committedItems} workingItems={totalItems}");
         }
 
         public static string SerializeData(DatabaseData data)
@@ -347,23 +546,59 @@ namespace DatabaseIOTest.Services
             return closed;
         }
 
-        private static void PersistStoreToTerminals()
+        private static void PromoteWorkingToCommitted(string source)
         {
-            var ids = _terminals.Keys
-                .Concat(_anchors.Keys)
+            var previousCommitted = SnapshotState(_committedState);
+            _committedState.Clear($"commit:promote:{source}:clear");
+
+            foreach (var pair in _workingState.Entries)
+            {
+                if (pair.Value?.Data == null) { continue; }
+
+                string id = Normalize(pair.Key);
+                var committedData = CloneDatabaseData(pair.Value.Data);
+                committedData.Items = CompactItems(CloneItemList(committedData.Items));
+
+                previousCommitted.TryGetValue(id, out var previousCommittedData);
+                committedData.Version = ComputeCommitVersion(previousCommittedData, committedData);
+
+                _committedState.SetData(
+                    id,
+                    committedData,
+                    StateMutationKind.Set,
+                    $"commit:promote:{source}");
+
+                ModFileLog.WriteDebug(
+                    "Store",
+                    $"{Constants.LogPrefix} PromoteWorkingToCommitted db='{id}' source='{source}' " +
+                    $"workingVersion={pair.Value.Data.Version} workingItems={pair.Value.Data.ItemCount} " +
+                    $"previousCommittedVersion={(previousCommittedData?.Version ?? 0)} previousCommittedItems={(previousCommittedData?.ItemCount ?? 0)} " +
+                    $"nextCommittedVersion={committedData.Version} nextCommittedItems={committedData.ItemCount}");
+            }
+        }
+
+        private static void PersistCommittedStateToAnchors()
+        {
+            var ids = _anchors.Keys
+                .Concat(_committedState.Keys)
                 .Select(Normalize)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
             ModFileLog.Write(
                 "Store",
-                $"{Constants.LogPrefix} PersistStoreToTerminals ids={ids.Count} dbCount={_store.Count} " +
+                $"{Constants.LogPrefix} PersistCommittedStateToAnchors ids={ids.Count} committedDbCount={_committedState.Count} " +
                 $"terminals={_terminals.Count} anchors={_anchors.Count} saveBinding={_saveDecisionBindingEnabled}");
+
             foreach (string id in ids)
             {
-                var data = GetOrCreate(id);
-                data.Items = CompactItems(CloneItemList(data.Items));
-                _store[id] = data;
-                SyncTerminals(id, persistSerializedState: true);
+                SyncTerminals(id, persistCommittedState: true);
+                if (TryGetCommittedData(id, out var committed))
+                {
+                    ModFileLog.WriteDebug(
+                        "Store",
+                        $"{Constants.LogPrefix} PersistCommittedToAnchor db='{id}' committedVersion={committed?.Version ?? 0} " +
+                        $"committedItems={committed?.ItemCount ?? 0}");
+                }
             }
         }
 
@@ -385,43 +620,14 @@ namespace DatabaseIOTest.Services
                 registered.Add(new WeakReference<DatabaseTerminalComponent>(terminal));
             }
 
-            var dataFromTerminal = DeserializeData(terminal.SerializedDatabase, id);
-            dataFromTerminal.Items = CompactItems(CloneItemList(dataFromTerminal.Items));
-            if (!_store.TryGetValue(id, out var storeData))
-            {
-                _store[id] = dataFromTerminal;
-            }
-            else if (IsBetterCandidate(dataFromTerminal, storeData))
-            {
-                _store[id] = dataFromTerminal;
-            }
-
-            if (_pendingRestoreArmed &&
-                dataFromTerminal.ItemCount <= 0 &&
-                _store.TryGetValue(id, out var restoredData) &&
-                (restoredData?.ItemCount ?? 0) > 0)
-            {
-                terminal.ApplyStoreSnapshot(restoredData, persistSerializedState: true);
-                dataFromTerminal = CloneDatabaseData(restoredData);
-                _pendingCommittedSnapshot.Remove(id);
-                if (_pendingCommittedSnapshot.Count <= 0)
-                {
-                    _pendingRestoreArmed = false;
-                }
-
-                ModFileLog.Write(
-                    "Store",
-                    $"{Constants.LogPrefix} RegisterTerminal applied pending snapshot db='{id}' terminal={terminal.TerminalEntityId} " +
-                    $"version={dataFromTerminal.Version} items={dataFromTerminal.ItemCount}");
-            }
-
             SyncTerminals(id);
 
-            int storeItems = _store.TryGetValue(id, out var merged) ? merged?.ItemCount ?? 0 : 0;
+            int storeItems = TryGetWorkingData(id, out var merged) ? merged?.ItemCount ?? 0 : 0;
+            int storeVersion = TryGetWorkingData(id, out var mergedVersion) ? mergedVersion?.Version ?? 0 : 0;
             ModFileLog.Write(
                 "Store",
                 $"{Constants.LogPrefix} RegisterTerminal db='{id}' terminal={terminal.TerminalEntityId} " +
-                $"serializedVersion={dataFromTerminal.Version} serializedItems={dataFromTerminal.ItemCount} storeItems={storeItems}");
+                $"storeVersion={storeVersion} storeItems={storeItems}");
         }
 
         public static void RegisterPersistenceAnchor(DatabaseStorageAnchorComponent anchor)
@@ -445,27 +651,47 @@ namespace DatabaseIOTest.Services
             var dataFromAnchor = anchor.ReadPersistedData();
             dataFromAnchor.Items = CompactItems(CloneItemList(dataFromAnchor.Items));
 
-            if (!_store.TryGetValue(id, out var storeData))
+            if (!TryGetCommittedData(id, out var committedData))
             {
-                _store[id] = dataFromAnchor;
+                _committedState.SetData(
+                    id,
+                    CloneDatabaseData(dataFromAnchor),
+                    StateMutationKind.Set,
+                    "anchor:register:committed:first");
             }
-            else if (IsBetterCandidate(dataFromAnchor, storeData))
+            else if (IsBetterCandidate(dataFromAnchor, committedData))
             {
-                _store[id] = dataFromAnchor;
+                _committedState.SetData(
+                    id,
+                    CloneDatabaseData(dataFromAnchor),
+                    StateMutationKind.Set,
+                    "anchor:register:committed:replaceBetter");
+            }
+
+            if (!TryGetWorkingData(id, out var workingData))
+            {
+                _workingState.SetData(
+                    id,
+                    CloneDatabaseData(dataFromAnchor),
+                    StateMutationKind.Set,
+                    "anchor:register:working:first");
+            }
+            else if (IsBetterCandidate(dataFromAnchor, workingData))
+            {
+                _workingState.SetData(
+                    id,
+                    CloneDatabaseData(dataFromAnchor),
+                    StateMutationKind.Set,
+                    "anchor:register:working:replaceBetter");
             }
 
             if (_pendingRestoreArmed &&
                 dataFromAnchor.ItemCount <= 0 &&
-                _store.TryGetValue(id, out var restoredData) &&
+                TryGetCommittedData(id, out var restoredData) &&
                 (restoredData?.ItemCount ?? 0) > 0)
             {
                 anchor.ApplyStoreSnapshot(restoredData, persistSerializedState: true);
                 dataFromAnchor = CloneDatabaseData(restoredData);
-                _pendingCommittedSnapshot.Remove(id);
-                if (_pendingCommittedSnapshot.Count <= 0)
-                {
-                    _pendingRestoreArmed = false;
-                }
 
                 ModFileLog.Write(
                     "Store",
@@ -475,11 +701,13 @@ namespace DatabaseIOTest.Services
 
             SyncTerminals(id);
 
-            int storeItems = _store.TryGetValue(id, out var merged) ? merged?.ItemCount ?? 0 : 0;
+            int workingItems = TryGetWorkingData(id, out var mergedWorking) ? mergedWorking?.ItemCount ?? 0 : 0;
+            int committedItems = TryGetCommittedData(id, out var mergedCommitted) ? mergedCommitted?.ItemCount ?? 0 : 0;
             ModFileLog.Write(
                 "Store",
                 $"{Constants.LogPrefix} RegisterAnchor db='{id}' anchor={anchor.AnchorEntityId} " +
-                $"serializedVersion={dataFromAnchor.Version} serializedItems={dataFromAnchor.ItemCount} storeItems={storeItems}");
+                $"serializedVersion={dataFromAnchor.Version} serializedItems={dataFromAnchor.ItemCount} " +
+                $"workingItems={workingItems} committedItems={committedItems}");
         }
 
         public static void UnregisterTerminal(DatabaseTerminalComponent terminal)
@@ -587,10 +815,13 @@ namespace DatabaseIOTest.Services
             if (items == null || items.Count == 0) { return; }
             string id = Normalize(databaseId);
             var db = GetOrCreate(id);
+            int beforeVersion = db.Version;
+            int beforeCount = db.ItemCount;
             var merged = CloneItemList(db.Items);
             merged.AddRange(CloneItemList(items));
             db.Items = CompactItems(merged);
             db.Version++;
+            _workingState.RecordMutation(id, StateMutationKind.Merge, "api:appendItems", beforeVersion, beforeCount);
             SyncTerminals(id);
         }
 
@@ -603,9 +834,12 @@ namespace DatabaseIOTest.Services
             }
 
             var db = GetOrCreate(id);
+            int beforeVersion = db.Version;
+            int beforeCount = db.ItemCount;
             var copy = CloneItemList(db.Items);
             db.Items.Clear();
             db.Version++;
+            _workingState.RecordMutation(id, StateMutationKind.Extract, "api:takeAllForSession", beforeVersion, beforeCount);
             SyncTerminals(id);
             return copy;
         }
@@ -619,6 +853,8 @@ namespace DatabaseIOTest.Services
             }
 
             var db = GetOrCreate(id);
+            int beforeVersion = db.Version;
+            int beforeCount = db.ItemCount;
             // Merge instead of overwrite:
             // while a terminal session is open, interfaces can still ingest into the same database.
             // those ingests live in db.Items and must not be lost when the session writes back.
@@ -627,6 +863,7 @@ namespace DatabaseIOTest.Services
             merged.AddRange(writeBack);
             db.Items = CompactItems(merged);
             db.Version++;
+            _workingState.RecordMutation(id, StateMutationKind.Merge, "api:writeBackFromTerminal", beforeVersion, beforeCount);
             SyncTerminals(id);
             return true;
         }
@@ -700,6 +937,8 @@ namespace DatabaseIOTest.Services
             if (bestIndex < 0) { return false; }
 
             var bestEntry = db.Items[bestIndex];
+            int beforeVersion = db.Version;
+            int beforeCount = db.ItemCount;
             if (bestEntry.ContainedItems != null && bestEntry.ContainedItems.Count > 0)
             {
                 taken = bestEntry.Clone();
@@ -720,6 +959,7 @@ namespace DatabaseIOTest.Services
             }
 
             db.Version++;
+            _workingState.RecordMutation(id, StateMutationKind.Extract, "api:takeBestMatching", beforeVersion, beforeCount);
             SyncTerminals(id);
             return true;
         }
@@ -736,10 +976,13 @@ namespace DatabaseIOTest.Services
 
             int available = CountMatching(db.Items, predicate);
             if (available < amount) { return false; }
+            int beforeVersion = db.Version;
+            int beforeCount = db.ItemCount;
             int remaining = TakeMatchingFromList(db.Items, predicate, amount, taken);
             if (remaining > 0) { return false; }
 
             db.Version++;
+            _workingState.RecordMutation(id, StateMutationKind.Extract, "api:takeItems", beforeVersion, beforeCount);
             SyncTerminals(id);
             return true;
         }
@@ -771,6 +1014,8 @@ namespace DatabaseIOTest.Services
 
             int remaining = amount;
             bool storeChanged = false;
+            int beforeVersion = db.Version;
+            int beforeCount = db.ItemCount;
             if (availableStore > 0)
             {
                 int fromStore = Math.Min(availableStore, remaining);
@@ -810,6 +1055,7 @@ namespace DatabaseIOTest.Services
             if (storeChanged)
             {
                 db.Version++;
+                _workingState.RecordMutation(id, StateMutationKind.Extract, "api:takeItemsForAutomation", beforeVersion, beforeCount);
                 SyncTerminals(id);
             }
 
@@ -855,28 +1101,120 @@ namespace DatabaseIOTest.Services
             return candidate.ItemCount > baseline.ItemCount;
         }
 
+        private static bool TryGetWorkingData(string databaseId, out DatabaseData data)
+        {
+            return _workingState.TryGetData(databaseId, out data);
+        }
+
+        private static bool TryGetCommittedData(string databaseId, out DatabaseData data)
+        {
+            return _committedState.TryGetData(databaseId, out data);
+        }
+
+        private static int GetWorkingTotalItems()
+        {
+            return _workingState.Values.Sum(db => db?.ItemCount ?? 0);
+        }
+
+        private static int GetCommittedTotalItems()
+        {
+            return _committedState.Values.Sum(db => db?.ItemCount ?? 0);
+        }
+
         private static DatabaseData GetOrCreate(string databaseId)
         {
             string id = Normalize(databaseId);
-            if (!_store.TryGetValue(id, out var data))
+            return _workingState.GetOrCreateData(id, "store:getOrCreate:working");
+        }
+
+        private static Dictionary<string, DatabaseData> SnapshotState(DatabaseState state)
+        {
+            var snapshot = new Dictionary<string, DatabaseData>(StringComparer.OrdinalIgnoreCase);
+            if (state == null) { return snapshot; }
+
+            foreach (var pair in state.Entries)
             {
-                data = new DatabaseData { DatabaseId = id, Version = 0, Items = new List<ItemData>() };
-                _store[id] = data;
+                if (pair.Value?.Data == null) { continue; }
+                snapshot[pair.Key] = CloneDatabaseData(pair.Value.Data);
             }
-            if (data.Items == null)
+
+            return snapshot;
+        }
+
+        private static void RestoreWorkingFromCommitted(string source)
+        {
+            _workingState.Clear($"working:restore:{source}:clear");
+            foreach (var pair in _committedState.Entries)
             {
-                data.Items = new List<ItemData>();
+                if (pair.Value?.Data == null) { continue; }
+                _workingState.SetData(
+                    pair.Key,
+                    CloneDatabaseData(pair.Value.Data),
+                    StateMutationKind.Restore,
+                    $"working:restore:{source}");
             }
-            return data;
+
+            ModFileLog.WriteDebug(
+                "Store",
+                $"{Constants.LogPrefix} RestoreWorkingFromCommitted source='{source}' committedDbCount={_committedState.Count} " +
+                $"committedItems={GetCommittedTotalItems()} workingDbCount={_workingState.Count} workingItems={GetWorkingTotalItems()}");
+        }
+
+        private static void SyncAllKnownDatabases(bool persistCommittedState = false)
+        {
+            var ids = _workingState.Keys
+                .Concat(_committedState.Keys)
+                .Concat(_anchors.Keys)
+                .Concat(_terminals.Keys)
+                .Select(Normalize)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            foreach (string id in ids)
+            {
+                SyncTerminals(id, persistCommittedState);
+            }
+        }
+
+        private static int ComputeCommitVersion(DatabaseData previousCommitted, DatabaseData candidate)
+        {
+            int previousVersion = Math.Max(0, previousCommitted?.Version ?? 0);
+            int candidateVersion = Math.Max(0, candidate?.Version ?? 0);
+            if (previousCommitted == null)
+            {
+                return candidateVersion;
+            }
+
+            bool payloadChanged = !IsPayloadEquivalent(previousCommitted, candidate);
+            if (!payloadChanged)
+            {
+                return Math.Max(previousVersion, candidateVersion);
+            }
+
+            return Math.Max(candidateVersion, previousVersion + 1);
+        }
+
+        private static bool IsPayloadEquivalent(DatabaseData left, DatabaseData right)
+        {
+            if (left == null && right == null) { return true; }
+            if (left == null || right == null) { return false; }
+
+            var leftSnapshot = CloneDatabaseData(left);
+            var rightSnapshot = CloneDatabaseData(right);
+            leftSnapshot.Version = 0;
+            rightSnapshot.Version = 0;
+            string leftEncoded = SerializeData(leftSnapshot);
+            string rightEncoded = SerializeData(rightSnapshot);
+            return string.Equals(leftEncoded, rightEncoded, StringComparison.Ordinal);
         }
 
         private static void CapturePendingCommitSnapshot()
         {
             _pendingCommittedSnapshot.Clear();
-            foreach (var pair in _store)
+            foreach (var pair in _committedState.Entries)
             {
-                if (pair.Value == null) { continue; }
-                _pendingCommittedSnapshot[pair.Key] = CloneDatabaseData(pair.Value);
+                if (pair.Value?.Data == null) { continue; }
+                _pendingCommittedSnapshot[pair.Key] = CloneDatabaseData(pair.Value.Data);
             }
 
             _pendingRestoreArmed = _pendingCommittedSnapshot.Count > 0;
@@ -893,35 +1231,38 @@ namespace DatabaseIOTest.Services
                 return;
             }
 
-            int currentItems = _store.Values.Sum(db => db?.ItemCount ?? 0);
-            if (currentItems > 0)
+            int currentCommittedItems = GetCommittedTotalItems();
+            if (currentCommittedItems > 0)
             {
                 // Keep last committed snapshot available for future no-save rollback.
                 return;
             }
 
-            _store.Clear();
+            _committedState.Clear("snapshot:restore:committed:clear");
             foreach (var pair in _pendingCommittedSnapshot)
             {
-                _store[pair.Key] = CloneDatabaseData(pair.Value);
+                _committedState.SetData(
+                    pair.Key,
+                    CloneDatabaseData(pair.Value),
+                    StateMutationKind.Restore,
+                    "snapshot:restore:committed:apply");
             }
 
-            foreach (string id in _pendingCommittedSnapshot.Keys.ToList())
-            {
-                SyncTerminals(id, persistSerializedState: true);
-            }
+            RestoreWorkingFromCommitted("snapshot:restore");
+            SyncAllKnownDatabases(persistCommittedState: true);
 
-            int restoredItems = _store.Values.Sum(db => db?.ItemCount ?? 0);
+            int restoredItems = GetWorkingTotalItems();
+            int restoredCommittedItems = GetCommittedTotalItems();
             ModFileLog.Write(
                 "Store",
-                $"{Constants.LogPrefix} Restored pending commit snapshot dbCount={_store.Count} totalItems={restoredItems}");
+                $"{Constants.LogPrefix} Restored pending commit snapshot workingDbCount={_workingState.Count} " +
+                $"workingItems={restoredItems} committedDbCount={_committedState.Count} committedItems={restoredCommittedItems}");
         }
 
-        private static void SyncTerminals(string databaseId, bool persistSerializedState = false)
+        private static void SyncTerminals(string databaseId, bool persistCommittedState = false)
         {
             string id = Normalize(databaseId);
-            var data = GetOrCreate(id);
-            bool persistNow = persistSerializedState || !_saveDecisionBindingEnabled;
+            var workingData = GetOrCreate(id);
 
             if (_terminals.TryGetValue(id, out var registered))
             {
@@ -930,19 +1271,36 @@ namespace DatabaseIOTest.Services
                 {
                     if (weak.TryGetTarget(out var terminal))
                     {
-                        terminal.ApplyStoreSnapshot(data, persistNow);
+                        // Terminal serialization is no longer used for persistence.
+                        terminal.ApplyStoreSnapshot(workingData, persistSerializedState: false);
                     }
                 }
             }
 
             if (_anchors.TryGetValue(id, out var anchors))
             {
+                DatabaseData anchorData = workingData;
+                bool persistSerialized = false;
+                if (persistCommittedState && TryGetCommittedData(id, out var committedData) && committedData != null)
+                {
+                    anchorData = committedData;
+                    persistSerialized = true;
+                }
+
+                if (persistCommittedState)
+                {
+                    ModFileLog.WriteDebug(
+                        "Store",
+                        $"{Constants.LogPrefix} SyncTerminals persistCommitted db='{id}' workingVersion={workingData.Version} " +
+                        $"workingItems={workingData.ItemCount} committedVersion={anchorData.Version} committedItems={anchorData.ItemCount}");
+                }
+
                 CleanupDeadReferences(anchors);
                 foreach (var weak in anchors)
                 {
                     if (weak.TryGetTarget(out var anchor))
                     {
-                        anchor.ApplyStoreSnapshot(data, persistSerializedState: true);
+                        anchor.ApplyStoreSnapshot(anchorData, persistSerializedState: persistSerialized);
                     }
                 }
             }

@@ -9,10 +9,20 @@ namespace DatabaseIOTest.Services
 {
     public static class ModFileLog
     {
+        private enum LogLevel
+        {
+            Info = 0,
+            Debug = 1
+        }
+
+        private const string DebugEnvName = "DBIOTEST_DEBUG_LOG";
+        private const string DebugMarkerFileName = "debug.enabled";
         private static readonly object WriteLock = new object();
         private static readonly Encoding Utf8NoBom = new UTF8Encoding(false);
         private static bool _initDone;
         private static bool _enabled;
+        private static bool _debugEnabled;
+        private static string _debugModeSource = "default";
         private static bool _initNoticeSent;
         private static readonly List<string> LogDirectories = new List<string>();
 
@@ -53,10 +63,13 @@ namespace DatabaseIOTest.Services
                 LogDirectories.Clear();
                 LogDirectories.AddRange(unique);
                 _enabled = LogDirectories.Count > 0;
+                _debugEnabled = ResolveDebugEnabled(out _debugModeSource);
             }
             catch
             {
                 _enabled = false;
+                _debugEnabled = false;
+                _debugModeSource = "default";
             }
 
             EmitInitNotice();
@@ -130,7 +143,7 @@ namespace DatabaseIOTest.Services
                 {
                     string joined = string.Join(" | ", LogDirectories);
                     DebugConsole.NewMessage(
-                        $"{DatabaseIOTest.Constants.LogPrefix} File log ready: {joined}",
+                        $"{DatabaseIOTest.Constants.LogPrefix} File log ready: {joined} | debug={(_debugEnabled ? "on" : "off")} ({_debugModeSource})",
                         Color.LightGray);
                 }
                 else
@@ -152,16 +165,127 @@ namespace DatabaseIOTest.Services
             return GameMain.NetworkMember.IsServer ? "Server" : "Client";
         }
 
+        private static bool ResolveDebugEnabled(out string source)
+        {
+            source = "default";
+
+            string envRaw = null;
+            try
+            {
+                envRaw = Environment.GetEnvironmentVariable(DebugEnvName);
+            }
+            catch
+            {
+                envRaw = null;
+            }
+
+            if (TryParseBool(envRaw, out bool envValue))
+            {
+                source = $"env:{DebugEnvName}";
+                return envValue;
+            }
+
+            foreach (var markerPath in EnumerateDebugMarkerCandidates())
+            {
+                if (string.IsNullOrWhiteSpace(markerPath)) { continue; }
+                try
+                {
+                    if (File.Exists(markerPath))
+                    {
+                        source = $"marker:{markerPath}";
+                        return true;
+                    }
+                }
+                catch
+                {
+                    // Skip invalid/unreadable marker candidate.
+                }
+            }
+
+            return false;
+        }
+
+        private static IEnumerable<string> EnumerateDebugMarkerCandidates()
+        {
+            foreach (var root in new[] { AppContext.BaseDirectory, Environment.CurrentDirectory })
+            {
+                if (string.IsNullOrWhiteSpace(root)) { continue; }
+                yield return Path.Combine(root, "LocalMods", "Database IO Test", DebugMarkerFileName);
+                yield return Path.Combine(root, "ServerLogs", "Database IO Test", DebugMarkerFileName);
+            }
+
+            string modRoot = TryFindModRootFromAssembly();
+            if (!string.IsNullOrWhiteSpace(modRoot))
+            {
+                yield return Path.Combine(modRoot, DebugMarkerFileName);
+                yield return Path.Combine(modRoot, "Logs", DebugMarkerFileName);
+            }
+        }
+
+        private static bool TryParseBool(string raw, out bool value)
+        {
+            value = false;
+            if (string.IsNullOrWhiteSpace(raw)) { return false; }
+
+            string text = raw.Trim().ToLowerInvariant();
+            if (text == "1" || text == "true" || text == "on" || text == "yes")
+            {
+                value = true;
+                return true;
+            }
+
+            if (text == "0" || text == "false" || text == "off" || text == "no")
+            {
+                value = false;
+                return true;
+            }
+
+            return false;
+        }
+
+        public static bool IsDebugEnabled
+        {
+            get
+            {
+                EnsureInitialized();
+                return _debugEnabled;
+            }
+        }
+
+        public static void SetDebugEnabled(bool enabled, string source = "runtime")
+        {
+            EnsureInitialized();
+            bool changed = _debugEnabled != enabled;
+            _debugEnabled = enabled;
+            _debugModeSource = string.IsNullOrWhiteSpace(source) ? "runtime" : source.Trim();
+
+            Write(
+                "Core",
+                $"{DatabaseIOTest.Constants.LogPrefix} Debug logging {(_debugEnabled ? "enabled" : "disabled")} source='{_debugModeSource}' changed={changed}");
+        }
+
         public static void Write(string category, string message)
+        {
+            WriteInternal(category, message, LogLevel.Info);
+        }
+
+        public static void WriteDebug(string category, string message)
+        {
+            WriteInternal(category, message, LogLevel.Debug);
+        }
+
+        private static void WriteInternal(string category, string message, LogLevel level)
         {
             EnsureInitialized();
             if (!_enabled) { return; }
+            if (level == LogLevel.Debug && !_debugEnabled) { return; }
 
             try
             {
                 string fileName = $"dbiotest-{DateTime.Now:yyyyMMdd}.log";
+                string levelTag = level == LogLevel.Debug ? " [DBG]" : "";
                 string line =
-                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{GetRuntimeRole()}] [{category}] {message}{Environment.NewLine}";
+                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{GetRuntimeRole()}] [{category}]{levelTag} {message}{Environment.NewLine}";
 
                 lock (WriteLock)
                 {

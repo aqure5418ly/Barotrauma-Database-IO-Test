@@ -16,6 +16,7 @@ namespace DatabaseIOTest
         public DatabaseIOMod()
         {
             Services.ModFileLog.Write("Core", $"{Constants.LogPrefix} Loaded");
+            Services.ModFileLog.Write("Core", $"{Constants.LogPrefix} Debug log mode active={Services.ModFileLog.IsDebugEnabled}");
             DebugConsole.NewMessage($"{Constants.LogPrefix} Loaded", Microsoft.Xna.Framework.Color.Green);
             RegisterHooks();
             InstallPatches();
