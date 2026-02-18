@@ -61,7 +61,7 @@
   <dbiotest.ui.title>Database Terminal</dbiotest.ui.title>
   <dbiotest.ui.search.tooltip>Search by item name or identifier.</dbiotest.ui.search.tooltip>
   <dbiotest.ui.refresh>Refresh</dbiotest.ui.refresh>
-  <dbiotest.ui.footer>Left-click an entry to transfer one item. Right-click the terminal to close session.</dbiotest.ui.footer>
+  <dbiotest.ui.footer>Left-click an icon to spawn one item into terminal buffer.</dbiotest.ui.footer>
   <dbiotest.ui.empty>No items in this session.</dbiotest.ui.empty>
 
   <dbiotest.ui.sort.nameasc>Name A-Z</dbiotest.ui.sort.nameasc>
@@ -69,11 +69,12 @@
   <dbiotest.ui.sort.countdesc>Count High-Low</dbiotest.ui.sort.countdesc>
   <dbiotest.ui.sort.countasc>Count Low-High</dbiotest.ui.sort.countasc>
 
-  <dbiotest.ui.take.success>Item moved to inventory.</dbiotest.ui.take.success>
+  <dbiotest.ui.take.success>Item moved to terminal buffer.</dbiotest.ui.take.success>
   <dbiotest.ui.take.failed>Failed to transfer item.</dbiotest.ui.take.failed>
-  <dbiotest.ui.take.full>Inventory full.</dbiotest.ui.take.full>
+  <dbiotest.ui.take.full>Terminal buffer is full.</dbiotest.ui.take.full>
+  <dbiotest.ui.take.closed>Terminal session is closed.</dbiotest.ui.take.closed>
   <dbiotest.ui.take.invalidterminal>Terminal session not found.</dbiotest.ui.take.invalidterminal>
   <dbiotest.ui.take.denied>You are not allowed to use this terminal.</dbiotest.ui.take.denied>
-  <dbiotest.ui.take.notready>Terminal inventory is not ready.</dbiotest.ui.take.notready>
+  <dbiotest.ui.take.notready>Terminal API is not ready.</dbiotest.ui.take.notready>
   <dbiotest.ui.take.notfound>Item not found in terminal.</dbiotest.ui.take.notfound>
 </infotexts>

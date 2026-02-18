@@ -4,6 +4,17 @@ DatabaseIOTestLua.Server = DatabaseIOTestLua.Server or {}
 local DBServer = DatabaseIOTestLua.Server
 DBServer.NetTakeRequest = "DBIOTEST_RequestTakeByIdentifier"
 DBServer.NetTakeResult = "DBIOTEST_TakeResult"
+DBServer.NetViewSubscribe = "DBIOTEST_ViewSubscribe"
+DBServer.NetViewUnsubscribe = "DBIOTEST_ViewUnsubscribe"
+DBServer.NetViewSnapshot = "DBIOTEST_ViewSnapshot"
+DBServer.NetViewDelta = "DBIOTEST_ViewDelta"
+
+DBServer.Subscriptions = DBServer.Subscriptions or {}
+DBServer.NextViewSyncAt = DBServer.NextViewSyncAt or 0
+
+local function Log(line)
+    print("[DBIOTEST][B1][Server] " .. tostring(line or ""))
+end
 
 local function L(key, fallback)
     local value = nil
@@ -14,6 +25,13 @@ local function L(key, fallback)
         end
     end)
     return value or fallback
+end
+
+local function NormalizeIdentifier(identifier)
+    if identifier == nil then
+        return ""
+    end
+    return string.lower(tostring(identifier))
 end
 
 local function GetItemIdentifier(item)
@@ -37,13 +55,6 @@ local function GetItemIdentifier(item)
     end
 
     return identifier or ""
-end
-
-local function NormalizeIdentifier(identifier)
-    if identifier == nil then
-        return ""
-    end
-    return string.lower(tostring(identifier))
 end
 
 local function IsSessionTerminal(item)
@@ -77,67 +88,6 @@ local function FindItemByEntityId(entityId)
     return nil
 end
 
-local function GetTerminalInventory(terminal)
-    if terminal == nil then
-        return nil
-    end
-
-    local container = nil
-    pcall(function()
-        container = terminal.GetComponentString("ItemContainer")
-    end)
-    if container == nil then
-        return nil
-    end
-
-    local inventory = nil
-    pcall(function()
-        inventory = container.Inventory
-    end)
-    return inventory
-end
-
-local function FindFirstMatchingItem(inventory, wantedIdentifier)
-    if inventory == nil then
-        return nil
-    end
-
-    local wanted = NormalizeIdentifier(wantedIdentifier)
-    if wanted == "" then
-        return nil
-    end
-
-    local result = nil
-
-    local ok = pcall(function()
-        for contained in inventory.AllItems do
-            if contained ~= nil and not contained.Removed then
-                if NormalizeIdentifier(GetItemIdentifier(contained)) == wanted then
-                    result = contained
-                    break
-                end
-            end
-        end
-    end)
-
-    if ok and result ~= nil then
-        return result
-    end
-
-    pcall(function()
-        for contained in inventory.AllItemsMod do
-            if contained ~= nil and not contained.Removed then
-                if NormalizeIdentifier(GetItemIdentifier(contained)) == wanted then
-                    result = contained
-                    break
-                end
-            end
-        end
-    end)
-
-    return result
-end
-
 local function CharacterCanUseTerminal(character, terminal)
     if character == nil or character.Removed or character.IsDead or terminal == nil then
         return false
@@ -169,6 +119,296 @@ local function CharacterCanUseTerminal(character, terminal)
     return closeEnough
 end
 
+local function GetTerminalDatabaseId(terminal)
+    if terminal == nil then
+        return "default"
+    end
+
+    local component = nil
+    pcall(function()
+        component = terminal.GetComponentString("DatabaseTerminalComponent")
+    end)
+    if component == nil then
+        return "default"
+    end
+
+    local dbid = "default"
+    pcall(function()
+        dbid = tostring(component.DatabaseId or "default")
+    end)
+    return dbid or "default"
+end
+
+local function GetTerminalComponent(terminal)
+    if terminal == nil then
+        return nil
+    end
+
+    local component = nil
+    pcall(function()
+        component = terminal.GetComponentString("DatabaseTerminalComponent")
+    end)
+    return component
+end
+
+local function BuildEntryMapFromComponent(terminal)
+    local component = GetTerminalComponent(terminal)
+    if component == nil then
+        return nil
+    end
+
+    local rows = nil
+    local ok = pcall(function()
+        rows = component.GetVirtualViewSnapshot(true)
+    end)
+    if not ok or rows == nil then
+        return nil
+    end
+
+    local map = {}
+    local totalEntries = 0
+    local totalAmount = 0
+
+    local iterOk = pcall(function()
+        for row in rows do
+            if row ~= nil then
+                local identifier = tostring(row.Identifier or "")
+                local key = NormalizeIdentifier(identifier)
+                if key ~= "" then
+                    local amount = math.max(0, math.floor(tonumber(row.Amount) or 0))
+                    map[key] = {
+                        key = key,
+                        identifier = identifier,
+                        prefabIdentifier = tostring(row.PrefabIdentifier or identifier),
+                        displayName = tostring(row.DisplayName or identifier),
+                        amount = amount,
+                        bestQuality = math.floor(tonumber(row.BestQuality) or 0),
+                        avgCondition = tonumber(row.AverageCondition) or 100.0
+                    }
+                    totalEntries = totalEntries + 1
+                    totalAmount = totalAmount + amount
+                end
+            end
+        end
+    end)
+
+    if not iterOk then
+        return nil
+    end
+
+    return map, totalEntries, totalAmount
+end
+
+local function BuildEntryMap(terminal)
+    local byComponent, entryCount, amountCount = BuildEntryMapFromComponent(terminal)
+    if byComponent ~= nil then
+        return byComponent, entryCount, amountCount
+    end
+
+    return {}, 0, 0
+end
+
+local function CloneEntryMap(source)
+    local map = {}
+    for key, entry in pairs(source or {}) do
+        map[key] = {
+            key = key,
+            identifier = tostring(entry.identifier or ""),
+            prefabIdentifier = tostring(entry.prefabIdentifier or entry.identifier or ""),
+            displayName = tostring(entry.displayName or entry.identifier or ""),
+            amount = tonumber(entry.amount) or 0,
+            bestQuality = tonumber(entry.bestQuality) or 0,
+            avgCondition = tonumber(entry.avgCondition) or 100.0
+        }
+    end
+    return map
+end
+
+local function EntriesEqual(left, right)
+    if left == nil or right == nil then
+        return false
+    end
+    if tonumber(left.amount or 0) ~= tonumber(right.amount or 0) then
+        return false
+    end
+    if tonumber(left.bestQuality or 0) ~= tonumber(right.bestQuality or 0) then
+        return false
+    end
+
+    local lc = tonumber(left.avgCondition or 0)
+    local rc = tonumber(right.avgCondition or 0)
+    return math.abs(lc - rc) <= 0.05
+end
+
+local function BuildDelta(previousEntries, currentEntries)
+    local removed = {}
+    local upserts = {}
+
+    for key, oldEntry in pairs(previousEntries or {}) do
+        if currentEntries[key] == nil then
+            table.insert(removed, tostring(oldEntry.identifier or key or ""))
+        end
+    end
+
+    for key, newEntry in pairs(currentEntries or {}) do
+        local oldEntry = previousEntries[key]
+        if oldEntry == nil or not EntriesEqual(oldEntry, newEntry) then
+            table.insert(upserts, newEntry)
+        end
+    end
+
+    table.sort(removed, function(a, b)
+        return string.lower(tostring(a or "")) < string.lower(tostring(b or ""))
+    end)
+
+    table.sort(upserts, function(a, b)
+        return string.lower(tostring(a.identifier or "")) < string.lower(tostring(b.identifier or ""))
+    end)
+
+    return removed, upserts
+end
+
+local function WriteEntry(message, entry)
+    message.WriteString(tostring(entry.identifier or ""))
+    message.WriteString(tostring(entry.prefabIdentifier or entry.identifier or ""))
+    message.WriteString(tostring(entry.displayName or entry.identifier or ""))
+    message.WriteString(tostring(math.max(0, math.floor(tonumber(entry.amount) or 0))))
+    message.WriteString(tostring(math.floor(tonumber(entry.bestQuality) or 0)))
+    message.WriteString(string.format("%.2f", tonumber(entry.avgCondition) or 100.0))
+end
+
+local function SendSnapshot(client, sub, entries, totalEntries, totalAmount, reason)
+    if not Game.IsMultiplayer then
+        return
+    end
+    if client == nil or client.Connection == nil or sub == nil then
+        return
+    end
+
+    local list = {}
+    for _, entry in pairs(entries or {}) do
+        table.insert(list, entry)
+    end
+    table.sort(list, function(a, b)
+        return string.lower(tostring(a.identifier or "")) < string.lower(tostring(b.identifier or ""))
+    end)
+
+    local message = Networking.Start(DBServer.NetViewSnapshot)
+    message.WriteString(tostring(sub.terminalEntityId or ""))
+    message.WriteString(tostring(sub.databaseId or "default"))
+    message.WriteString(tostring(sub.serial or 0))
+    message.WriteString(tostring(totalEntries or 0))
+    message.WriteString(tostring(totalAmount or 0))
+    message.WriteString(tostring(#list))
+    for _, entry in ipairs(list) do
+        WriteEntry(message, entry)
+    end
+    Networking.Send(message, client.Connection)
+
+    Log(string.format(
+        "Snapshot client='%s' terminal=%s serial=%s entries=%d amount=%d reason='%s'",
+        tostring(client.Name or "?"),
+        tostring(sub.terminalEntityId or ""),
+        tostring(sub.serial or 0),
+        tonumber(totalEntries or 0),
+        tonumber(totalAmount or 0),
+        tostring(reason or "sync")))
+end
+
+local function SendDelta(client, sub, removed, upserts, totalEntries, totalAmount, reason)
+    if not Game.IsMultiplayer then
+        return
+    end
+    if client == nil or client.Connection == nil or sub == nil then
+        return
+    end
+
+    local message = Networking.Start(DBServer.NetViewDelta)
+    message.WriteString(tostring(sub.terminalEntityId or ""))
+    message.WriteString(tostring(sub.databaseId or "default"))
+    message.WriteString(tostring(sub.serial or 0))
+    message.WriteString(tostring(totalEntries or 0))
+    message.WriteString(tostring(totalAmount or 0))
+    message.WriteString(tostring(#removed))
+    for _, identifier in ipairs(removed) do
+        message.WriteString(tostring(identifier or ""))
+    end
+    message.WriteString(tostring(#upserts))
+    for _, entry in ipairs(upserts) do
+        WriteEntry(message, entry)
+    end
+    Networking.Send(message, client.Connection)
+
+    Log(string.format(
+        "Delta client='%s' terminal=%s serial=%s removed=%d upserts=%d entries=%d amount=%d reason='%s'",
+        tostring(client.Name or "?"),
+        tostring(sub.terminalEntityId or ""),
+        tostring(sub.serial or 0),
+        #removed,
+        #upserts,
+        tonumber(totalEntries or 0),
+        tonumber(totalAmount or 0),
+        tostring(reason or "delta")))
+end
+
+local function EnsureSubscription(client, terminal)
+    if client == nil or terminal == nil then
+        return nil
+    end
+
+    local terminalId = tostring(terminal.ID)
+    local current = DBServer.Subscriptions[client]
+    if current ~= nil and tostring(current.terminalEntityId or "") == terminalId then
+        return current
+    end
+
+    local sub = {
+        terminalEntityId = terminalId,
+        databaseId = GetTerminalDatabaseId(terminal),
+        serial = 0,
+        lastEntries = {},
+        lastTotalEntries = 0,
+        lastTotalAmount = 0,
+        forceSnapshot = true,
+        forcePush = true
+    }
+    DBServer.Subscriptions[client] = sub
+    Log(string.format(
+        "Subscribe client='%s' terminal=%s db='%s'",
+        tostring(client.Name or "?"),
+        terminalId,
+        tostring(sub.databaseId or "default")))
+    return sub
+end
+
+local function RemoveSubscription(client, reason)
+    if client == nil then
+        return
+    end
+    local sub = DBServer.Subscriptions[client]
+    if sub ~= nil then
+        Log(string.format(
+            "Unsubscribe client='%s' terminal=%s reason='%s'",
+            tostring(client.Name or "?"),
+            tostring(sub.terminalEntityId or ""),
+            tostring(reason or "")))
+    end
+    DBServer.Subscriptions[client] = nil
+end
+
+local function FlagTerminalDirty(terminalEntityId)
+    local target = tostring(terminalEntityId or "")
+    if target == "" then
+        return
+    end
+
+    for _, sub in pairs(DBServer.Subscriptions) do
+        if sub ~= nil and tostring(sub.terminalEntityId or "") == target then
+            sub.forcePush = true
+        end
+    end
+end
+
 local function SendTakeResult(client, success, text)
     if not Game.IsMultiplayer then
         return
@@ -183,58 +423,175 @@ local function SendTakeResult(client, success, text)
     Networking.Send(message, client.Connection)
 end
 
-local function TryMoveItemToCharacter(item, character)
-    if item == nil or character == nil or character.Inventory == nil then
-        return false
+local function MapVirtualTakeError(reason)
+    local code = string.lower(tostring(reason or ""))
+    if code == "" then
+        return ""
+    end
+    if code == "inventory_full" then
+        return L("dbiotest.ui.take.full", "Buffer is full.")
+    end
+    if code == "not_found" then
+        return L("dbiotest.ui.take.notfound", "Item not found in terminal.")
+    end
+    if code == "inventory_unavailable" or code == "page_load_failed" then
+        return L("dbiotest.ui.take.notready", "Terminal API is not ready.")
+    end
+    if code == "session_closed" then
+        return L("dbiotest.ui.take.invalidterminal", "Terminal session not found.")
+    end
+    return L("dbiotest.ui.take.failed", "Failed to transfer item.")
+end
+
+if not SERVER then
+    return
+end
+
+Networking.Receive(DBServer.NetViewSubscribe, function(message, client)
+    if client == nil or client.Character == nil then
+        return
     end
 
-    local moved = false
-    pcall(function()
-        moved = character.Inventory.TryPutItem(item, character, CharacterInventory.AnySlot)
-    end)
+    local terminalEntityId = tostring(message.ReadString() or "")
+    local terminal = FindItemByEntityId(terminalEntityId)
+    if terminal == nil or not IsSessionTerminal(terminal) then
+        RemoveSubscription(client, "invalid terminal")
+        return
+    end
 
-    return moved == true
-end
+    if not CharacterCanUseTerminal(client.Character, terminal) then
+        RemoveSubscription(client, "permission denied")
+        return
+    end
 
-if SERVER then
-    Networking.Receive(DBServer.NetTakeRequest, function(message, client)
-        if client == nil or client.Character == nil then
+    local sub = EnsureSubscription(client, terminal)
+    if sub ~= nil then
+        sub.forceSnapshot = true
+        sub.forcePush = true
+    end
+end)
+
+Networking.Receive(DBServer.NetViewUnsubscribe, function(message, client)
+    if client == nil then
+        return
+    end
+
+    local terminalEntityId = tostring(message.ReadString() or "")
+    local sub = DBServer.Subscriptions[client]
+    if sub == nil then
+        return
+    end
+
+    if terminalEntityId == "" or tostring(sub.terminalEntityId or "") == terminalEntityId then
+        RemoveSubscription(client, "client request")
+    end
+end)
+
+Networking.Receive(DBServer.NetTakeRequest, function(message, client)
+    if client == nil or client.Character == nil then
+        return
+    end
+
+    local terminalEntityId = message.ReadString()
+    local wantedIdentifier = message.ReadString()
+    local character = client.Character
+
+    local terminal = FindItemByEntityId(terminalEntityId)
+    if terminal == nil or not IsSessionTerminal(terminal) then
+        SendTakeResult(client, false, L("dbiotest.ui.take.invalidterminal", "Terminal session not found."))
+        return
+    end
+
+    if not CharacterCanUseTerminal(character, terminal) then
+        SendTakeResult(client, false, L("dbiotest.ui.take.denied", "You are not allowed to use this terminal."))
+        return
+    end
+
+    local component = GetTerminalComponent(terminal)
+    if component ~= nil then
+        local okCall, reason = pcall(function()
+            return tostring(component.TryTakeOneByIdentifierFromVirtualSession(wantedIdentifier, character) or "")
+        end)
+        if okCall then
+            if tostring(reason or "") ~= "" then
+                SendTakeResult(client, false, MapVirtualTakeError(reason))
+                return
+            end
+
+            SendTakeResult(client, true, L("dbiotest.ui.take.success", "Item moved to terminal buffer."))
+            FlagTerminalDirty(terminalEntityId)
             return
         end
+        Log("Virtual take API failed: " .. tostring(reason))
+    end
 
-        local terminalEntityId = message.ReadString()
-        local wantedIdentifier = message.ReadString()
-        local character = client.Character
+    SendTakeResult(client, false, L("dbiotest.ui.take.notready", "Terminal API is not ready."))
+end)
 
-        local terminal = FindItemByEntityId(terminalEntityId)
-        if terminal == nil or not IsSessionTerminal(terminal) then
-            SendTakeResult(client, false, L("dbiotest.ui.take.invalidterminal", "Terminal session not found."))
-            return
+Hook.Add("think", "DBIOTEST_ServerViewSyncThink", function()
+    local now = 0
+    pcall(function() now = Timer.Time end)
+    if now < (DBServer.NextViewSyncAt or 0) then
+        return
+    end
+    DBServer.NextViewSyncAt = now + 0.25
+
+    local toRemove = {}
+
+    for client, sub in pairs(DBServer.Subscriptions) do
+        local removeReason = nil
+        if client == nil or client.Connection == nil or client.Character == nil then
+            removeReason = "client offline"
+        elseif sub == nil then
+            removeReason = "invalid subscription"
         end
 
-        if not CharacterCanUseTerminal(character, terminal) then
-            SendTakeResult(client, false, L("dbiotest.ui.take.denied", "You are not allowed to use this terminal."))
-            return
+        local terminal = nil
+        if removeReason == nil then
+            terminal = FindItemByEntityId(sub.terminalEntityId)
+            if terminal == nil or terminal.Removed or not IsSessionTerminal(terminal) then
+                removeReason = "terminal missing"
+            end
         end
 
-        local inventory = GetTerminalInventory(terminal)
-        if inventory == nil then
-            SendTakeResult(client, false, L("dbiotest.ui.take.notready", "Terminal inventory is not ready."))
-            return
+        if removeReason == nil and not CharacterCanUseTerminal(client.Character, terminal) then
+            removeReason = "out of range"
         end
 
-        local targetItem = FindFirstMatchingItem(inventory, wantedIdentifier)
-        if targetItem == nil then
-            SendTakeResult(client, false, L("dbiotest.ui.take.notfound", "Item not found in terminal."))
-            return
-        end
+        if removeReason ~= nil then
+            table.insert(toRemove, { client = client, reason = removeReason })
+        else
+            local entries, totalEntries, totalAmount = BuildEntryMap(terminal)
+            local removed, upserts = BuildDelta(sub.lastEntries, entries)
 
-        local moved = TryMoveItemToCharacter(targetItem, character)
-        if not moved then
-            SendTakeResult(client, false, L("dbiotest.ui.take.full", "Inventory full."))
-            return
-        end
+            local changed = sub.forcePush == true or #removed > 0 or #upserts > 0
+            if changed then
+                sub.serial = tonumber(sub.serial or 0) + 1
+                local tooManyChanges = (#removed + #upserts) > 24
+                if sub.forceSnapshot == true or sub.serial <= 1 or tooManyChanges then
+                    SendSnapshot(client, sub, entries, totalEntries, totalAmount, tooManyChanges and "change burst" or "snapshot")
+                else
+                    SendDelta(client, sub, removed, upserts, totalEntries, totalAmount, "delta")
+                end
 
-        SendTakeResult(client, true, L("dbiotest.ui.take.success", "Item moved to inventory."))
-    end)
-end
+                sub.lastEntries = CloneEntryMap(entries)
+                sub.lastTotalEntries = totalEntries
+                sub.lastTotalAmount = totalAmount
+                sub.forceSnapshot = false
+                sub.forcePush = false
+            end
+        end
+    end
+
+    for _, entry in ipairs(toRemove) do
+        RemoveSubscription(entry.client, entry.reason)
+    end
+end)
+
+Hook.Add("roundEnd", "DBIOTEST_ServerViewRoundEnd", function()
+    DBServer.Subscriptions = {}
+end)
+
+Hook.Add("stop", "DBIOTEST_ServerViewStop", function()
+    DBServer.Subscriptions = {}
+end)

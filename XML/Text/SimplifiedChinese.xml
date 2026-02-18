@@ -63,7 +63,7 @@
   <dbiotest.ui.title>数据库终端</dbiotest.ui.title>
   <dbiotest.ui.search.tooltip>按物品名称或标识符搜索。</dbiotest.ui.search.tooltip>
   <dbiotest.ui.refresh>刷新</dbiotest.ui.refresh>
-  <dbiotest.ui.footer>左键条目转移一个物品。右键终端关闭会话。</dbiotest.ui.footer>
+  <dbiotest.ui.footer>左键图标可向终端缓冲区生成 1 个物品。</dbiotest.ui.footer>
   <dbiotest.ui.empty>当前会话无物品。</dbiotest.ui.empty>
 
   <dbiotest.ui.sort.nameasc>名称 A-Z</dbiotest.ui.sort.nameasc>
@@ -71,11 +71,12 @@
   <dbiotest.ui.sort.countdesc>数量从高到低</dbiotest.ui.sort.countdesc>
   <dbiotest.ui.sort.countasc>数量从低到高</dbiotest.ui.sort.countasc>
 
-  <dbiotest.ui.take.success>物品已移入背包。</dbiotest.ui.take.success>
+  <dbiotest.ui.take.success>物品已移入终端缓冲区。</dbiotest.ui.take.success>
   <dbiotest.ui.take.failed>物品转移失败。</dbiotest.ui.take.failed>
-  <dbiotest.ui.take.full>背包已满。</dbiotest.ui.take.full>
+  <dbiotest.ui.take.full>终端缓冲区已满。</dbiotest.ui.take.full>
+  <dbiotest.ui.take.closed>终端会话已关闭。</dbiotest.ui.take.closed>
   <dbiotest.ui.take.invalidterminal>未找到终端会话。</dbiotest.ui.take.invalidterminal>
   <dbiotest.ui.take.denied>你无权使用该终端。</dbiotest.ui.take.denied>
-  <dbiotest.ui.take.notready>终端容器尚未就绪。</dbiotest.ui.take.notready>
+  <dbiotest.ui.take.notready>终端 API 尚未就绪。</dbiotest.ui.take.notready>
   <dbiotest.ui.take.notfound>终端中未找到该物品。</dbiotest.ui.take.notfound>
 </infotexts>

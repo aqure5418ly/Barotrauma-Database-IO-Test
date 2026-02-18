@@ -66,6 +66,16 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         }
     }
 
+    public sealed class TerminalVirtualEntry
+    {
+        public string Identifier { get; set; } = "";
+        public string PrefabIdentifier { get; set; } = "";
+        public string DisplayName { get; set; } = "";
+        public int Amount { get; set; }
+        public int BestQuality { get; set; }
+        public float AverageCondition { get; set; } = 100f;
+    }
+
     [Editable, Serialize(Constants.DefaultDatabaseId, IsPropertySaveable.Yes, description: "Shared database id.")]
     public string DatabaseId { get; set; } = Constants.DefaultDatabaseId;
 
@@ -464,6 +474,84 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         UpdateDescriptionLocal();
         TrySyncSummary();
         return true;
+    }
+
+    public List<TerminalVirtualEntry> GetVirtualViewSnapshot(bool refreshCurrentPage = true)
+    {
+        var snapshot = new List<TerminalVirtualEntry>();
+        if (!IsServerAuthority || !IsSessionActive())
+        {
+            return snapshot;
+        }
+
+        var grouped = new Dictionary<string, TerminalVirtualEntry>(StringComparer.OrdinalIgnoreCase);
+        var conditionWeight = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var entry in _sessionEntries)
+        {
+            if (entry == null) { continue; }
+            string id = (entry.Identifier ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(id)) { continue; }
+
+            int amount = Math.Max(1, entry.StackSize);
+            if (!grouped.TryGetValue(id, out var row))
+            {
+                row = new TerminalVirtualEntry
+                {
+                    Identifier = id,
+                    PrefabIdentifier = id,
+                    DisplayName = ResolveDisplayNameForIdentifier(id),
+                    Amount = 0,
+                    BestQuality = 0,
+                    AverageCondition = 100f
+                };
+                grouped[id] = row;
+                conditionWeight[id] = 0;
+            }
+
+            row.Amount += amount;
+            row.BestQuality = Math.Max(row.BestQuality, entry.Quality);
+            int weight = conditionWeight[id] + amount;
+            float weighted = row.AverageCondition * conditionWeight[id] + entry.Condition * amount;
+            row.AverageCondition = weight <= 0 ? 100f : weighted / weight;
+            conditionWeight[id] = weight;
+        }
+
+        snapshot.AddRange(grouped.Values
+            .OrderBy(v => v.Identifier ?? "", StringComparer.OrdinalIgnoreCase));
+        return snapshot;
+    }
+
+    public string TryTakeOneByIdentifierFromVirtualSession(string identifier, Character actor)
+    {
+        if (!IsServerAuthority) { return "not_authority"; }
+        if (!IsSessionActive()) { return "session_closed"; }
+        if (actor == null || actor.Removed || actor.IsDead || actor.Inventory == null) { return "invalid_actor"; }
+
+        string wanted = (identifier ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(wanted)) { return "invalid_identifier"; }
+
+        var inventory = GetTerminalInventory();
+        if (inventory == null) { return "inventory_unavailable"; }
+        if (!HasAnyEmptyBufferSlot(inventory)) { return "inventory_full"; }
+
+        if (!TryExtractOneVirtualItemData(wanted, out var extracted) || extracted == null)
+        {
+            return "not_found";
+        }
+
+        SpawnService.SpawnItemsIntoInventory(
+            new List<ItemData> { extracted },
+            inventory,
+            actor,
+            guard: () => IsSessionActive());
+
+        int preferredPage = _sessionCurrentPageIndex < 0 ? 0 : _sessionCurrentPageIndex;
+        BuildPagesBySlotUsage(_sessionEntries, inventory, preferredPage);
+        UpdateSummaryFromStore();
+        UpdateDescriptionLocal();
+        TrySyncSummary(force: true);
+        return "";
     }
 
     public int CountTakeableForAutomation(Func<ItemData, bool> predicate)
@@ -1412,6 +1500,36 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         terms.Add(trimmed);
     }
 
+    private string ResolveDisplayNameForIdentifier(string identifier)
+    {
+        string id = (identifier ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(id)) { return ""; }
+
+        var prefab = ItemPrefab.FindByIdentifier(id.ToIdentifier()) as ItemPrefab;
+        if (prefab != null)
+        {
+            string name = TryReadPrefabName(prefab, "Name");
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                return name.Trim();
+            }
+
+            name = TryReadPrefabName(prefab, "OriginalName");
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                return name.Trim();
+            }
+        }
+
+        string entityName = TextManager.Get($"entityname.{id}")?.Value;
+        if (!string.IsNullOrWhiteSpace(entityName))
+        {
+            return entityName.Trim();
+        }
+
+        return id;
+    }
+
     private bool PageMatchesKeyword(int pageIndex, string keyword)
     {
         if (pageIndex < 0 || pageIndex >= _sessionPageSourceIndices.Count) { return false; }
@@ -1429,6 +1547,104 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         }
 
         return false;
+    }
+
+    private int FindPageIndexByIdentifier(string identifier)
+    {
+        string wanted = (identifier ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(wanted)) { return -1; }
+
+        for (int pageIndex = 0; pageIndex < _sessionPageSourceIndices.Count; pageIndex++)
+        {
+            var sourceIndices = _sessionPageSourceIndices[pageIndex];
+            if (sourceIndices == null || sourceIndices.Count <= 0) { continue; }
+
+            foreach (int sourceIndex in sourceIndices)
+            {
+                if (sourceIndex < 0 || sourceIndex >= _sessionEntries.Count) { continue; }
+                var entry = _sessionEntries[sourceIndex];
+                if (entry == null) { continue; }
+                if (string.Equals(entry.Identifier ?? "", wanted, StringComparison.OrdinalIgnoreCase))
+                {
+                    return pageIndex;
+                }
+            }
+        }
+
+        return -1;
+    }
+
+    private bool HasAnyEmptyBufferSlot(Inventory inventory)
+    {
+        if (inventory == null) { return false; }
+        for (int slot = 0; slot < inventory.Capacity; slot++)
+        {
+            if (inventory.GetItemAt(slot) == null)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool TryExtractOneVirtualItemData(string identifier, out ItemData extracted)
+    {
+        extracted = null;
+        string wanted = (identifier ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(wanted)) { return false; }
+
+        for (int i = 0; i < _sessionEntries.Count; i++)
+        {
+            var entry = _sessionEntries[i];
+            if (entry == null) { continue; }
+            if (!string.Equals(entry.Identifier ?? "", wanted, StringComparison.OrdinalIgnoreCase)) { continue; }
+
+            if (entry.ContainedItems != null && entry.ContainedItems.Count > 0)
+            {
+                extracted = entry.Clone();
+                extracted.StackSize = 1;
+                _sessionEntries.RemoveAt(i);
+                return true;
+            }
+
+            int stackSize = Math.Max(1, entry.StackSize);
+            if (stackSize <= 1)
+            {
+                extracted = entry.Clone();
+                extracted.StackSize = 1;
+                _sessionEntries.RemoveAt(i);
+                return true;
+            }
+
+            extracted = ExtractStackPart(entry, 1);
+            if (entry.StackSize <= 0)
+            {
+                _sessionEntries.RemoveAt(i);
+            }
+            return extracted != null;
+        }
+
+        return false;
+    }
+
+    private Item FindInventoryItemByIdentifier(Inventory inventory, string identifier)
+    {
+        if (inventory == null) { return null; }
+        string wanted = (identifier ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(wanted)) { return null; }
+
+        foreach (var candidate in inventory.AllItemsMod)
+        {
+            if (candidate == null || candidate.Removed || candidate.Prefab == null) { continue; }
+            string id = candidate.Prefab.Identifier.Value ?? "";
+            if (string.Equals(id, wanted, StringComparison.OrdinalIgnoreCase))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
     }
 
     private static int WrapPageIndex(int index, int count)
@@ -1562,7 +1778,10 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         _currentPageFillVerified = false;
         var inventory = GetTerminalInventory();
         BuildPagesBySlotUsage(sourceItems, inventory);
-        LoadCurrentPageIntoInventory(actor);
+        if (inventory != null)
+        {
+            SpawnService.ClearInventory(inventory);
+        }
     }
 
     private void BuildPagesFromCurrentInventory()
@@ -1673,6 +1892,16 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     private void CaptureCurrentPageFromInventory()
     {
+        CaptureCurrentPageFromInventory(clearInventoryAfterCapture: true);
+    }
+
+    private void SnapshotCurrentPageFromInventory()
+    {
+        CaptureCurrentPageFromInventory(clearInventoryAfterCapture: false);
+    }
+
+    private void CaptureCurrentPageFromInventory(bool clearInventoryAfterCapture)
+    {
         if (!IsSessionActive()) { return; }
         if (_sessionCurrentPageIndex < 0 || _sessionCurrentPageIndex >= _sessionPages.Count) { return; }
 
@@ -1695,7 +1924,12 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             ? _sessionPageSourceIndices[_sessionCurrentPageIndex]
             : new List<int>();
         ReplaceSessionEntriesBySourceIndices(sourceIndices, serialized);
-        SpawnService.ClearInventory(inventory);
+
+        if (clearInventoryAfterCapture)
+        {
+            SpawnService.ClearInventory(inventory);
+        }
+
         _pendingPageFillCheckGeneration = -1;
         _currentPageFillVerified = false;
 
@@ -1954,9 +2188,11 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             return;
         }
 
-        CaptureCurrentPageFromInventory();
+        var inventory = GetTerminalInventory();
+        var bufferData = ItemSerializer.SerializeInventory(_sessionOwner, inventory);
+        var remainingData = CloneItems(_sessionEntries);
+        remainingData.AddRange(CloneItems(bufferData));
 
-        var remainingData = FlattenAllPages();
         int capturedTopLevelEntries = remainingData.Count;
         int capturedFlatItems = CountFlatItems(remainingData);
 
@@ -1974,10 +2210,10 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             "Terminal",
             $"{Constants.LogPrefix} Session writeback db='{_resolvedDatabaseId}' terminal={item?.ID} " +
             $"capturedEntries={capturedTopLevelEntries} capturedItems={capturedFlatItems} " +
+            $"bufferEntries={bufferData.Count} bufferItems={CountFlatItems(bufferData)} " +
             $"compactedEntries={compactedTopLevelEntries} compactedItems={compactedFlatItems} " +
             $"writtenBackItems={compactedFlatItems} lockedWrite={wroteBackToLockedStore}");
 
-        var inventory = GetTerminalInventory();
         if (inventory != null)
         {
             SpawnService.ClearInventory(inventory);
