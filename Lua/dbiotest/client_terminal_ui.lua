@@ -179,6 +179,45 @@ local function IsSessionTerminal(item)
     return hasTag == true
 end
 
+local function IsComponentSessionOpenForUi(item)
+    if item == nil or item.Removed then
+        return false
+    end
+
+    local component = nil
+    pcall(function()
+        component = item.GetComponentString("DatabaseTerminalComponent")
+    end)
+    if component == nil then
+        return false
+    end
+
+    local open = false
+    pcall(function()
+        open = component.IsVirtualSessionOpenForUi() == true
+    end)
+    return open == true
+end
+
+local function IsActiveUiTerminal(item)
+    if IsSessionTerminal(item) then
+        return true
+    end
+    if item == nil or item.Removed then
+        return false
+    end
+
+    local normalized = NormalizeIdentifier(GetItemIdentifier(item))
+    local isFixedTerminal = false
+    pcall(function()
+        isFixedTerminal = normalized == "databaseterminalfixed" or item.HasTag("database_terminal_fixed")
+    end)
+    if not isFixedTerminal then
+        return false
+    end
+    return IsComponentSessionOpenForUi(item)
+end
+
 local function GetTerminalInventory(terminal)
     if terminal == nil then
         return nil
@@ -278,10 +317,10 @@ local function FindHeldSessionTerminal(character)
     pcall(function() selected = character.SelectedItem end)
     pcall(function() selectedSecondary = character.SelectedSecondaryItem end)
 
-    if IsSessionTerminal(selected) then
+    if IsActiveUiTerminal(selected) then
         return selected
     end
-    if IsSessionTerminal(selectedSecondary) then
+    if IsActiveUiTerminal(selectedSecondary) then
         return selectedSecondary
     end
 
@@ -380,7 +419,37 @@ local function BuildLocalEntryMap(terminal)
         end
     end
 
-    return {}, 0, 0
+    local map = {}
+    local totalAmount = 0
+    local inventory = GetTerminalInventory(terminal)
+    ForEachInventoryItem(inventory, function(item)
+        local identifier = GetItemIdentifier(item)
+        local key = NormalizeIdentifier(identifier)
+        if key ~= "" then
+            local entry = map[key]
+            if entry == nil then
+                entry = {
+                    key = key,
+                    identifier = identifier,
+                    prefabIdentifier = identifier,
+                    displayName = GetItemDisplayName(item),
+                    amount = 0,
+                    bestQuality = 0,
+                    avgCondition = 100
+                }
+                map[key] = entry
+            end
+            entry.amount = (tonumber(entry.amount) or 0) + 1
+            totalAmount = totalAmount + 1
+        end
+        return false
+    end)
+
+    local totalEntries = 0
+    for _, _ in pairs(map) do
+        totalEntries = totalEntries + 1
+    end
+    return map, totalEntries, totalAmount
 end
 
 local function EntryMapEquivalent(currentMap, currentEntries, currentAmount, nextMap, nextEntries, nextAmount)

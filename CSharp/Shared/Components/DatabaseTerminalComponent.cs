@@ -549,7 +549,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     public bool IsVirtualSessionOpenForUi()
     {
-        return IsSessionActive();
+        return IsSessionActive() || _cachedSessionOpen;
     }
 
     public string TryTakeOneByIdentifierFromVirtualSession(string identifier, Character actor)

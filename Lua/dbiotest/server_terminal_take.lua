@@ -71,15 +71,36 @@ local function IsSessionTerminal(item)
         return false
     end
 
-    if NormalizeIdentifier(GetItemIdentifier(item)) == "databaseterminalsession" then
+    local normalized = NormalizeIdentifier(GetItemIdentifier(item))
+    if normalized == "databaseterminalsession" then
         return true
     end
 
-    local hasTag = false
+    local hasSessionTag = false
+    local hasFixedTag = false
     pcall(function()
-        hasTag = item.HasTag("database_terminal_session")
+        hasSessionTag = item.HasTag("database_terminal_session")
+        hasFixedTag = item.HasTag("database_terminal_fixed")
     end)
-    return hasTag == true
+    if hasSessionTag == true then
+        return true
+    end
+
+    if normalized == "databaseterminalfixed" or hasFixedTag == true then
+        local component = nil
+        pcall(function()
+            component = item.GetComponentString("DatabaseTerminalComponent")
+        end)
+        if component ~= nil then
+            local open = false
+            pcall(function()
+                open = component.IsVirtualSessionOpenForUi() == true
+            end)
+            return open == true
+        end
+    end
+
+    return false
 end
 
 local function FindItemByEntityId(entityId)
@@ -453,7 +474,17 @@ local function MapVirtualTakeError(reason)
     return L("dbiotest.ui.take.failed", "Failed to transfer item.")
 end
 
-if not SERVER then
+local runAsServerAuthority = SERVER == true
+if not runAsServerAuthority then
+    local isClient = CLIENT == true
+    local isMultiplayer = true
+    pcall(function()
+        isMultiplayer = Game.IsMultiplayer == true
+    end)
+    runAsServerAuthority = isClient and (not isMultiplayer)
+end
+
+if not runAsServerAuthority then
     return
 end
 
