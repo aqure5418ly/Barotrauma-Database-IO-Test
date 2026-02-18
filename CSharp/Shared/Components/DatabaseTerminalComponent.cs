@@ -164,6 +164,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private int _lastSyncedPageIndex = -1;
     private int _lastSyncedPageTotal = -1;
     private int _lastSyncedRemainingPageItems = -1;
+    private int _lastAppliedStoreVersion = -1;
 
     private byte _pendingClientAction;
 
@@ -425,9 +426,44 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         _cachedPageIndex = _cachedSessionOpen ? Math.Max(1, _sessionCurrentPageIndex + 1) : 0;
         _cachedPageTotal = _cachedSessionOpen ? Math.Max(1, _sessionPages.Count) : 0;
         _cachedRemainingPageItems = _cachedSessionOpen ? CountPendingPageItems() : 0;
+        _lastAppliedStoreVersion = Math.Max(0, data.Version);
 
         UpdateDescriptionLocal();
         TrySyncSummary();
+    }
+
+    public bool ApplyStoreDelta(DatabaseStore.DeltaPacket delta)
+    {
+        if (!IsServerAuthority || delta == null) { return false; }
+
+        string id = DatabaseStore.Normalize(delta.DatabaseId);
+        if (!string.Equals(id, _resolvedDatabaseId, StringComparison.OrdinalIgnoreCase))
+        {
+            ResolveDatabaseId(id);
+        }
+
+        if (!delta.IsSnapshot &&
+            _lastAppliedStoreVersion >= 0 &&
+            delta.PreviousVersion != _lastAppliedStoreVersion)
+        {
+            ModFileLog.WriteDebug(
+                "Terminal",
+                $"{Constants.LogPrefix} Delta gap fallback db='{_resolvedDatabaseId}' terminal={item?.ID} " +
+                $"lastVersion={_lastAppliedStoreVersion} previous={delta.PreviousVersion} incoming={delta.Version} source='{delta.Source}'.");
+            return false;
+        }
+
+        _cachedItemCount = Math.Max(0, delta.TotalAmount);
+        _cachedLocked = DatabaseStore.IsLocked(_resolvedDatabaseId);
+        _cachedSessionOpen = IsSessionActive();
+        _cachedPageIndex = _cachedSessionOpen ? Math.Max(1, _sessionCurrentPageIndex + 1) : 0;
+        _cachedPageTotal = _cachedSessionOpen ? Math.Max(1, _sessionPages.Count) : 0;
+        _cachedRemainingPageItems = _cachedSessionOpen ? CountPendingPageItems() : 0;
+        _lastAppliedStoreVersion = Math.Max(0, delta.Version);
+
+        UpdateDescriptionLocal();
+        TrySyncSummary();
+        return true;
     }
 
     public int CountTakeableForAutomation(Func<ItemData, bool> predicate)

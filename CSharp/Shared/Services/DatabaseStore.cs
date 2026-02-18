@@ -15,6 +15,52 @@ namespace DatabaseIOTest.Services
             LowestConditionFirst = 2
         }
 
+        public readonly struct DeltaChange
+        {
+            public DeltaChange(string key, int oldAmount, int newAmount)
+            {
+                Key = key ?? "";
+                OldAmount = Math.Max(0, oldAmount);
+                NewAmount = Math.Max(0, newAmount);
+            }
+
+            public string Key { get; }
+            public int OldAmount { get; }
+            public int NewAmount { get; }
+        }
+
+        public sealed class DeltaPacket
+        {
+            public DeltaPacket(
+                string databaseId,
+                int previousVersion,
+                int version,
+                string source,
+                bool isSnapshot,
+                int totalAmount,
+                List<DeltaChange> changes,
+                Dictionary<string, int> snapshotAmounts = null)
+            {
+                DatabaseId = Normalize(databaseId);
+                PreviousVersion = Math.Max(0, previousVersion);
+                Version = Math.Max(0, version);
+                Source = source ?? "";
+                IsSnapshot = isSnapshot;
+                TotalAmount = Math.Max(0, totalAmount);
+                Changes = changes ?? new List<DeltaChange>();
+                SnapshotAmounts = snapshotAmounts ?? new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            public string DatabaseId { get; }
+            public int PreviousVersion { get; }
+            public int Version { get; }
+            public string Source { get; }
+            public bool IsSnapshot { get; }
+            public int TotalAmount { get; }
+            public IReadOnlyList<DeltaChange> Changes { get; }
+            public IReadOnlyDictionary<string, int> SnapshotAmounts { get; }
+        }
+
         private enum StateMutationKind
         {
             Ensure = 0,
@@ -72,6 +118,15 @@ namespace DatabaseIOTest.Services
             public string DatabaseId { get; }
             public DatabaseData Data { get; set; }
             public StateMutation LastMutation { get; set; }
+        }
+
+        private sealed class WatchSubscription
+        {
+            public string DatabaseId { get; set; }
+            public string WatcherId { get; set; }
+            public Action<DeltaPacket> Callback { get; set; }
+            public HashSet<string> Keys { get; set; }
+            public int LastSeenVersion { get; set; } = -1;
         }
 
         private sealed class DatabaseState
@@ -227,6 +282,12 @@ namespace DatabaseIOTest.Services
             new Dictionary<string, List<WeakReference<DatabaseStorageAnchorComponent>>>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, DatabaseData> _pendingCommittedSnapshot =
             new Dictionary<string, DatabaseData>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, Dictionary<string, WatchSubscription>> _watchAll =
+            new Dictionary<string, Dictionary<string, WatchSubscription>>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, Dictionary<string, WatchSubscription>> _watchByKey =
+            new Dictionary<string, Dictionary<string, WatchSubscription>>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, DeltaPacket> _latestDeltaByDatabase =
+            new Dictionary<string, DeltaPacket>(StringComparer.OrdinalIgnoreCase);
         private static bool _roundDecisionApplied;
         private static string _roundDecisionSource = "";
         private static int _roundDecisionPriority;
@@ -238,6 +299,65 @@ namespace DatabaseIOTest.Services
             return string.IsNullOrWhiteSpace(databaseId) ? Constants.DefaultDatabaseId : databaseId.Trim();
         }
 
+        public static void WatchAll(
+            string databaseId,
+            string watcherId,
+            Action<DeltaPacket> callback,
+            bool sendInitialSnapshot = true)
+        {
+            RegisterWatcher(databaseId, watcherId, callback, keys: null, sendInitialSnapshot: sendInitialSnapshot);
+        }
+
+        public static void WatchByKey(
+            string databaseId,
+            string watcherId,
+            IEnumerable<string> keys,
+            Action<DeltaPacket> callback,
+            bool sendInitialSnapshot = true)
+        {
+            RegisterWatcher(databaseId, watcherId, callback, keys: keys, sendInitialSnapshot: sendInitialSnapshot);
+        }
+
+        public static void UpdateWatchKeys(string databaseId, string watcherId, IEnumerable<string> keys)
+        {
+            string id = Normalize(databaseId);
+            string normalizedWatcherId = NormalizeWatcherId(watcherId);
+            var normalizedKeys = NormalizeWatchKeys(keys);
+
+            if (_watchByKey.TryGetValue(id, out var byKeyMap) &&
+                byKeyMap.TryGetValue(normalizedWatcherId, out var existing))
+            {
+                existing.Keys = normalizedKeys;
+                return;
+            }
+
+            RegisterWatcher(id, normalizedWatcherId, callback: null, keys: normalizedKeys, sendInitialSnapshot: false, requireExistingCallback: true);
+        }
+
+        public static void Unwatch(string databaseId, string watcherId)
+        {
+            string id = Normalize(databaseId);
+            string normalizedWatcherId = NormalizeWatcherId(watcherId);
+
+            if (_watchAll.TryGetValue(id, out var watchAllMap))
+            {
+                watchAllMap.Remove(normalizedWatcherId);
+                if (watchAllMap.Count <= 0)
+                {
+                    _watchAll.Remove(id);
+                }
+            }
+
+            if (_watchByKey.TryGetValue(id, out var watchByKeyMap))
+            {
+                watchByKeyMap.Remove(normalizedWatcherId);
+                if (watchByKeyMap.Count <= 0)
+                {
+                    _watchByKey.Remove(id);
+                }
+            }
+        }
+
         public static void Clear()
         {
             _workingState.Clear("store:clear");
@@ -246,6 +366,9 @@ namespace DatabaseIOTest.Services
             _terminals.Clear();
             _anchors.Clear();
             _pendingCommittedSnapshot.Clear();
+            _watchAll.Clear();
+            _watchByKey.Clear();
+            _latestDeltaByDatabase.Clear();
             _roundDecisionApplied = false;
             _roundDecisionSource = "";
             _roundDecisionPriority = 0;
@@ -257,6 +380,153 @@ namespace DatabaseIOTest.Services
         {
             _workingState.Clear("store:clearVolatile");
             _activeTerminals.Clear();
+            _latestDeltaByDatabase.Clear();
+        }
+
+        private static string NormalizeWatcherId(string watcherId)
+        {
+            return string.IsNullOrWhiteSpace(watcherId) ? Guid.NewGuid().ToString("N") : watcherId.Trim();
+        }
+
+        private static HashSet<string> NormalizeWatchKeys(IEnumerable<string> keys)
+        {
+            if (keys == null)
+            {
+                return null;
+            }
+
+            var normalized = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string raw in keys)
+            {
+                string key = (raw ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(key)) { continue; }
+                normalized.Add(key);
+            }
+
+            return normalized.Count > 0 ? normalized : null;
+        }
+
+        private static void RegisterWatcher(
+            string databaseId,
+            string watcherId,
+            Action<DeltaPacket> callback,
+            IEnumerable<string> keys,
+            bool sendInitialSnapshot,
+            bool requireExistingCallback = false)
+        {
+            string id = Normalize(databaseId);
+            string normalizedWatcherId = NormalizeWatcherId(watcherId);
+            var normalizedKeys = NormalizeWatchKeys(keys);
+
+            Action<DeltaPacket> effectiveCallback = callback;
+            if (effectiveCallback == null)
+            {
+                if (_watchAll.TryGetValue(id, out var watchAllMap) &&
+                    watchAllMap.TryGetValue(normalizedWatcherId, out var existingWatchAll) &&
+                    existingWatchAll?.Callback != null)
+                {
+                    effectiveCallback = existingWatchAll.Callback;
+                }
+                else if (_watchByKey.TryGetValue(id, out var watchByKeyMap) &&
+                         watchByKeyMap.TryGetValue(normalizedWatcherId, out var existingWatchByKey) &&
+                         existingWatchByKey?.Callback != null)
+                {
+                    effectiveCallback = existingWatchByKey.Callback;
+                }
+            }
+
+            if (effectiveCallback == null && requireExistingCallback)
+            {
+                return;
+            }
+
+            WatchSubscription subscription;
+            if (normalizedKeys == null)
+            {
+                if (!_watchAll.TryGetValue(id, out var map))
+                {
+                    map = new Dictionary<string, WatchSubscription>(StringComparer.OrdinalIgnoreCase);
+                    _watchAll[id] = map;
+                }
+
+                subscription = new WatchSubscription
+                {
+                    DatabaseId = id,
+                    WatcherId = normalizedWatcherId,
+                    Callback = effectiveCallback,
+                    Keys = null
+                };
+                map[normalizedWatcherId] = subscription;
+
+                if (_watchByKey.TryGetValue(id, out var oldByKey))
+                {
+                    oldByKey.Remove(normalizedWatcherId);
+                    if (oldByKey.Count <= 0)
+                    {
+                        _watchByKey.Remove(id);
+                    }
+                }
+            }
+            else
+            {
+                if (!_watchByKey.TryGetValue(id, out var map))
+                {
+                    map = new Dictionary<string, WatchSubscription>(StringComparer.OrdinalIgnoreCase);
+                    _watchByKey[id] = map;
+                }
+
+                subscription = new WatchSubscription
+                {
+                    DatabaseId = id,
+                    WatcherId = normalizedWatcherId,
+                    Callback = effectiveCallback,
+                    Keys = normalizedKeys
+                };
+                map[normalizedWatcherId] = subscription;
+
+                if (_watchAll.TryGetValue(id, out var oldAll))
+                {
+                    oldAll.Remove(normalizedWatcherId);
+                    if (oldAll.Count <= 0)
+                    {
+                        _watchAll.Remove(id);
+                    }
+                }
+            }
+
+            if (sendInitialSnapshot && effectiveCallback != null)
+            {
+                if (TryBuildSnapshotPacket(id, "watch:initial", -1, normalizedKeys, out var snapshot))
+                {
+                    try
+                    {
+                        effectiveCallback(snapshot);
+                        subscription.LastSeenVersion = snapshot.Version;
+                        ModFileLog.WriteDebug(
+                            "Store",
+                            $"{Constants.LogPrefix} WatchRegister db='{id}' watcher='{normalizedWatcherId}' " +
+                            $"mode='{(normalizedKeys == null ? "all" : "byKey")}' snapshotVersion={snapshot.Version} " +
+                            $"snapshotKeys={snapshot.Changes.Count}");
+                    }
+                    catch (Exception ex)
+                    {
+                        ModFileLog.Write(
+                            "Store",
+                            $"{Constants.LogPrefix} Watch callback failed watcher='{normalizedWatcherId}' db='{id}' on initial snapshot: {ex.Message}");
+                    }
+                }
+                return;
+            }
+
+            if (TryGetWorkingData(id, out var existingData) && existingData != null)
+            {
+                subscription.LastSeenVersion = Math.Max(0, existingData.Version);
+            }
+
+            ModFileLog.WriteDebug(
+                "Store",
+                $"{Constants.LogPrefix} WatchRegister db='{id}' watcher='{normalizedWatcherId}' " +
+                $"mode='{(normalizedKeys == null ? "all" : "byKey")}' snapshotVersion={subscription.LastSeenVersion}");
         }
 
         public static void BeginRound(string source = "roundStart")
@@ -906,12 +1176,17 @@ namespace DatabaseIOTest.Services
             var db = GetOrCreate(id);
             int beforeVersion = db.Version;
             int beforeCount = db.ItemCount;
+            var beforeAmounts = BuildIdentifierAmountMap(db.Items);
             var merged = CloneItemList(db.Items);
             merged.AddRange(CloneItemList(items));
             db.Items = CompactItems(merged);
             db.Version++;
             _workingState.RecordMutation(id, StateMutationKind.Merge, "api:appendItems", beforeVersion, beforeCount);
-            SyncTerminals(id);
+            if (TryBuildMutationDelta(id, "api:appendItems", beforeVersion, beforeAmounts, db, out var delta))
+            {
+                PublishDelta(delta);
+            }
+            SyncTerminals(id, preferDelta: true);
         }
 
         public static List<ItemData> TakeAllForTerminalSession(string databaseId, int terminalEntityId)
@@ -925,11 +1200,16 @@ namespace DatabaseIOTest.Services
             var db = GetOrCreate(id);
             int beforeVersion = db.Version;
             int beforeCount = db.ItemCount;
+            var beforeAmounts = BuildIdentifierAmountMap(db.Items);
             var copy = CloneItemList(db.Items);
             db.Items.Clear();
             db.Version++;
             _workingState.RecordMutation(id, StateMutationKind.Extract, "api:takeAllForSession", beforeVersion, beforeCount);
-            SyncTerminals(id);
+            if (TryBuildMutationDelta(id, "api:takeAllForSession", beforeVersion, beforeAmounts, db, out var delta))
+            {
+                PublishDelta(delta);
+            }
+            SyncTerminals(id, preferDelta: true);
             return copy;
         }
 
@@ -944,6 +1224,7 @@ namespace DatabaseIOTest.Services
             var db = GetOrCreate(id);
             int beforeVersion = db.Version;
             int beforeCount = db.ItemCount;
+            var beforeAmounts = BuildIdentifierAmountMap(db.Items);
             // Merge instead of overwrite:
             // while a terminal session is open, interfaces can still ingest into the same database.
             // those ingests live in db.Items and must not be lost when the session writes back.
@@ -953,7 +1234,11 @@ namespace DatabaseIOTest.Services
             db.Items = CompactItems(merged);
             db.Version++;
             _workingState.RecordMutation(id, StateMutationKind.Merge, "api:writeBackFromTerminal", beforeVersion, beforeCount);
-            SyncTerminals(id);
+            if (TryBuildMutationDelta(id, "api:writeBackFromTerminal", beforeVersion, beforeAmounts, db, out var delta))
+            {
+                PublishDelta(delta);
+            }
+            SyncTerminals(id, preferDelta: true);
             return true;
         }
 
@@ -1028,6 +1313,7 @@ namespace DatabaseIOTest.Services
             var bestEntry = db.Items[bestIndex];
             int beforeVersion = db.Version;
             int beforeCount = db.ItemCount;
+            var beforeAmounts = BuildIdentifierAmountMap(db.Items);
             if (bestEntry.ContainedItems != null && bestEntry.ContainedItems.Count > 0)
             {
                 taken = bestEntry.Clone();
@@ -1049,7 +1335,11 @@ namespace DatabaseIOTest.Services
 
             db.Version++;
             _workingState.RecordMutation(id, StateMutationKind.Extract, "api:takeBestMatching", beforeVersion, beforeCount);
-            SyncTerminals(id);
+            if (TryBuildMutationDelta(id, "api:takeBestMatching", beforeVersion, beforeAmounts, db, out var delta))
+            {
+                PublishDelta(delta);
+            }
+            SyncTerminals(id, preferDelta: true);
             return true;
         }
 
@@ -1067,12 +1357,17 @@ namespace DatabaseIOTest.Services
             if (available < amount) { return false; }
             int beforeVersion = db.Version;
             int beforeCount = db.ItemCount;
+            var beforeAmounts = BuildIdentifierAmountMap(db.Items);
             int remaining = TakeMatchingFromList(db.Items, predicate, amount, taken);
             if (remaining > 0) { return false; }
 
             db.Version++;
             _workingState.RecordMutation(id, StateMutationKind.Extract, "api:takeItems", beforeVersion, beforeCount);
-            SyncTerminals(id);
+            if (TryBuildMutationDelta(id, "api:takeItems", beforeVersion, beforeAmounts, db, out var delta))
+            {
+                PublishDelta(delta);
+            }
+            SyncTerminals(id, preferDelta: true);
             return true;
         }
 
@@ -1105,6 +1400,7 @@ namespace DatabaseIOTest.Services
             bool storeChanged = false;
             int beforeVersion = db.Version;
             int beforeCount = db.ItemCount;
+            var beforeAmounts = BuildIdentifierAmountMap(db.Items);
             if (availableStore > 0)
             {
                 int fromStore = Math.Min(availableStore, remaining);
@@ -1145,7 +1441,11 @@ namespace DatabaseIOTest.Services
             {
                 db.Version++;
                 _workingState.RecordMutation(id, StateMutationKind.Extract, "api:takeItemsForAutomation", beforeVersion, beforeCount);
-                SyncTerminals(id);
+                if (TryBuildMutationDelta(id, "api:takeItemsForAutomation", beforeVersion, beforeAmounts, db, out var delta))
+                {
+                    PublishDelta(delta);
+                }
+                SyncTerminals(id, preferDelta: true);
             }
 
             return true;
@@ -1208,6 +1508,308 @@ namespace DatabaseIOTest.Services
         private static int GetCommittedTotalItems()
         {
             return _committedState.Values.Sum(db => db?.ItemCount ?? 0);
+        }
+
+        private static bool TryBuildMutationDelta(
+            string databaseId,
+            string source,
+            int beforeVersion,
+            Dictionary<string, int> beforeAmounts,
+            DatabaseData afterData,
+            out DeltaPacket delta)
+        {
+            delta = null;
+            if (afterData == null)
+            {
+                return false;
+            }
+
+            string id = Normalize(databaseId);
+            var afterAmounts = BuildIdentifierAmountMap(afterData.Items);
+            var changes = BuildDeltaChanges(beforeAmounts, afterAmounts);
+            if (changes.Count <= 0 && afterData.Version == beforeVersion)
+            {
+                return false;
+            }
+
+            delta = new DeltaPacket(
+                id,
+                beforeVersion,
+                afterData.Version,
+                source,
+                isSnapshot: false,
+                totalAmount: afterData.ItemCount,
+                changes: changes);
+            return true;
+        }
+
+        private static void PublishDelta(DeltaPacket delta)
+        {
+            if (delta == null) { return; }
+            string id = Normalize(delta.DatabaseId);
+            _latestDeltaByDatabase[id] = delta;
+            int watchAllCount = _watchAll.TryGetValue(id, out var allMap) ? allMap.Count : 0;
+            int watchByKeyCount = _watchByKey.TryGetValue(id, out var byKeyMap) ? byKeyMap.Count : 0;
+            ModFileLog.WriteDebug(
+                "Store",
+                $"{Constants.LogPrefix} DeltaEmit db='{id}' source='{delta.Source}' prevVersion={delta.PreviousVersion} " +
+                $"version={delta.Version} total={delta.TotalAmount} changedKeys={delta.Changes.Count} " +
+                $"watchAll={watchAllCount} watchByKey={watchByKeyCount}");
+            DispatchDeltaToWatchers(id, delta);
+        }
+
+        private static void DispatchDeltaToWatchers(string databaseId, DeltaPacket delta)
+        {
+            if (delta == null) { return; }
+            string id = Normalize(databaseId);
+
+            if (_watchAll.TryGetValue(id, out var watchAllMap))
+            {
+                foreach (var sub in watchAllMap.Values.ToList())
+                {
+                    DispatchDeltaToWatcher(sub, delta, keyScoped: false);
+                }
+            }
+
+            if (_watchByKey.TryGetValue(id, out var watchByKeyMap))
+            {
+                foreach (var sub in watchByKeyMap.Values.ToList())
+                {
+                    DispatchDeltaToWatcher(sub, delta, keyScoped: true);
+                }
+            }
+        }
+
+        private static void DispatchDeltaToWatcher(WatchSubscription sub, DeltaPacket delta, bool keyScoped)
+        {
+            if (sub?.Callback == null || delta == null)
+            {
+                return;
+            }
+
+            bool hasGap = sub.LastSeenVersion >= 0 && delta.PreviousVersion != sub.LastSeenVersion;
+            if (hasGap)
+            {
+                ModFileLog.WriteDebug(
+                    "Store",
+                    $"{Constants.LogPrefix} DeltaGap watcher='{sub.WatcherId}' db='{sub.DatabaseId}' " +
+                    $"lastSeen={sub.LastSeenVersion} deltaPrev={delta.PreviousVersion} deltaVersion={delta.Version} source='{delta.Source}'");
+                if (TryBuildSnapshotPacket(
+                        delta.DatabaseId,
+                        $"watch:gap:{delta.Source}",
+                        sub.LastSeenVersion,
+                        keyScoped ? sub.Keys : null,
+                        out var snapshot))
+                {
+                    TryInvokeWatcher(sub, snapshot);
+                }
+                return;
+            }
+
+            if (!keyScoped)
+            {
+                TryInvokeWatcher(sub, delta);
+                return;
+            }
+
+            var keySet = sub.Keys;
+            if (keySet == null || keySet.Count <= 0)
+            {
+                sub.LastSeenVersion = delta.Version;
+                return;
+            }
+
+            var filteredChanges = new List<DeltaChange>();
+            foreach (var change in delta.Changes)
+            {
+                if (string.IsNullOrWhiteSpace(change.Key)) { continue; }
+                if (!keySet.Contains(change.Key)) { continue; }
+                filteredChanges.Add(change);
+            }
+
+            if (filteredChanges.Count <= 0)
+            {
+                sub.LastSeenVersion = delta.Version;
+                return;
+            }
+
+            var filtered = new DeltaPacket(
+                delta.DatabaseId,
+                delta.PreviousVersion,
+                delta.Version,
+                delta.Source,
+                isSnapshot: false,
+                totalAmount: delta.TotalAmount,
+                changes: filteredChanges);
+            TryInvokeWatcher(sub, filtered);
+        }
+
+        private static void TryInvokeWatcher(WatchSubscription sub, DeltaPacket packet)
+        {
+            if (sub?.Callback == null || packet == null)
+            {
+                return;
+            }
+
+            try
+            {
+                sub.Callback(packet);
+            }
+            catch (Exception ex)
+            {
+                ModFileLog.Write(
+                    "Store",
+                    $"{Constants.LogPrefix} Watch callback failed watcher='{sub.WatcherId}' db='{sub.DatabaseId}': {ex.Message}");
+            }
+            finally
+            {
+                sub.LastSeenVersion = packet.Version;
+            }
+        }
+
+        private static bool TryBuildSnapshotPacket(
+            string databaseId,
+            string source,
+            int previousVersion,
+            HashSet<string> keyFilter,
+            out DeltaPacket snapshot)
+        {
+            snapshot = null;
+            string id = Normalize(databaseId);
+            var db = GetOrCreate(id);
+            var allAmounts = BuildIdentifierAmountMap(db.Items);
+            var filtered = FilterIdentifierAmounts(allAmounts, keyFilter);
+            if (keyFilter != null && filtered.Count <= 0)
+            {
+                snapshot = new DeltaPacket(
+                    id,
+                    previousVersion < 0 ? db.Version : previousVersion,
+                    db.Version,
+                    source,
+                    isSnapshot: true,
+                    totalAmount: 0,
+                    changes: new List<DeltaChange>(),
+                    snapshotAmounts: new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase));
+                return true;
+            }
+
+            var changes = filtered
+                .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(pair => new DeltaChange(pair.Key, 0, pair.Value))
+                .ToList();
+
+            int totalAmount = keyFilter == null ? db.ItemCount : filtered.Values.Sum();
+            snapshot = new DeltaPacket(
+                id,
+                previousVersion < 0 ? db.Version : previousVersion,
+                db.Version,
+                source,
+                isSnapshot: true,
+                totalAmount: totalAmount,
+                changes: changes,
+                snapshotAmounts: filtered);
+            return true;
+        }
+
+        private static bool TryGetLatestDelta(string databaseId, int expectedVersion, out DeltaPacket delta)
+        {
+            string id = Normalize(databaseId);
+            if (_latestDeltaByDatabase.TryGetValue(id, out delta) &&
+                delta != null &&
+                delta.Version == expectedVersion)
+            {
+                return true;
+            }
+
+            delta = null;
+            return false;
+        }
+
+        private static Dictionary<string, int> BuildIdentifierAmountMap(List<ItemData> items)
+        {
+            var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            if (items == null)
+            {
+                return map;
+            }
+
+            foreach (var item in items)
+            {
+                AccumulateIdentifierAmount(map, item, parentMultiplier: 1);
+            }
+
+            return map;
+        }
+
+        private static void AccumulateIdentifierAmount(Dictionary<string, int> map, ItemData item, int parentMultiplier)
+        {
+            if (map == null || item == null) { return; }
+
+            int stack = Math.Max(1, item.StackSize);
+            int multiplier = Math.Max(1, parentMultiplier);
+            int amount = stack * multiplier;
+
+            string key = (item.Identifier ?? "").Trim();
+            if (!string.IsNullOrWhiteSpace(key))
+            {
+                map[key] = map.TryGetValue(key, out int existing)
+                    ? existing + amount
+                    : amount;
+            }
+
+            if (item.ContainedItems == null || item.ContainedItems.Count <= 0)
+            {
+                return;
+            }
+
+            foreach (var child in item.ContainedItems)
+            {
+                AccumulateIdentifierAmount(map, child, amount);
+            }
+        }
+
+        private static List<DeltaChange> BuildDeltaChanges(
+            Dictionary<string, int> before,
+            Dictionary<string, int> after)
+        {
+            before ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            after ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+            var keys = new HashSet<string>(before.Keys, StringComparer.OrdinalIgnoreCase);
+            keys.UnionWith(after.Keys);
+
+            var changes = new List<DeltaChange>();
+            foreach (string key in keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase))
+            {
+                int oldAmount = before.TryGetValue(key, out int oldValue) ? oldValue : 0;
+                int newAmount = after.TryGetValue(key, out int newValue) ? newValue : 0;
+                if (oldAmount == newAmount) { continue; }
+                changes.Add(new DeltaChange(key, oldAmount, newAmount));
+            }
+
+            return changes;
+        }
+
+        private static Dictionary<string, int> FilterIdentifierAmounts(
+            Dictionary<string, int> source,
+            HashSet<string> keyFilter)
+        {
+            source ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            if (keyFilter == null || keyFilter.Count <= 0)
+            {
+                return new Dictionary<string, int>(source, StringComparer.OrdinalIgnoreCase);
+            }
+
+            var filtered = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (string key in keyFilter)
+            {
+                if (string.IsNullOrWhiteSpace(key)) { continue; }
+                if (!source.TryGetValue(key, out int value)) { continue; }
+                if (value <= 0) { continue; }
+                filtered[key] = value;
+            }
+
+            return filtered;
         }
 
         private static DatabaseData GetOrCreate(string databaseId)
@@ -1348,10 +1950,14 @@ namespace DatabaseIOTest.Services
                 $"workingItems={restoredItems} committedDbCount={_committedState.Count} committedItems={restoredCommittedItems}");
         }
 
-        private static void SyncTerminals(string databaseId, bool persistCommittedState = false)
+        private static void SyncTerminals(string databaseId, bool persistCommittedState = false, bool preferDelta = false)
         {
             string id = Normalize(databaseId);
             var workingData = GetOrCreate(id);
+            DeltaPacket liveDelta = null;
+            bool hasLiveDelta = !persistCommittedState &&
+                                preferDelta &&
+                                TryGetLatestDelta(id, workingData.Version, out liveDelta);
 
             if (_terminals.TryGetValue(id, out var registered))
             {
@@ -1360,6 +1966,11 @@ namespace DatabaseIOTest.Services
                 {
                     if (weak.TryGetTarget(out var terminal))
                     {
+                        if (hasLiveDelta && terminal.ApplyStoreDelta(liveDelta))
+                        {
+                            continue;
+                        }
+
                         // Terminal serialization is no longer used for persistence.
                         terminal.ApplyStoreSnapshot(workingData, persistSerializedState: false);
                     }

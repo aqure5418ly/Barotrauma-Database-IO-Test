@@ -71,6 +71,8 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
     private readonly Dictionary<string, string> _supplySearchTextCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     private int _lastIdentifierSnapshotVersion = -1;
     private List<string> _cachedDatabaseIdentifiers = new List<string>();
+    private string _storeWatcherId = "";
+    private string _watchingDatabaseId = "";
 
     private string _lastTargetIdentifiers = "";
     private readonly List<string> _targetIdentifiers = new List<string>();
@@ -115,7 +117,18 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
         RefreshParsedConfig();
         if (IsServerAuthority)
         {
+            EnsureStoreWatcherRegistered();
             UpdateDescription();
+        }
+    }
+
+    public override void RemoveComponentSpecific()
+    {
+        if (IsServerAuthority &&
+            !string.IsNullOrWhiteSpace(_watchingDatabaseId) &&
+            !string.IsNullOrWhiteSpace(_storeWatcherId))
+        {
+            DatabaseStore.Unwatch(_watchingDatabaseId, _storeWatcherId);
         }
     }
 
@@ -196,13 +209,7 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
         bool baseListChanged = supplyListChanged;
         if (_supplyList.Count == 0)
         {
-            var dbList = DatabaseStore.GetIdentifierSnapshot(_resolvedDatabaseId, out int version);
-            if (version != _lastIdentifierSnapshotVersion)
-            {
-                _lastIdentifierSnapshotVersion = version;
-                _cachedDatabaseIdentifiers = dbList ?? new List<string>();
-                baseListChanged = true;
-            }
+            EnsureStoreWatcherRegistered();
         }
 
         if (supplyListChanged || supplyFilterChanged || baseListChanged)
@@ -327,6 +334,83 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
             _cachedDatabaseIdentifiers = new List<string>();
         }
         return _cachedDatabaseIdentifiers;
+    }
+
+    private void EnsureStoreWatcherRegistered()
+    {
+        if (!IsServerAuthority) { return; }
+
+        string id = DatabaseStore.Normalize(_resolvedDatabaseId);
+        if (string.IsNullOrWhiteSpace(_storeWatcherId))
+        {
+            _storeWatcherId = $"restocker:{item?.ID ?? -1}";
+        }
+
+        if (string.Equals(_watchingDatabaseId, id, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_watchingDatabaseId))
+        {
+            DatabaseStore.Unwatch(_watchingDatabaseId, _storeWatcherId);
+        }
+
+        _watchingDatabaseId = id;
+        DatabaseStore.WatchAll(
+            _watchingDatabaseId,
+            _storeWatcherId,
+            OnDatabaseDelta,
+            sendInitialSnapshot: true);
+    }
+
+    private void OnDatabaseDelta(DatabaseStore.DeltaPacket delta)
+    {
+        if (!IsServerAuthority || delta == null) { return; }
+        if (_supplyList.Count > 0) { return; }
+
+        bool changed = false;
+        var current = new HashSet<string>(_cachedDatabaseIdentifiers ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+
+        if (delta.IsSnapshot)
+        {
+            current.Clear();
+            if (delta.SnapshotAmounts != null)
+            {
+                foreach (var pair in delta.SnapshotAmounts)
+                {
+                    if (string.IsNullOrWhiteSpace(pair.Key)) { continue; }
+                    if (pair.Value <= 0) { continue; }
+                    current.Add(pair.Key);
+                }
+            }
+
+            changed = true;
+        }
+        else
+        {
+            foreach (var change in delta.Changes)
+            {
+                if (string.IsNullOrWhiteSpace(change.Key)) { continue; }
+                if (change.NewAmount > 0)
+                {
+                    changed |= current.Add(change.Key);
+                }
+                else
+                {
+                    changed |= current.Remove(change.Key);
+                }
+            }
+        }
+
+        _lastIdentifierSnapshotVersion = delta.Version;
+        if (!changed) { return; }
+
+        _cachedDatabaseIdentifiers = current
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        _supplySearchTextCache.Clear();
+        RebuildFilteredSupplyList();
     }
 
     private bool IdentifierMatchesFilter(string identifier, string loweredFilter)
