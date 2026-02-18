@@ -11,8 +11,9 @@ DBServer.NetViewDelta = "DBIOTEST_ViewDelta"
 
 DBServer.Subscriptions = DBServer.Subscriptions or {}
 DBServer.NextViewSyncAt = DBServer.NextViewSyncAt or 0
-DBServer.TerminalById = DBServer.TerminalById or {}
-DBServer.NextTerminalCacheRebuildAt = DBServer.NextTerminalCacheRebuildAt or 0
+DBServer.NextPerfLogAt = DBServer.NextPerfLogAt or 0
+local PerfLogCooldown = 0.8
+local PerfSyncWarnMs = 8.0
 
 local function Log(line)
     print("[DBIOTEST][B1][Server] " .. tostring(line or ""))
@@ -65,56 +66,20 @@ local function GetItemIdentifier(item)
     return identifier or ""
 end
 
-local function IsComponentSessionOpen(item)
-    if item == nil or item.Removed then
-        return false
-    end
-
-    local component = nil
-    pcall(function()
-        component = item.GetComponentString("DatabaseTerminalComponent")
-    end)
-    if component == nil then
-        return false
-    end
-
-    local open = false
-    pcall(function()
-        open = component.IsVirtualSessionOpenForUi() == true
-    end)
-    return open == true
-end
-
 local function IsSessionTerminal(item)
     if item == nil or item.Removed then
         return false
     end
 
-    local normalizedId = NormalizeIdentifier(GetItemIdentifier(item))
-    if normalizedId == "databaseterminalsession" then
+    if NormalizeIdentifier(GetItemIdentifier(item)) == "databaseterminalsession" then
         return true
     end
 
-    local hasSessionTag = false
-    local hasFixedTag = false
-    local hasTerminalTag = false
+    local hasTag = false
     pcall(function()
-        hasSessionTag = item.HasTag("database_terminal_session")
+        hasTag = item.HasTag("database_terminal_session")
     end)
-    pcall(function()
-        hasFixedTag = item.HasTag("database_terminal_fixed")
-    end)
-    pcall(function()
-        hasTerminalTag = item.HasTag("database_terminal")
-    end)
-    if hasSessionTag == true then
-        return true
-    end
-
-    if normalizedId == "databaseterminalfixed" or hasFixedTag == true or hasTerminalTag == true then
-        return IsComponentSessionOpen(item)
-    end
-    return false
+    return hasTag == true
 end
 
 local function FindItemByEntityId(entityId)
@@ -123,45 +88,11 @@ local function FindItemByEntityId(entityId)
     end
 
     local targetId = tostring(entityId)
-    local cached = DBServer.TerminalById[targetId]
-    if cached ~= nil and not cached.Removed then
-        return cached
-    end
-
-    local now = Now()
-    if now >= (DBServer.NextTerminalCacheRebuildAt or 0) then
-        local rebuilt = {}
-        pcall(function()
-            for item in Item.ItemList do
-                if item ~= nil and not item.Removed then
-                    rebuilt[tostring(item.ID)] = item
-                end
-            end
-        end)
-
-        DBServer.TerminalById = rebuilt
-        DBServer.NextTerminalCacheRebuildAt = now + 2.0
-        cached = DBServer.TerminalById[targetId]
-        if cached ~= nil and not cached.Removed then
-            return cached
+    for item in Item.ItemList do
+        if item ~= nil and not item.Removed and tostring(item.ID) == targetId then
+            return item
         end
     end
-
-    local found = nil
-    pcall(function()
-        for item in Item.ItemList do
-            if item ~= nil and not item.Removed and tostring(item.ID) == targetId then
-                found = item
-                break
-            end
-        end
-    end)
-
-    if found ~= nil then
-        DBServer.TerminalById[targetId] = found
-        return found
-    end
-
     return nil
 end
 
@@ -436,11 +367,13 @@ local function EnsureSubscription(client, terminal)
     local terminalId = tostring(terminal.ID)
     local current = DBServer.Subscriptions[client]
     if current ~= nil and tostring(current.terminalEntityId or "") == terminalId then
+        current.terminal = terminal
         return current
     end
 
     local sub = {
         terminalEntityId = terminalId,
+        terminal = terminal,
         databaseId = GetTerminalDatabaseId(terminal),
         serial = 0,
         lastEntries = {},
@@ -573,7 +506,18 @@ Networking.Receive(DBServer.NetTakeRequest, function(message, client)
     local wantedIdentifier = message.ReadString()
     local character = client.Character
 
-    local terminal = FindItemByEntityId(terminalEntityId)
+    local sub = DBServer.Subscriptions[client]
+    local terminal = nil
+    if sub ~= nil and tostring(sub.terminalEntityId or "") == tostring(terminalEntityId or "") then
+        terminal = sub.terminal
+    end
+    if terminal == nil or terminal.Removed then
+        terminal = FindItemByEntityId(terminalEntityId)
+        if sub ~= nil and terminal ~= nil then
+            sub.terminal = terminal
+        end
+    end
+
     if terminal == nil or not IsSessionTerminal(terminal) then
         SendTakeResult(client, false, L("dbiotest.ui.take.invalidterminal", "Terminal session not found."))
         return
@@ -606,16 +550,22 @@ Networking.Receive(DBServer.NetTakeRequest, function(message, client)
 end)
 
 Hook.Add("think", "DBIOTEST_ServerViewSyncThink", function()
-    local now = 0
-    pcall(function() now = Timer.Time end)
+    local now = Now()
     if now < (DBServer.NextViewSyncAt or 0) then
         return
     end
     DBServer.NextViewSyncAt = now + 0.25
+    local syncStartedAt = now
 
     local toRemove = {}
+    local subCount = 0
+    local processedCount = 0
+    local snapshotCount = 0
+    local deltaCount = 0
+    local fallbackLookupCount = 0
 
     for client, sub in pairs(DBServer.Subscriptions) do
+        subCount = subCount + 1
         local removeReason = nil
         if client == nil or client.Connection == nil or client.Character == nil then
             removeReason = "client offline"
@@ -625,7 +575,12 @@ Hook.Add("think", "DBIOTEST_ServerViewSyncThink", function()
 
         local terminal = nil
         if removeReason == nil then
-            terminal = FindItemByEntityId(sub.terminalEntityId)
+            terminal = sub.terminal
+            if terminal == nil or terminal.Removed then
+                fallbackLookupCount = fallbackLookupCount + 1
+                terminal = FindItemByEntityId(sub.terminalEntityId)
+                sub.terminal = terminal
+            end
             if terminal == nil or terminal.Removed or not IsSessionTerminal(terminal) then
                 removeReason = "terminal missing"
             end
@@ -638,6 +593,7 @@ Hook.Add("think", "DBIOTEST_ServerViewSyncThink", function()
         if removeReason ~= nil then
             table.insert(toRemove, { client = client, reason = removeReason })
         else
+            processedCount = processedCount + 1
             local entries, totalEntries, totalAmount = BuildEntryMap(terminal)
             local removed, upserts = BuildDelta(sub.lastEntries, entries)
 
@@ -647,8 +603,10 @@ Hook.Add("think", "DBIOTEST_ServerViewSyncThink", function()
                 local tooManyChanges = (#removed + #upserts) > 24
                 if sub.forceSnapshot == true or sub.serial <= 1 or tooManyChanges then
                     SendSnapshot(client, sub, entries, totalEntries, totalAmount, tooManyChanges and "change burst" or "snapshot")
+                    snapshotCount = snapshotCount + 1
                 else
                     SendDelta(client, sub, removed, upserts, totalEntries, totalAmount, "delta")
+                    deltaCount = deltaCount + 1
                 end
 
                 sub.lastEntries = CloneEntryMap(entries)
@@ -663,16 +621,29 @@ Hook.Add("think", "DBIOTEST_ServerViewSyncThink", function()
     for _, entry in ipairs(toRemove) do
         RemoveSubscription(entry.client, entry.reason)
     end
+
+    local elapsedMs = math.max(0, (Now() - syncStartedAt) * 1000.0)
+    if (elapsedMs >= PerfSyncWarnMs or fallbackLookupCount > 0) and
+        now >= (DBServer.NextPerfLogAt or 0) then
+        DBServer.NextPerfLogAt = now + PerfLogCooldown
+        Log(string.format(
+            "[PERF] SyncThink %.2fms subs=%d processed=%d removed=%d snapshots=%d deltas=%d fallbackLookup=%d",
+            elapsedMs,
+            subCount,
+            processedCount,
+            #toRemove,
+            snapshotCount,
+            deltaCount,
+            fallbackLookupCount))
+    end
 end)
 
 Hook.Add("roundEnd", "DBIOTEST_ServerViewRoundEnd", function()
     DBServer.Subscriptions = {}
-    DBServer.TerminalById = {}
-    DBServer.NextTerminalCacheRebuildAt = 0
+    DBServer.NextPerfLogAt = 0
 end)
 
 Hook.Add("stop", "DBIOTEST_ServerViewStop", function()
     DBServer.Subscriptions = {}
-    DBServer.TerminalById = {}
-    DBServer.NextTerminalCacheRebuildAt = 0
+    DBServer.NextPerfLogAt = 0
 end)

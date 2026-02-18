@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using Barotrauma;
@@ -187,6 +188,9 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private const double PendingSummarySyncRetrySeconds = 0.25;
     private const double PageFillCheckDelaySeconds = 0.35;
     private const int MaxPageFillCheckRetries = 1;
+    private const double TerminalUpdatePerfWarnMs = 8.0;
+    private const double TerminalUpdatePerfLogCooldownSeconds = 0.8;
+    private double _nextUpdatePerfLogAt;
 
     private static readonly PropertyInfo ItemFullyInitializedProperty =
         typeof(Item).GetProperty("FullyInitialized", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
@@ -254,6 +258,12 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     public override void Update(float deltaTime, Camera cam)
     {
+        long perfStartTicks = 0;
+        if (ModFileLog.IsDebugEnabled)
+        {
+            perfStartTicks = Stopwatch.GetTimestamp();
+        }
+
 #if CLIENT
         if (EnableCsPanelOverlay)
         {
@@ -296,6 +306,21 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         UpdateSummaryFromStore();
         UpdateDescriptionLocal();
         TrySyncSummary();
+
+        if (perfStartTicks != 0)
+        {
+            double elapsedMs = (Stopwatch.GetTimestamp() - perfStartTicks) * 1000.0 / Stopwatch.Frequency;
+            if (elapsedMs >= TerminalUpdatePerfWarnMs && Timing.TotalTime >= _nextUpdatePerfLogAt)
+            {
+                _nextUpdatePerfLogAt = Timing.TotalTime + TerminalUpdatePerfLogCooldownSeconds;
+                ModFileLog.Write(
+                    "Perf",
+                    $"{Constants.LogPrefix} TerminalUpdateSlow id={item?.ID} db='{_resolvedDatabaseId}' ms={elapsedMs:0.###} " +
+                    $"session={IsSessionActive()} inPlace={_inPlaceSessionActive} owner={(_sessionOwner != null ? _sessionOwner.Name : "none")} " +
+                    $"entries={_sessionEntries.Count} page={Math.Max(1, _sessionCurrentPageIndex + 1)}/{Math.Max(1, _sessionPages.Count)} " +
+                    $"pendingSummary={_pendingSummarySync}");
+            }
+        }
     }
 
     public override bool SecondaryUse(float deltaTime, Character character = null)

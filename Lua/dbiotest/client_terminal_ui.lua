@@ -27,9 +27,13 @@ DBClient.State = DBClient.State or {
 }
 
 DBClient.IconCache = DBClient.IconCache or {}
-local EnableNearbyTerminalScan = true
+local EnableNearbyTerminalScan = false
 local NearbyTerminalScanInterval = 1.0
 local NearbyTerminalScanDistance = 220
+local PerfLogCooldown = 0.8
+local PerfThinkWarnMs = 10.0
+local PerfBuildWarnMs = 6.0
+local PerfRedrawWarnMs = 6.0
 
 local function Log(line)
     print("[DBIOTEST][B1][Client] " .. tostring(line or ""))
@@ -57,6 +61,49 @@ local function Now()
         pcall(function() t = Timer.Time end)
     end
     return t or 0
+end
+
+local function GetActiveTerminalId()
+    local terminal = DBClient.State.activeTerminal
+    if terminal == nil or terminal.Removed then
+        return "none"
+    end
+
+    local id = "none"
+    pcall(function()
+        id = tostring(terminal.ID)
+    end)
+    return id or "none"
+end
+
+local function LogPerf(tag, startedAt, extra)
+    local now = Now()
+    local elapsedMs = math.max(0, (now - (startedAt or now)) * 1000.0)
+    if elapsedMs < PerfThinkWarnMs and tag == "think" then
+        return
+    end
+    if elapsedMs < PerfBuildWarnMs and tag == "build" then
+        return
+    end
+    if elapsedMs < PerfRedrawWarnMs and tag == "redraw" then
+        return
+    end
+
+    if now < (DBClient.State.nextPerfLogAt or 0) then
+        return
+    end
+    DBClient.State.nextPerfLogAt = now + PerfLogCooldown
+
+    Log(string.format(
+        "[PERF] %s %.2fms terminal=%s entries=%d amount=%d dirty=%s awaiting=%s %s",
+        tostring(tag or "unknown"),
+        elapsedMs,
+        tostring(GetActiveTerminalId()),
+        tonumber(DBClient.State.totalEntries or 0),
+        tonumber(DBClient.State.totalAmount or 0),
+        tostring(DBClient.State.dirty == true),
+        tostring(DBClient.State.awaitingSnapshot == true),
+        tostring(extra or "")))
 end
 
 local function ReadIntString(message)
@@ -116,75 +163,20 @@ local function GetItemDisplayName(item)
     return name or "Unknown"
 end
 
-local function IsComponentSessionOpen(item)
-    if item == nil or item.Removed then
-        return false
-    end
-
-    local component = nil
-    pcall(function()
-        component = item.GetComponentString("DatabaseTerminalComponent")
-    end)
-    if component == nil then
-        return false
-    end
-
-    local open = false
-    pcall(function()
-        open = component.IsVirtualSessionOpenForUi() == true
-    end)
-    return open == true
-end
-
 local function IsSessionTerminal(item)
     if item == nil or item.Removed then
         return false
     end
 
-    local normalizedId = NormalizeIdentifier(GetItemIdentifier(item))
-    if normalizedId == "databaseterminalsession" then
+    if NormalizeIdentifier(GetItemIdentifier(item)) == "databaseterminalsession" then
         return true
     end
 
-    local hasSessionTag = false
-    local hasFixedTag = false
-    local hasTerminalTag = false
+    local hasTag = false
     pcall(function()
-        hasSessionTag = item.HasTag("database_terminal_session")
+        hasTag = item.HasTag("database_terminal_session")
     end)
-    pcall(function()
-        hasFixedTag = item.HasTag("database_terminal_fixed")
-    end)
-    pcall(function()
-        hasTerminalTag = item.HasTag("database_terminal")
-    end)
-    if hasSessionTag == true then
-        return true
-    end
-
-    if normalizedId == "databaseterminalfixed" or hasFixedTag == true or hasTerminalTag == true then
-        return IsComponentSessionOpen(item)
-    end
-    return false
-end
-
-local function IsPotentialNearbyTerminal(item)
-    if item == nil or item.Removed then
-        return false
-    end
-
-    local hasPotentialTag = false
-    pcall(function()
-        hasPotentialTag = item.HasTag("database_terminal_session")
-            or item.HasTag("database_terminal_fixed")
-            or item.HasTag("database_terminal")
-    end)
-    if hasPotentialTag == true then
-        return true
-    end
-
-    local normalizedId = NormalizeIdentifier(GetItemIdentifier(item))
-    return normalizedId == "databaseterminalsession" or normalizedId == "databaseterminalfixed"
+    return hasTag == true
 end
 
 local function GetTerminalInventory(terminal)
@@ -262,9 +254,9 @@ local function FindNearbySessionTerminal(character)
     local bestDistanceSq = NearbyTerminalScanDistance * NearbyTerminalScanDistance
     pcall(function()
         for item in Item.ItemList do
-            if item ~= nil and not item.Removed and IsPotentialNearbyTerminal(item) then
+            if item ~= nil and not item.Removed and IsSessionTerminal(item) then
                 local distanceSq = Vector2.DistanceSquared(character.WorldPosition, item.WorldPosition)
-                if distanceSq <= bestDistanceSq and IsSessionTerminal(item) then
+                if distanceSq <= bestDistanceSq then
                     bestDistanceSq = distanceSq
                     best = item
                 end
@@ -1009,6 +1001,7 @@ Hook.Patch("Barotrauma.NetLobbyScreen", "AddToGUIUpdateList", function()
 end)
 
 Hook.Add("think", "DBIOTEST_ClientTerminalUiThink", function()
+    local thinkStartedAt = Now()
     local hasSession = false
     pcall(function()
         hasSession = Game.GameSession ~= nil
@@ -1019,6 +1012,7 @@ Hook.Add("think", "DBIOTEST_ClientTerminalUiThink", function()
             SendUnsubscribe()
             ResetViewState(true)
         end
+        LogPerf("think", thinkStartedAt, "state=no_session")
         return
     end
 
@@ -1031,6 +1025,7 @@ Hook.Add("think", "DBIOTEST_ClientTerminalUiThink", function()
             SendUnsubscribe()
             ResetViewState(true)
         end
+        LogPerf("think", thinkStartedAt, "state=no_terminal")
         return
     end
 
@@ -1048,9 +1043,11 @@ Hook.Add("think", "DBIOTEST_ClientTerminalUiThink", function()
     if not Game.IsMultiplayer then
         local now = Now()
         if (now - (DBClient.State.lastLocalSync or 0)) > 0.30 then
+            local buildStartedAt = Now()
             local localMap, totalEntries, totalAmount = BuildLocalEntryMap(terminal)
             DBClient.State.lastLocalSync = now
             DBClient.State.awaitingSnapshot = false
+            LogPerf("build", buildStartedAt, "phase=localsync")
 
             local changed = not EntryMapEquivalent(
                 DBClient.State.entriesByKey,
@@ -1077,8 +1074,11 @@ Hook.Add("think", "DBIOTEST_ClientTerminalUiThink", function()
     local now = Now()
     if DBClient.State.dirty then
         DBClient.State.lastRefresh = now
+        local redrawStartedAt = Now()
         RedrawList()
+        LogPerf("redraw", redrawStartedAt, "phase=draw")
     end
+    LogPerf("think", thinkStartedAt, "state=active")
 end)
 
 Networking.Receive(DBClient.NetViewSnapshot, function(message)

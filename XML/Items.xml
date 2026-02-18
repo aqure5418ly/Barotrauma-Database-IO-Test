@@ -178,6 +178,18 @@
         <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
       </SubContainer>
     </ItemContainer>
+    <CustomInterface canbeselected="true" allowuioverlap="true">
+      <GuiFrame relativesize="0.30,0.22" anchor="BottomLeft" relativeoffset="0.04,0.08" style="ItemUI" />
+      <Button text="dbiotest.btn.open">
+        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="4" />
+      </Button>
+      <Button text="dbiotest.btn.force">
+        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="5" />
+      </Button>
+      <Button text="dbiotest.btn.close">
+        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="3" />
+      </Button>
+    </CustomInterface>
     <Powered minvoltage="0.5" powerconsumption="30" />
     <ConnectionPanel selectkey="Action" canbeselected="true" msg="ItemMsgRewireScrewdriver" hudpriority="10">
       <GuiFrame relativesize="0.22,0.28" minsize="380,320" maxsize="480,420" anchor="Center" style="ConnectionPanel" />

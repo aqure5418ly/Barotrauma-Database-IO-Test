@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using Barotrauma;
 using DatabaseIOTest.Models;
@@ -293,6 +294,7 @@ namespace DatabaseIOTest.Services
         private static int _roundDecisionPriority;
         private static bool _saveDecisionBindingEnabled;
         private static bool _pendingRestoreArmed;
+        private static double _nextSyncPerfLogAt;
 
         public static string Normalize(string databaseId)
         {
@@ -1952,12 +1954,20 @@ namespace DatabaseIOTest.Services
 
         private static void SyncTerminals(string databaseId, bool persistCommittedState = false, bool preferDelta = false)
         {
+            long perfStartTicks = 0;
+            if (ModFileLog.IsDebugEnabled)
+            {
+                perfStartTicks = Stopwatch.GetTimestamp();
+            }
+
             string id = Normalize(databaseId);
             var workingData = GetOrCreate(id);
             DeltaPacket liveDelta = null;
             bool hasLiveDelta = !persistCommittedState &&
                                 preferDelta &&
                                 TryGetLatestDelta(id, workingData.Version, out liveDelta);
+            int terminalApplyCount = 0;
+            int anchorApplyCount = 0;
 
             if (_terminals.TryGetValue(id, out var registered))
             {
@@ -1968,11 +1978,13 @@ namespace DatabaseIOTest.Services
                     {
                         if (hasLiveDelta && terminal.ApplyStoreDelta(liveDelta))
                         {
+                            terminalApplyCount++;
                             continue;
                         }
 
                         // Terminal serialization is no longer used for persistence.
                         terminal.ApplyStoreSnapshot(workingData, persistSerializedState: false);
+                        terminalApplyCount++;
                     }
                 }
             }
@@ -2001,7 +2013,26 @@ namespace DatabaseIOTest.Services
                     if (weak.TryGetTarget(out var anchor))
                     {
                         anchor.ApplyStoreSnapshot(anchorData, persistSerializedState: persistSerialized);
+                        anchorApplyCount++;
                     }
+                }
+            }
+
+            if (perfStartTicks != 0)
+            {
+                double elapsedMs = (Stopwatch.GetTimestamp() - perfStartTicks) * 1000.0 / Stopwatch.Frequency;
+                if (elapsedMs >= 6.0 && Timing.TotalTime >= _nextSyncPerfLogAt)
+                {
+                    _nextSyncPerfLogAt = Timing.TotalTime + 0.8;
+                    int watchAllCount = _watchAll.TryGetValue(id, out var watchAllMap) ? watchAllMap.Count : 0;
+                    int watchByKeyCount = _watchByKey.TryGetValue(id, out var watchByKeyMap) ? watchByKeyMap.Count : 0;
+                    ModFileLog.Write(
+                        "Perf",
+                        $"{Constants.LogPrefix} SyncTerminalsSlow db='{id}' ms={elapsedMs:0.###} " +
+                        $"terminalApply={terminalApplyCount} anchorApply={anchorApplyCount} " +
+                        $"preferDelta={preferDelta} persistCommitted={persistCommittedState} hasLiveDelta={hasLiveDelta} " +
+                        $"workingVersion={workingData.Version} workingItems={workingData.ItemCount} " +
+                        $"activeLocks={_activeTerminals.Count} watchAll={watchAllCount} watchByKey={watchByKeyCount}");
                 }
             }
         }
