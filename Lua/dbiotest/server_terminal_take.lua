@@ -11,6 +11,8 @@ DBServer.NetViewDelta = "DBIOTEST_ViewDelta"
 
 DBServer.Subscriptions = DBServer.Subscriptions or {}
 DBServer.NextViewSyncAt = DBServer.NextViewSyncAt or 0
+DBServer.TerminalById = DBServer.TerminalById or {}
+DBServer.NextTerminalCacheRebuildAt = DBServer.NextTerminalCacheRebuildAt or 0
 
 local function Log(line)
     print("[DBIOTEST][B1][Server] " .. tostring(line or ""))
@@ -32,6 +34,12 @@ local function NormalizeIdentifier(identifier)
         return ""
     end
     return string.lower(tostring(identifier))
+end
+
+local function Now()
+    local now = 0
+    pcall(function() now = Timer.Time end)
+    return now or 0
 end
 
 local function GetItemIdentifier(item)
@@ -57,20 +65,56 @@ local function GetItemIdentifier(item)
     return identifier or ""
 end
 
+local function IsComponentSessionOpen(item)
+    if item == nil or item.Removed then
+        return false
+    end
+
+    local component = nil
+    pcall(function()
+        component = item.GetComponentString("DatabaseTerminalComponent")
+    end)
+    if component == nil then
+        return false
+    end
+
+    local open = false
+    pcall(function()
+        open = component.IsVirtualSessionOpenForUi() == true
+    end)
+    return open == true
+end
+
 local function IsSessionTerminal(item)
     if item == nil or item.Removed then
         return false
     end
 
-    if NormalizeIdentifier(GetItemIdentifier(item)) == "databaseterminalsession" then
+    local normalizedId = NormalizeIdentifier(GetItemIdentifier(item))
+    if normalizedId == "databaseterminalsession" then
         return true
     end
 
-    local hasTag = false
+    local hasSessionTag = false
+    local hasFixedTag = false
+    local hasTerminalTag = false
     pcall(function()
-        hasTag = item.HasTag("database_terminal_session")
+        hasSessionTag = item.HasTag("database_terminal_session")
     end)
-    return hasTag == true
+    pcall(function()
+        hasFixedTag = item.HasTag("database_terminal_fixed")
+    end)
+    pcall(function()
+        hasTerminalTag = item.HasTag("database_terminal")
+    end)
+    if hasSessionTag == true then
+        return true
+    end
+
+    if normalizedId == "databaseterminalfixed" or hasFixedTag == true or hasTerminalTag == true then
+        return IsComponentSessionOpen(item)
+    end
+    return false
 end
 
 local function FindItemByEntityId(entityId)
@@ -79,10 +123,43 @@ local function FindItemByEntityId(entityId)
     end
 
     local targetId = tostring(entityId)
-    for item in Item.ItemList do
-        if item ~= nil and not item.Removed and tostring(item.ID) == targetId then
-            return item
+    local cached = DBServer.TerminalById[targetId]
+    if cached ~= nil and not cached.Removed then
+        return cached
+    end
+
+    local now = Now()
+    if now >= (DBServer.NextTerminalCacheRebuildAt or 0) then
+        local rebuilt = {}
+        pcall(function()
+            for item in Item.ItemList do
+                if item ~= nil and not item.Removed then
+                    rebuilt[tostring(item.ID)] = item
+                end
+            end
+        end)
+
+        DBServer.TerminalById = rebuilt
+        DBServer.NextTerminalCacheRebuildAt = now + 2.0
+        cached = DBServer.TerminalById[targetId]
+        if cached ~= nil and not cached.Removed then
+            return cached
         end
+    end
+
+    local found = nil
+    pcall(function()
+        for item in Item.ItemList do
+            if item ~= nil and not item.Removed and tostring(item.ID) == targetId then
+                found = item
+                break
+            end
+        end
+    end)
+
+    if found ~= nil then
+        DBServer.TerminalById[targetId] = found
+        return found
     end
 
     return nil
@@ -590,8 +667,12 @@ end)
 
 Hook.Add("roundEnd", "DBIOTEST_ServerViewRoundEnd", function()
     DBServer.Subscriptions = {}
+    DBServer.TerminalById = {}
+    DBServer.NextTerminalCacheRebuildAt = 0
 end)
 
 Hook.Add("stop", "DBIOTEST_ServerViewStop", function()
     DBServer.Subscriptions = {}
+    DBServer.TerminalById = {}
+    DBServer.NextTerminalCacheRebuildAt = 0
 end)

@@ -27,6 +27,9 @@ DBClient.State = DBClient.State or {
 }
 
 DBClient.IconCache = DBClient.IconCache or {}
+local EnableNearbyTerminalScan = true
+local NearbyTerminalScanInterval = 1.0
+local NearbyTerminalScanDistance = 220
 
 local function Log(line)
     print("[DBIOTEST][B1][Client] " .. tostring(line or ""))
@@ -113,20 +116,75 @@ local function GetItemDisplayName(item)
     return name or "Unknown"
 end
 
+local function IsComponentSessionOpen(item)
+    if item == nil or item.Removed then
+        return false
+    end
+
+    local component = nil
+    pcall(function()
+        component = item.GetComponentString("DatabaseTerminalComponent")
+    end)
+    if component == nil then
+        return false
+    end
+
+    local open = false
+    pcall(function()
+        open = component.IsVirtualSessionOpenForUi() == true
+    end)
+    return open == true
+end
+
 local function IsSessionTerminal(item)
     if item == nil or item.Removed then
         return false
     end
 
-    if NormalizeIdentifier(GetItemIdentifier(item)) == "databaseterminalsession" then
+    local normalizedId = NormalizeIdentifier(GetItemIdentifier(item))
+    if normalizedId == "databaseterminalsession" then
         return true
     end
 
-    local hasTag = false
+    local hasSessionTag = false
+    local hasFixedTag = false
+    local hasTerminalTag = false
     pcall(function()
-        hasTag = item.HasTag("database_terminal_session")
+        hasSessionTag = item.HasTag("database_terminal_session")
     end)
-    return hasTag == true
+    pcall(function()
+        hasFixedTag = item.HasTag("database_terminal_fixed")
+    end)
+    pcall(function()
+        hasTerminalTag = item.HasTag("database_terminal")
+    end)
+    if hasSessionTag == true then
+        return true
+    end
+
+    if normalizedId == "databaseterminalfixed" or hasFixedTag == true or hasTerminalTag == true then
+        return IsComponentSessionOpen(item)
+    end
+    return false
+end
+
+local function IsPotentialNearbyTerminal(item)
+    if item == nil or item.Removed then
+        return false
+    end
+
+    local hasPotentialTag = false
+    pcall(function()
+        hasPotentialTag = item.HasTag("database_terminal_session")
+            or item.HasTag("database_terminal_fixed")
+            or item.HasTag("database_terminal")
+    end)
+    if hasPotentialTag == true then
+        return true
+    end
+
+    local normalizedId = NormalizeIdentifier(GetItemIdentifier(item))
+    return normalizedId == "databaseterminalsession" or normalizedId == "databaseterminalfixed"
 end
 
 local function GetTerminalInventory(terminal)
@@ -180,6 +238,44 @@ local function ForEachInventoryItem(inventory, callback)
     end)
 end
 
+local function FindNearbySessionTerminal(character)
+    if character == nil or character.Removed then
+        return nil
+    end
+
+    local now = Now()
+    local cached = DBClient.State.nearbyTerminal
+    if cached ~= nil and not cached.Removed and IsSessionTerminal(cached) and (now - (DBClient.State.lastNearbyScanAt or 0)) < NearbyTerminalScanInterval then
+        local stillNearby = false
+        pcall(function()
+            stillNearby = Vector2.Distance(character.WorldPosition, cached.WorldPosition) <= NearbyTerminalScanDistance
+        end)
+        if stillNearby then
+            return cached
+        end
+    end
+
+    DBClient.State.lastNearbyScanAt = now
+    DBClient.State.nearbyTerminal = nil
+
+    local best = nil
+    local bestDistanceSq = NearbyTerminalScanDistance * NearbyTerminalScanDistance
+    pcall(function()
+        for item in Item.ItemList do
+            if item ~= nil and not item.Removed and IsPotentialNearbyTerminal(item) then
+                local distanceSq = Vector2.DistanceSquared(character.WorldPosition, item.WorldPosition)
+                if distanceSq <= bestDistanceSq and IsSessionTerminal(item) then
+                    bestDistanceSq = distanceSq
+                    best = item
+                end
+            end
+        end
+    end)
+
+    DBClient.State.nearbyTerminal = best
+    return best
+end
+
 local function FindHeldSessionTerminal(character)
     if character == nil then
         return nil
@@ -211,7 +307,14 @@ local function FindHeldSessionTerminal(character)
         end
         return false
     end)
-    return found
+    if found ~= nil then
+        return found
+    end
+
+    if EnableNearbyTerminalScan then
+        return FindNearbySessionTerminal(character)
+    end
+    return nil
 end
 
 local function GetTerminalDatabaseId(terminal)
@@ -285,37 +388,47 @@ local function BuildLocalEntryMap(terminal)
         end
     end
 
-    local map = {}
-    local totalAmount = 0
-    local inventory = GetTerminalInventory(terminal)
-    ForEachInventoryItem(inventory, function(item)
-        local identifier = GetItemIdentifier(item)
-        local key = NormalizeIdentifier(identifier)
-        if key ~= "" then
-            local entry = map[key]
-            if entry == nil then
-                entry = {
-                    key = key,
-                    identifier = identifier,
-                    prefabIdentifier = identifier,
-                    displayName = GetItemDisplayName(item),
-                    amount = 0,
-                    bestQuality = 0,
-                    avgCondition = 100
-                }
-                map[key] = entry
-            end
-            entry.amount = (tonumber(entry.amount) or 0) + 1
-            totalAmount = totalAmount + 1
-        end
-        return false
-    end)
+    return {}, 0, 0
+end
 
-    local totalEntries = 0
-    for _, _ in pairs(map) do
-        totalEntries = totalEntries + 1
+local function EntryMapEquivalent(currentMap, currentEntries, currentAmount, nextMap, nextEntries, nextAmount)
+    if tonumber(currentEntries or 0) ~= tonumber(nextEntries or 0) then
+        return false
     end
-    return map, totalEntries, totalAmount
+    if tonumber(currentAmount or 0) ~= tonumber(nextAmount or 0) then
+        return false
+    end
+
+    currentMap = currentMap or {}
+    nextMap = nextMap or {}
+
+    for key, left in pairs(currentMap) do
+        local right = nextMap[key]
+        if right == nil then
+            return false
+        end
+
+        if tostring(left.identifier or "") ~= tostring(right.identifier or "") then
+            return false
+        end
+        if tonumber(left.amount or 0) ~= tonumber(right.amount or 0) then
+            return false
+        end
+        if tonumber(left.bestQuality or 0) ~= tonumber(right.bestQuality or 0) then
+            return false
+        end
+        if math.abs((tonumber(left.avgCondition) or 0) - (tonumber(right.avgCondition) or 0)) > 0.05 then
+            return false
+        end
+    end
+
+    for key, _ in pairs(nextMap) do
+        if currentMap[key] == nil then
+            return false
+        end
+    end
+
+    return true
 end
 
 local function MatchSearch(entry, searchText)
@@ -441,6 +554,8 @@ local function ResetViewState(clearTerminal)
     DBClient.State.awaitingSnapshot = false
     DBClient.State.dirty = true
     DBClient.State.renderToken = (tonumber(DBClient.State.renderToken) or 0) + 1
+    DBClient.State.lastNearbyScanAt = 0
+    DBClient.State.nearbyTerminal = nil
     if clearTerminal then
         DBClient.State.activeTerminal = nil
         DBClient.State.subscribedTerminalId = ""
@@ -894,6 +1009,19 @@ Hook.Patch("Barotrauma.NetLobbyScreen", "AddToGUIUpdateList", function()
 end)
 
 Hook.Add("think", "DBIOTEST_ClientTerminalUiThink", function()
+    local hasSession = false
+    pcall(function()
+        hasSession = Game.GameSession ~= nil
+    end)
+    if not hasSession then
+        DBClient.Panel.Visible = false
+        if DBClient.State.activeTerminal ~= nil then
+            SendUnsubscribe()
+            ResetViewState(true)
+        end
+        return
+    end
+
     local character = Character.Controlled
     local terminal = FindHeldSessionTerminal(character)
 
@@ -921,13 +1049,24 @@ Hook.Add("think", "DBIOTEST_ClientTerminalUiThink", function()
         local now = Now()
         if (now - (DBClient.State.lastLocalSync or 0)) > 0.30 then
             local localMap, totalEntries, totalAmount = BuildLocalEntryMap(terminal)
-            DBClient.State.entriesByKey = localMap
-            DBClient.State.totalEntries = totalEntries
-            DBClient.State.totalAmount = totalAmount
-            DBClient.State.serial = DBClient.State.serial + 1
             DBClient.State.lastLocalSync = now
             DBClient.State.awaitingSnapshot = false
-            DBClient.State.dirty = true
+
+            local changed = not EntryMapEquivalent(
+                DBClient.State.entriesByKey,
+                DBClient.State.totalEntries,
+                DBClient.State.totalAmount,
+                localMap,
+                totalEntries,
+                totalAmount)
+
+            if changed then
+                DBClient.State.entriesByKey = localMap
+                DBClient.State.totalEntries = totalEntries
+                DBClient.State.totalAmount = totalAmount
+                DBClient.State.serial = DBClient.State.serial + 1
+                DBClient.State.dirty = true
+            end
         end
     else
         if DBClient.State.awaitingSnapshot and (Now() - (DBClient.State.lastSubscribeAt or 0)) > 1.2 then
@@ -936,7 +1075,7 @@ Hook.Add("think", "DBIOTEST_ClientTerminalUiThink", function()
     end
 
     local now = Now()
-    if DBClient.State.dirty or (now - (DBClient.State.lastRefresh or 0)) > 0.35 then
+    if DBClient.State.dirty then
         DBClient.State.lastRefresh = now
         RedrawList()
     end

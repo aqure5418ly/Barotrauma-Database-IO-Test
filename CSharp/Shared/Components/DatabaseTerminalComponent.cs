@@ -479,7 +479,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     public List<TerminalVirtualEntry> GetVirtualViewSnapshot(bool refreshCurrentPage = true)
     {
         var snapshot = new List<TerminalVirtualEntry>();
-        if (!IsServerAuthority || !IsSessionActive())
+        if (!IsSessionActive())
         {
             return snapshot;
         }
@@ -520,6 +520,11 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         snapshot.AddRange(grouped.Values
             .OrderBy(v => v.Identifier ?? "", StringComparer.OrdinalIgnoreCase));
         return snapshot;
+    }
+
+    public bool IsVirtualSessionOpenForUi()
+    {
+        return IsSessionActive();
     }
 
     public string TryTakeOneByIdentifierFromVirtualSession(string identifier, Character actor)
