@@ -42,10 +42,65 @@ local PerfLogCooldown = 0.8
 local PerfThinkWarnMs = 10.0
 local PerfBuildWarnMs = 6.0
 local PerfRedrawWarnMs = 6.0
+local ForceLuaDebugLog = true
+local LoggerBridgeMissingPrinted = false
 
-local function TryWriteFileLog(line)
+local function TryWriteFileLog(level, line)
     local text = tostring(line or "")
     local wrote = false
+
+    local function TryLogger(logger)
+        if logger == nil then
+            return false
+        end
+
+        local mode = tostring(level or "info")
+        if mode == "debug" then
+            local okPreferred = pcall(function()
+                logger.WriteLuaClientDebug(text)
+            end)
+            if okPreferred then
+                return true
+            end
+
+            local okFallbackDebug = pcall(function()
+                logger.WriteDebug("LuaClient", text)
+            end)
+            if okFallbackDebug then
+                return true
+            end
+
+            if ForceLuaDebugLog then
+                local okDebugToInfo = pcall(function()
+                    logger.WriteLuaClient("[DBG->INFO] " .. text)
+                end)
+                if okDebugToInfo then
+                    return true
+                end
+
+                local okFallbackInfo = pcall(function()
+                    logger.Write("LuaClient", "[DBG->INFO] " .. text)
+                end)
+                if okFallbackInfo then
+                    return true
+                end
+            end
+
+            return false
+        end
+
+        local okPreferred = pcall(function()
+            logger.WriteLuaClient(text)
+        end)
+        if okPreferred then
+            return true
+        end
+
+        local okFallback = pcall(function()
+            logger.Write("LuaClient", text)
+        end)
+        return okFallback
+    end
 
     pcall(function()
         if wrote then
@@ -55,12 +110,7 @@ local function TryWriteFileLog(line)
             DatabaseIOTest.Services ~= nil and
             DatabaseIOTest.Services.ModFileLog ~= nil then
             local logger = DatabaseIOTest.Services.ModFileLog
-            if logger.WriteLuaClient ~= nil then
-                logger.WriteLuaClient(text)
-            else
-                logger.Write("LuaClient", text)
-            end
-            wrote = true
+            wrote = TryLogger(logger)
         end
     end)
 
@@ -73,21 +123,53 @@ local function TryWriteFileLog(line)
             CS.DatabaseIOTest.Services ~= nil and
             CS.DatabaseIOTest.Services.ModFileLog ~= nil then
             local logger = CS.DatabaseIOTest.Services.ModFileLog
-            if logger.WriteLuaClient ~= nil then
-                logger.WriteLuaClient(text)
-            else
-                logger.Write("LuaClient", text)
-            end
-            wrote = true
+            wrote = TryLogger(logger)
         end
     end)
+
+    pcall(function()
+        if wrote then
+            return
+        end
+        if DatabaseIOTestLua ~= nil and DatabaseIOTestLua.AppendLuaFileLogLine ~= nil then
+            local payload = text
+            if tostring(level or "info") == "debug" then
+                payload = "[DBG->INFO] " .. payload
+            end
+            wrote = DatabaseIOTestLua.AppendLuaFileLogLine(payload) == true
+        end
+    end)
+
+    if not wrote and not LoggerBridgeMissingPrinted then
+        LoggerBridgeMissingPrinted = true
+        print("[DBIOTEST][B1][Client][LOGFAIL] Lua file logger unavailable; fallback to print only.")
+    end
+    return wrote
 end
 
 local function Log(line)
     local text = "[DBIOTEST][B1][Client] " .. tostring(line or "")
-    TryWriteFileLog(text)
+    TryWriteFileLog("info", text)
     print(text)
 end
+
+local function LogDebug(line)
+    if not ForceLuaDebugLog then
+        return
+    end
+    local text = "[DBIOTEST][B1][Client][DBG] " .. tostring(line or "")
+    TryWriteFileLog("debug", text)
+end
+
+Log("client_terminal_ui loaded; CLIENT=" .. tostring(CLIENT) .. " SERVER=" .. tostring(SERVER))
+LogDebug(string.format(
+    "NetChannels takeReq=%s takeResult=%s sub=%s unsub=%s snapshot=%s delta=%s",
+    tostring(DBClient.NetTakeRequest),
+    tostring(DBClient.NetTakeResult),
+    tostring(DBClient.NetViewSubscribe),
+    tostring(DBClient.NetViewUnsubscribe),
+    tostring(DBClient.NetViewSnapshot),
+    tostring(DBClient.NetViewDelta)))
 
 if not CLIENT then
     return
@@ -121,6 +203,19 @@ local function LogThrottled(key, cooldown, line)
     end
     DBClient.State[stateKey] = now + (tonumber(cooldown) or 0.9)
     Log(line)
+end
+
+local function LogDebugThrottled(key, cooldown, line)
+    if not ForceLuaDebugLog then
+        return
+    end
+    local now = Now()
+    local stateKey = "__nextDbgLogAt_" .. tostring(key or "default")
+    if now < (DBClient.State[stateKey] or 0) then
+        return
+    end
+    DBClient.State[stateKey] = now + (tonumber(cooldown) or 0.6)
+    LogDebug(line)
 end
 
 local function GetActiveTerminalId()
@@ -274,6 +369,13 @@ local function IsComponentSessionOpenForUi(item)
         component = item.GetComponentString("DatabaseTerminalComponent")
     end)
     if component == nil then
+        LogDebugThrottled(
+            "ui-component-missing-" .. tostring(GetTerminalId(item)),
+            1.0,
+            string.format(
+                "IsComponentSessionOpenForUi component missing terminal=%s identifier=%s",
+                tostring(GetTerminalId(item)),
+                tostring(GetItemIdentifier(item))))
         return false
     end
 
@@ -281,6 +383,13 @@ local function IsComponentSessionOpenForUi(item)
     pcall(function()
         open = component.IsVirtualSessionOpenForUi() == true
     end)
+    LogDebugThrottled(
+        "ui-component-open-" .. tostring(GetTerminalId(item)),
+        0.8,
+        string.format(
+            "IsComponentSessionOpenForUi terminal=%s open=%s",
+            tostring(GetTerminalId(item)),
+            tostring(open == true)))
     return open == true
 end
 
@@ -881,18 +990,27 @@ local function ResetViewState(clearTerminal)
         DBClient.State.subscribedTerminalId = ""
         DBClient.State.databaseId = "default"
     end
+    LogDebugThrottled(
+        "reset-view",
+        0.3,
+        string.format(
+            "ResetViewState clearTerminal=%s",
+            tostring(clearTerminal == true)))
 end
 
 local function SendUnsubscribe()
     if not Game.IsMultiplayer then
+        LogDebug("SendUnsubscribe skipped in single-player mode.")
         DBClient.State.subscribedTerminalId = ""
         return
     end
 
     if DBClient.State.subscribedTerminalId == "" then
+        LogDebug("SendUnsubscribe skipped because subscribedTerminalId is empty.")
         return
     end
 
+    LogDebug("SendUnsubscribe begin terminal=" .. tostring(DBClient.State.subscribedTerminalId))
     local message = Networking.Start(DBClient.NetViewUnsubscribe)
     message.WriteString(DBClient.State.subscribedTerminalId)
     Networking.Send(message)
@@ -903,23 +1021,37 @@ end
 
 local function SendSubscribe(terminal, force)
     if terminal == nil then
+        LogDebug("SendSubscribe skipped: terminal is nil.")
         return
     end
 
     local terminalId = tostring(terminal.ID)
     if terminalId == "" then
+        LogDebug("SendSubscribe skipped: terminal id empty.")
         return
     end
 
     if not Game.IsMultiplayer then
         DBClient.State.subscribedTerminalId = terminalId
+        LogDebug("SendSubscribe local(single-player) terminal=" .. tostring(terminalId))
         return
     end
 
     if not force and DBClient.State.subscribedTerminalId == terminalId and not DBClient.State.awaitingSnapshot then
+        LogDebug(string.format(
+            "SendSubscribe skipped terminal=%s force=%s awaitingSnapshot=%s",
+            tostring(terminalId),
+            tostring(force == true),
+            tostring(DBClient.State.awaitingSnapshot == true)))
         return
     end
 
+    LogDebug(string.format(
+        "SendSubscribe begin terminal=%s force=%s currentSub=%s awaitingSnapshot=%s",
+        tostring(terminalId),
+        tostring(force == true),
+        tostring(DBClient.State.subscribedTerminalId),
+        tostring(DBClient.State.awaitingSnapshot == true)))
     local message = Networking.Start(DBClient.NetViewSubscribe)
     message.WriteString(terminalId)
     Networking.Send(message)
@@ -935,14 +1067,26 @@ local function RequestTake(entry)
     local terminal = DBClient.State.activeTerminal
     local character = Character.Controlled
     if terminal == nil or entry == nil or character == nil then
+        LogDebug(string.format(
+            "RequestTake skipped terminalNil=%s entryNil=%s characterNil=%s",
+            tostring(terminal == nil),
+            tostring(entry == nil),
+            tostring(character == nil)))
         return
     end
+
+    LogDebug(string.format(
+        "RequestTake begin terminal=%s identifier=%s multiplayer=%s",
+        tostring(GetTerminalId(terminal)),
+        tostring(entry.identifier or ""),
+        tostring(Game.IsMultiplayer == true)))
 
     if Game.IsMultiplayer then
         local message = Networking.Start(DBClient.NetTakeRequest)
         message.WriteString(tostring(terminal.ID))
         message.WriteString(tostring(entry.identifier or ""))
         Networking.Send(message)
+        LogDebug("RequestTake sent to server.")
         return
     end
 
@@ -955,8 +1099,12 @@ local function RequestTake(entry)
         end)
         if okCall then
             reasonCode = tostring(reason or "")
+            LogDebug(string.format(
+                "RequestTake local call result reasonCode='%s'",
+                tostring(reasonCode)))
         else
             reasonCode = "not_ready"
+            LogDebug("RequestTake local call failed with exception; reasonCode='not_ready'.")
         end
         if reasonCode == "" then
             success = true
@@ -972,6 +1120,10 @@ local function RequestTake(entry)
     else
         GUI.AddMessage(L("dbiotest.ui.take.failed", "Failed to transfer item."), Color.Red)
     end
+    LogDebug(string.format(
+        "RequestTake local finished success=%s reason='%s'",
+        tostring(success == true),
+        tostring(reasonCode)))
     DBClient.State.dirty = true
 end
 
@@ -1007,7 +1159,21 @@ local function ApplySnapshot(message)
     local totalAmount = ReadIntString(message)
     local payloadCount = ReadIntString(message)
 
+    LogDebug(string.format(
+        "ApplySnapshot recv terminal=%s db=%s serial=%d entries=%d amount=%d payload=%d sub=%s",
+        tostring(terminalId),
+        tostring(databaseId),
+        tonumber(serial or 0),
+        tonumber(totalEntries or 0),
+        tonumber(totalAmount or 0),
+        tonumber(payloadCount or 0),
+        tostring(DBClient.State.subscribedTerminalId)))
+
     if DBClient.State.subscribedTerminalId ~= "" and terminalId ~= DBClient.State.subscribedTerminalId then
+        LogDebug(string.format(
+            "ApplySnapshot ignored terminal mismatch incoming=%s subscribed=%s",
+            tostring(terminalId),
+            tostring(DBClient.State.subscribedTerminalId)))
         return
     end
 
@@ -1044,6 +1210,17 @@ local function ApplyDelta(message)
     local totalAmount = ReadIntString(message)
     local removedCount = ReadIntString(message)
 
+    LogDebug(string.format(
+        "ApplyDelta recv terminal=%s db=%s serial=%d localSerial=%d removed=%d entries=%d amount=%d sub=%s",
+        tostring(terminalId),
+        tostring(databaseId),
+        tonumber(serial or 0),
+        tonumber(DBClient.State.serial or 0),
+        tonumber(removedCount or 0),
+        tonumber(totalEntries or 0),
+        tonumber(totalAmount or 0),
+        tostring(DBClient.State.subscribedTerminalId)))
+
     if DBClient.State.subscribedTerminalId ~= "" and terminalId ~= DBClient.State.subscribedTerminalId then
         for i = 1, math.max(0, removedCount) do
             message.ReadString()
@@ -1052,6 +1229,10 @@ local function ApplyDelta(message)
         for i = 1, math.max(0, ignoreUpserts) do
             ReadEntry(message)
         end
+        LogDebug(string.format(
+            "ApplyDelta ignored terminal mismatch incoming=%s subscribed=%s",
+            tostring(terminalId),
+            tostring(DBClient.State.subscribedTerminalId)))
         return
     end
 
@@ -1063,6 +1244,10 @@ local function ApplyDelta(message)
         for i = 1, math.max(0, ignoreUpserts) do
             ReadEntry(message)
         end
+        LogDebug(string.format(
+            "ApplyDelta ignored stale serial incoming=%d local=%d",
+            tonumber(serial or 0),
+            tonumber(DBClient.State.serial or 0)))
         return
     end
 
@@ -1084,6 +1269,7 @@ local function ApplyDelta(message)
             terminalId,
             DBClient.State.serial,
             serial))
+        LogDebug("ApplyDelta gap path consumed payload and triggered resubscribe.")
         return
     end
 
@@ -1151,6 +1337,10 @@ DBClient.SearchBox.ToolTip = L("dbiotest.ui.search.tooltip", "Search by name or 
 DBClient.SearchBox.OnTextChangedDelegate = function(textBox)
     DBClient.State.searchText = textBox.Text or ""
     DBClient.State.dirty = true
+    LogDebugThrottled(
+        "ui-search-changed",
+        0.2,
+        "Search text changed: '" .. tostring(DBClient.State.searchText) .. "'")
 end
 
 DBClient.SortDropDown = GUI.DropDown(
@@ -1168,6 +1358,7 @@ DBClient.SortDropDown.AddItem(L("dbiotest.ui.sort.countasc", "Count Low-High"), 
 DBClient.SortDropDown.OnSelected = function(_, obj)
     DBClient.State.sortMode = tostring(obj or "name_asc")
     DBClient.State.dirty = true
+    LogDebug("Sort mode changed: " .. tostring(DBClient.State.sortMode))
 end
 
 DBClient.RefreshButton = GUI.Button(
@@ -1178,6 +1369,7 @@ DBClient.RefreshButton = GUI.Button(
 )
 DBClient.RefreshButton.RectTransform.AbsoluteOffset = Point(12, 75)
 DBClient.RefreshButton.OnClicked = function()
+    LogDebug("Refresh button clicked.")
     if DBClient.State.activeTerminal ~= nil then
         SendSubscribe(DBClient.State.activeTerminal, true)
     end
@@ -1303,6 +1495,10 @@ local function RedrawList()
                 end
 
                 button.OnClicked = function()
+                    LogDebug(string.format(
+                        "UI take click identifier=%s amount=%d",
+                        tostring(entry.identifier or ""),
+                        tonumber(entry.amount or 0)))
                     RequestTake(entry)
                     return true
                 end
@@ -1323,10 +1519,12 @@ end
 Hook.Patch("Barotrauma.GameScreen", "AddToGUIUpdateList", function()
     DBClient.Root.AddToGUIUpdateList(false, 1)
 end)
+LogDebug("Hook.Patch registered: Barotrauma.GameScreen.AddToGUIUpdateList")
 
 Hook.Patch("Barotrauma.NetLobbyScreen", "AddToGUIUpdateList", function()
     DBClient.Root.AddToGUIUpdateList(false, 1)
 end)
+LogDebug("Hook.Patch registered: Barotrauma.NetLobbyScreen.AddToGUIUpdateList")
 
 Hook.Add("think", "DBIOTEST_ClientTerminalUiThink", function()
     local thinkStartedAt = Now()
@@ -1340,6 +1538,7 @@ Hook.Add("think", "DBIOTEST_ClientTerminalUiThink", function()
             SendUnsubscribe()
             ResetViewState(true)
         end
+        LogDebugThrottled("think-no-session", 1.0, "Think state=no_session panel hidden")
         LogPerf("think", thinkStartedAt, "state=no_session")
         return
     end
@@ -1362,6 +1561,10 @@ Hook.Add("think", "DBIOTEST_ClientTerminalUiThink", function()
             local activeLostAgo = now - (DBClient.State.lastActiveSeenAt or 0)
             if activeLostAgo < ActiveTerminalKeepAliveSeconds then
                 DBClient.Panel.Visible = true
+                LogDebugThrottled(
+                    "think-keepalive",
+                    0.6,
+                    string.format("Think keepalive activeLostAgo=%.2f", activeLostAgo))
                 LogPerf("think", thinkStartedAt, "state=keepalive")
                 return
             end
@@ -1378,6 +1581,7 @@ Hook.Add("think", "DBIOTEST_ClientTerminalUiThink", function()
                     activeLostAgo))
         end
         DBClient.Panel.Visible = false
+        LogDebugThrottled("think-no-terminal", 0.8, "Think state=no_terminal panel hidden")
         LogPerf("think", thinkStartedAt, "state=no_terminal")
         return
     end
@@ -1401,6 +1605,12 @@ Hook.Add("think", "DBIOTEST_ClientTerminalUiThink", function()
                 previousId,
                 GetTerminalId(terminal),
                 tostring(terminalSource or "unknown")))
+        LogDebug(string.format(
+            "Terminal switched prev=%s next=%s source=%s db=%s",
+            tostring(previousId),
+            tostring(GetTerminalId(terminal)),
+            tostring(terminalSource or "unknown"),
+            tostring(DBClient.State.databaseId or "default")))
     end
 
     if not Game.IsMultiplayer then
@@ -1425,10 +1635,18 @@ Hook.Add("think", "DBIOTEST_ClientTerminalUiThink", function()
                 DBClient.State.totalAmount = totalAmount
                 DBClient.State.serial = DBClient.State.serial + 1
                 DBClient.State.dirty = true
+                LogDebug(string.format(
+                    "LocalSync changed serial=%d entries=%d amount=%d",
+                    tonumber(DBClient.State.serial or 0),
+                    tonumber(totalEntries or 0),
+                    tonumber(totalAmount or 0)))
+            else
+                LogDebugThrottled("localsync-unchanged", 0.8, "LocalSync unchanged.")
             end
         end
     else
         if DBClient.State.awaitingSnapshot and (Now() - (DBClient.State.lastSubscribeAt or 0)) > 1.2 then
+            LogDebug("Snapshot timeout; resubscribe requested.")
             SendSubscribe(terminal, true)
         end
     end
@@ -1442,14 +1660,19 @@ Hook.Add("think", "DBIOTEST_ClientTerminalUiThink", function()
     end
     LogPerf("think", thinkStartedAt, "state=active")
 end)
+LogDebug("Hook.Add registered: DBIOTEST_ClientTerminalUiThink")
 
 Networking.Receive(DBClient.NetViewSnapshot, function(message)
+    LogDebug("Networking.Receive snapshot packet.")
     ApplySnapshot(message)
 end)
+LogDebug("Networking.Receive registered: " .. tostring(DBClient.NetViewSnapshot))
 
 Networking.Receive(DBClient.NetViewDelta, function(message)
+    LogDebug("Networking.Receive delta packet.")
     ApplyDelta(message)
 end)
+LogDebug("Networking.Receive registered: " .. tostring(DBClient.NetViewDelta))
 
 Networking.Receive(DBClient.NetTakeResult, function(message)
     local success = message.ReadBoolean()
@@ -1464,5 +1687,11 @@ Networking.Receive(DBClient.NetTakeResult, function(message)
     if success and DBClient.State.activeTerminal ~= nil then
         SendSubscribe(DBClient.State.activeTerminal, true)
     end
+    LogDebug(string.format(
+        "TakeResult success=%s text='%s' activeTerminal=%s",
+        tostring(success == true),
+        tostring(text or ""),
+        tostring(GetActiveTerminalId())))
     DBClient.State.dirty = true
 end)
+LogDebug("Networking.Receive registered: " .. tostring(DBClient.NetTakeResult))

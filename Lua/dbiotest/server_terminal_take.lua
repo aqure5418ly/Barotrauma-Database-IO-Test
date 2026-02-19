@@ -15,10 +15,65 @@ DBServer.NextPerfLogAt = DBServer.NextPerfLogAt or 0
 DBServer.NextSnapshotDiagAt = DBServer.NextSnapshotDiagAt or 0
 local PerfLogCooldown = 0.8
 local PerfSyncWarnMs = 8.0
+local ForceLuaDebugLog = true
+local LoggerBridgeMissingPrinted = false
 
-local function TryWriteFileLog(line)
+local function TryWriteFileLog(level, line)
     local text = tostring(line or "")
     local wrote = false
+
+    local function TryLogger(logger)
+        if logger == nil then
+            return false
+        end
+
+        local mode = tostring(level or "info")
+        if mode == "debug" then
+            local okPreferred = pcall(function()
+                logger.WriteLuaServerDebug(text)
+            end)
+            if okPreferred then
+                return true
+            end
+
+            local okFallbackDebug = pcall(function()
+                logger.WriteDebug("LuaServer", text)
+            end)
+            if okFallbackDebug then
+                return true
+            end
+
+            if ForceLuaDebugLog then
+                local okDebugToInfo = pcall(function()
+                    logger.WriteLuaServer("[DBG->INFO] " .. text)
+                end)
+                if okDebugToInfo then
+                    return true
+                end
+
+                local okFallbackInfo = pcall(function()
+                    logger.Write("LuaServer", "[DBG->INFO] " .. text)
+                end)
+                if okFallbackInfo then
+                    return true
+                end
+            end
+
+            return false
+        end
+
+        local okPreferred = pcall(function()
+            logger.WriteLuaServer(text)
+        end)
+        if okPreferred then
+            return true
+        end
+
+        local okFallback = pcall(function()
+            logger.Write("LuaServer", text)
+        end)
+        return okFallback
+    end
 
     pcall(function()
         if wrote then
@@ -28,12 +83,7 @@ local function TryWriteFileLog(line)
             DatabaseIOTest.Services ~= nil and
             DatabaseIOTest.Services.ModFileLog ~= nil then
             local logger = DatabaseIOTest.Services.ModFileLog
-            if logger.WriteLuaServer ~= nil then
-                logger.WriteLuaServer(text)
-            else
-                logger.Write("LuaServer", text)
-            end
-            wrote = true
+            wrote = TryLogger(logger)
         end
     end)
 
@@ -46,21 +96,53 @@ local function TryWriteFileLog(line)
             CS.DatabaseIOTest.Services ~= nil and
             CS.DatabaseIOTest.Services.ModFileLog ~= nil then
             local logger = CS.DatabaseIOTest.Services.ModFileLog
-            if logger.WriteLuaServer ~= nil then
-                logger.WriteLuaServer(text)
-            else
-                logger.Write("LuaServer", text)
-            end
-            wrote = true
+            wrote = TryLogger(logger)
         end
     end)
+
+    pcall(function()
+        if wrote then
+            return
+        end
+        if DatabaseIOTestLua ~= nil and DatabaseIOTestLua.AppendLuaFileLogLine ~= nil then
+            local payload = text
+            if tostring(level or "info") == "debug" then
+                payload = "[DBG->INFO] " .. payload
+            end
+            wrote = DatabaseIOTestLua.AppendLuaFileLogLine(payload) == true
+        end
+    end)
+
+    if not wrote and not LoggerBridgeMissingPrinted then
+        LoggerBridgeMissingPrinted = true
+        print("[DBIOTEST][B1][Server][LOGFAIL] Lua file logger unavailable; fallback to print only.")
+    end
+    return wrote
 end
 
 local function Log(line)
     local text = "[DBIOTEST][B1][Server] " .. tostring(line or "")
-    TryWriteFileLog(text)
+    TryWriteFileLog("info", text)
     print(text)
 end
+
+local function LogDebug(line)
+    if not ForceLuaDebugLog then
+        return
+    end
+    local text = "[DBIOTEST][B1][Server][DBG] " .. tostring(line or "")
+    TryWriteFileLog("debug", text)
+end
+
+Log("server_terminal_take loaded; CLIENT=" .. tostring(CLIENT) .. " SERVER=" .. tostring(SERVER))
+LogDebug(string.format(
+    "NetChannels takeReq=%s takeResult=%s sub=%s unsub=%s snapshot=%s delta=%s",
+    tostring(DBServer.NetTakeRequest),
+    tostring(DBServer.NetTakeResult),
+    tostring(DBServer.NetViewSubscribe),
+    tostring(DBServer.NetViewUnsubscribe),
+    tostring(DBServer.NetViewSnapshot),
+    tostring(DBServer.NetViewDelta)))
 
 local function L(key, fallback)
     local value = nil
@@ -84,6 +166,19 @@ local function Now()
     local now = 0
     pcall(function() now = Timer.Time end)
     return now or 0
+end
+
+local function LogDebugThrottled(key, cooldown, line)
+    if not ForceLuaDebugLog then
+        return
+    end
+    local now = Now()
+    local stateKey = "__nextDbgLogAt_" .. tostring(key or "default")
+    if now < (DBServer[stateKey] or 0) then
+        return
+    end
+    DBServer[stateKey] = now + (tonumber(cooldown) or 0.6)
+    LogDebug(line)
 end
 
 local function GetItemIdentifier(item)
@@ -511,6 +606,11 @@ local function EnsureSubscription(client, terminal)
     local current = DBServer.Subscriptions[client]
     if current ~= nil and tostring(current.terminalEntityId or "") == terminalId then
         current.terminal = terminal
+        LogDebug(string.format(
+            "EnsureSubscription reused client='%s' terminal=%s db='%s'",
+            tostring(client.Name or "?"),
+            tostring(terminalId),
+            tostring(current.databaseId or "default")))
         return current
     end
 
@@ -545,6 +645,12 @@ local function RemoveSubscription(client, reason)
             tostring(client.Name or "?"),
             tostring(sub.terminalEntityId or ""),
             tostring(reason or "")))
+        LogDebug(string.format(
+            "RemoveSubscription details client='%s' serial=%s forceSnapshot=%s forcePush=%s",
+            tostring(client.Name or "?"),
+            tostring(sub.serial or 0),
+            tostring(sub.forceSnapshot == true),
+            tostring(sub.forcePush == true)))
     end
     DBServer.Subscriptions[client] = nil
 end
@@ -555,11 +661,17 @@ local function FlagTerminalDirty(terminalEntityId)
         return
     end
 
+    local flagged = 0
     for _, sub in pairs(DBServer.Subscriptions) do
         if sub ~= nil and tostring(sub.terminalEntityId or "") == target then
             sub.forcePush = true
+            flagged = flagged + 1
         end
     end
+    LogDebug(string.format(
+        "FlagTerminalDirty terminal=%s flaggedSubscriptions=%d",
+        tostring(target),
+        tonumber(flagged or 0)))
 end
 
 local function SendTakeResult(client, success, text)
@@ -574,6 +686,11 @@ local function SendTakeResult(client, success, text)
     message.WriteBoolean(success == true)
     message.WriteString(text or "")
     Networking.Send(message, client.Connection)
+    LogDebug(string.format(
+        "SendTakeResult client='%s' success=%s text='%s'",
+        tostring(client.Name or "?"),
+        tostring(success == true),
+        tostring(text or "")))
 end
 
 local function MapVirtualTakeError(reason)
@@ -607,27 +724,37 @@ if not runAsServerAuthority then
 end
 
 if not runAsServerAuthority then
+    LogDebug("server_terminal_take exiting: runAsServerAuthority=false")
     return
 end
 
 if DBServer.__loadedServer == true then
+    LogDebug("server_terminal_take already loaded; duplicate bootstrap ignored.")
     return
 end
 DBServer.__loadedServer = true
+LogDebug("server_terminal_take server authority active; handlers will register.")
 
 Networking.Receive(DBServer.NetViewSubscribe, function(message, client)
     if client == nil or client.Character == nil then
+        LogDebug("NetViewSubscribe ignored: client or character is nil.")
         return
     end
 
     local terminalEntityId = tostring(message.ReadString() or "")
+    LogDebug(string.format(
+        "NetViewSubscribe recv client='%s' terminal=%s",
+        tostring(client.Name or "?"),
+        tostring(terminalEntityId)))
     local terminal = FindItemByEntityId(terminalEntityId)
     if terminal == nil or not IsSessionTerminal(terminal) then
+        LogDebug("NetViewSubscribe rejected: terminal invalid or not session terminal.")
         RemoveSubscription(client, "invalid terminal")
         return
     end
 
     if not CharacterCanUseTerminal(client.Character, terminal) then
+        LogDebug("NetViewSubscribe rejected: permission denied.")
         RemoveSubscription(client, "permission denied")
         return
     end
@@ -636,33 +763,53 @@ Networking.Receive(DBServer.NetViewSubscribe, function(message, client)
     if sub ~= nil then
         sub.forceSnapshot = true
         sub.forcePush = true
+        LogDebug("NetViewSubscribe accepted: forceSnapshot/forcePush set.")
     end
 end)
+LogDebug("Networking.Receive registered: " .. tostring(DBServer.NetViewSubscribe))
 
 Networking.Receive(DBServer.NetViewUnsubscribe, function(message, client)
     if client == nil then
+        LogDebug("NetViewUnsubscribe ignored: client nil.")
         return
     end
 
     local terminalEntityId = tostring(message.ReadString() or "")
+    LogDebug(string.format(
+        "NetViewUnsubscribe recv client='%s' terminal=%s",
+        tostring(client.Name or "?"),
+        tostring(terminalEntityId)))
     local sub = DBServer.Subscriptions[client]
     if sub == nil then
+        LogDebug("NetViewUnsubscribe ignored: no active subscription for client.")
         return
     end
 
     if terminalEntityId == "" or tostring(sub.terminalEntityId or "") == terminalEntityId then
         RemoveSubscription(client, "client request")
+    else
+        LogDebug(string.format(
+            "NetViewUnsubscribe ignored: terminal mismatch req=%s sub=%s",
+            tostring(terminalEntityId),
+            tostring(sub.terminalEntityId or "")))
     end
 end)
+LogDebug("Networking.Receive registered: " .. tostring(DBServer.NetViewUnsubscribe))
 
 Networking.Receive(DBServer.NetTakeRequest, function(message, client)
     if client == nil or client.Character == nil then
+        LogDebug("NetTakeRequest ignored: client or character is nil.")
         return
     end
 
     local terminalEntityId = message.ReadString()
     local wantedIdentifier = message.ReadString()
     local character = client.Character
+    LogDebug(string.format(
+        "NetTakeRequest recv client='%s' terminal=%s wanted=%s",
+        tostring(client.Name or "?"),
+        tostring(terminalEntityId or ""),
+        tostring(wantedIdentifier or "")))
 
     local sub = DBServer.Subscriptions[client]
     local terminal = nil
@@ -677,11 +824,13 @@ Networking.Receive(DBServer.NetTakeRequest, function(message, client)
     end
 
     if terminal == nil or not IsSessionTerminal(terminal) then
+        LogDebug("NetTakeRequest rejected: terminal missing or invalid.")
         SendTakeResult(client, false, L("dbiotest.ui.take.invalidterminal", "Terminal session not found."))
         return
     end
 
     if not CharacterCanUseTerminal(character, terminal) then
+        LogDebug("NetTakeRequest rejected: permission denied.")
         SendTakeResult(client, false, L("dbiotest.ui.take.denied", "You are not allowed to use this terminal."))
         return
     end
@@ -693,19 +842,23 @@ Networking.Receive(DBServer.NetTakeRequest, function(message, client)
         end)
         if okCall then
             if tostring(reason or "") ~= "" then
+                LogDebug("NetTakeRequest failed by virtual API reason='" .. tostring(reason) .. "'")
                 SendTakeResult(client, false, MapVirtualTakeError(reason))
                 return
             end
 
             SendTakeResult(client, true, L("dbiotest.ui.take.success", "Item moved to terminal buffer."))
             FlagTerminalDirty(terminalEntityId)
+            LogDebug("NetTakeRequest succeeded and flagged terminal dirty.")
             return
         end
         Log("Virtual take API failed: " .. tostring(reason))
+        LogDebug("NetTakeRequest virtual API threw exception.")
     end
 
     SendTakeResult(client, false, L("dbiotest.ui.take.notready", "Terminal API is not ready."))
 end)
+LogDebug("Networking.Receive registered: " .. tostring(DBServer.NetTakeRequest))
 
 Hook.Add("think", "DBIOTEST_ServerViewSyncThink", function()
     local now = Now()
@@ -721,6 +874,15 @@ Hook.Add("think", "DBIOTEST_ServerViewSyncThink", function()
     local snapshotCount = 0
     local deltaCount = 0
     local fallbackLookupCount = 0
+    LogDebugThrottled("server-sync-loop", 1.2, string.format(
+        "SyncThink loop begin subCount=%d",
+        tonumber((function()
+            local c = 0
+            for _ in pairs(DBServer.Subscriptions) do
+                c = c + 1
+            end
+            return c
+        end)())))
 
     for client, sub in pairs(DBServer.Subscriptions) do
         subCount = subCount + 1
@@ -750,6 +912,10 @@ Hook.Add("think", "DBIOTEST_ServerViewSyncThink", function()
 
         if removeReason ~= nil then
             table.insert(toRemove, { client = client, reason = removeReason })
+            LogDebug(string.format(
+                "SyncThink mark remove client='%s' reason='%s'",
+                tostring(client ~= nil and client.Name or "?"),
+                tostring(removeReason or "")))
         else
             processedCount = processedCount + 1
             local entries, totalEntries, totalAmount = BuildEntryMap(terminal)
@@ -772,6 +938,15 @@ Hook.Add("think", "DBIOTEST_ServerViewSyncThink", function()
                 sub.lastTotalAmount = totalAmount
                 sub.forceSnapshot = false
                 sub.forcePush = false
+            else
+                LogDebugThrottled(
+                    "server-sync-unchanged-" .. tostring(sub.terminalEntityId or ""),
+                    0.7,
+                    string.format(
+                        "SyncThink unchanged client='%s' terminal=%s serial=%s",
+                        tostring(client ~= nil and client.Name or "?"),
+                        tostring(sub.terminalEntityId or ""),
+                        tostring(sub.serial or 0)))
             end
         end
     end
@@ -794,14 +969,32 @@ Hook.Add("think", "DBIOTEST_ServerViewSyncThink", function()
             deltaCount,
             fallbackLookupCount))
     end
+
+    LogDebugThrottled(
+        "server-sync-summary",
+        0.9,
+        string.format(
+            "SyncThink summary %.2fms subs=%d processed=%d removed=%d snapshots=%d deltas=%d fallback=%d",
+            elapsedMs,
+            subCount,
+            processedCount,
+            #toRemove,
+            snapshotCount,
+            deltaCount,
+            fallbackLookupCount))
 end)
+LogDebug("Hook.Add registered: DBIOTEST_ServerViewSyncThink")
 
 Hook.Add("roundEnd", "DBIOTEST_ServerViewRoundEnd", function()
     DBServer.Subscriptions = {}
     DBServer.NextPerfLogAt = 0
+    LogDebug("Hook roundEnd: cleared subscriptions.")
 end)
+LogDebug("Hook.Add registered: DBIOTEST_ServerViewRoundEnd")
 
 Hook.Add("stop", "DBIOTEST_ServerViewStop", function()
     DBServer.Subscriptions = {}
     DBServer.NextPerfLogAt = 0
+    LogDebug("Hook stop: cleared subscriptions.")
 end)
+LogDebug("Hook.Add registered: DBIOTEST_ServerViewStop")
