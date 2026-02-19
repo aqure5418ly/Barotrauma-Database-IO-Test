@@ -43,8 +43,31 @@ local PerfThinkWarnMs = 10.0
 local PerfBuildWarnMs = 6.0
 local PerfRedrawWarnMs = 6.0
 
+local function TryWriteFileLog(line)
+    local text = tostring(line or "")
+    pcall(function()
+        if DatabaseIOTest ~= nil and
+            DatabaseIOTest.Services ~= nil and
+            DatabaseIOTest.Services.ModFileLog ~= nil then
+            DatabaseIOTest.Services.ModFileLog.Write("LuaClient", text)
+            return
+        end
+    end)
+    pcall(function()
+        if CS ~= nil and
+            CS.DatabaseIOTest ~= nil and
+            CS.DatabaseIOTest.Services ~= nil and
+            CS.DatabaseIOTest.Services.ModFileLog ~= nil then
+            CS.DatabaseIOTest.Services.ModFileLog.Write("LuaClient", text)
+            return
+        end
+    end)
+end
+
 local function Log(line)
-    print("[DBIOTEST][B1][Client] " .. tostring(line or ""))
+    local text = "[DBIOTEST][B1][Client] " .. tostring(line or "")
+    TryWriteFileLog(text)
+    print(text)
 end
 
 if not CLIENT then

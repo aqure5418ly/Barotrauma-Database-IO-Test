@@ -191,6 +191,9 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private const double TerminalUpdatePerfWarnMs = 8.0;
     private const double TerminalUpdatePerfLogCooldownSeconds = 0.8;
     private double _nextUpdatePerfLogAt;
+    private const double TerminalUpdateStageWarnMs = 12.0;
+    private const double TerminalUpdateStageLogCooldownSeconds = 0.8;
+    private double _nextUpdateStageLogAt;
     private const double VirtualViewDiagCooldownSeconds = 0.85;
     private double _nextVirtualViewDiagAt;
 
@@ -266,6 +269,16 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             perfStartTicks = Stopwatch.GetTimestamp();
         }
 
+        double autoCloseMs = 0;
+        double flushIdleMs = 0;
+        double xmlActionMs = 0;
+        double pageFillMs = 0;
+        double pendingSyncMs = 0;
+        double summaryMs = 0;
+        double descMs = 0;
+        double syncMs = 0;
+        long stageStartTicks = perfStartTicks;
+
 #if CLIENT
         if (EnableCsPanelOverlay)
         {
@@ -292,22 +305,70 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                 CloseSessionInPlace("timeout or invalid owner");
             }
         }
+        if (stageStartTicks != 0)
+        {
+            long nowTicks = Stopwatch.GetTimestamp();
+            autoCloseMs = (nowTicks - stageStartTicks) * 1000.0 / Stopwatch.Frequency;
+            stageStartTicks = nowTicks;
+        }
 
         // In-place terminals remain as one item. If someone inserts items while session is closed,
         // immediately return those items so they cannot be silently cleared on open.
         FlushIdleInventoryItems();
+        if (stageStartTicks != 0)
+        {
+            long nowTicks = Stopwatch.GetTimestamp();
+            flushIdleMs = (nowTicks - stageStartTicks) * 1000.0 / Stopwatch.Frequency;
+            stageStartTicks = nowTicks;
+        }
 
         ConsumeXmlActionRequest();
+        if (stageStartTicks != 0)
+        {
+            long nowTicks = Stopwatch.GetTimestamp();
+            xmlActionMs = (nowTicks - stageStartTicks) * 1000.0 / Stopwatch.Frequency;
+            stageStartTicks = nowTicks;
+        }
         TryRunPendingPageFillCheck();
+        if (stageStartTicks != 0)
+        {
+            long nowTicks = Stopwatch.GetTimestamp();
+            pageFillMs = (nowTicks - stageStartTicks) * 1000.0 / Stopwatch.Frequency;
+            stageStartTicks = nowTicks;
+        }
 
         if (_pendingSummarySync && Timing.TotalTime >= _nextPendingSummarySyncAt)
         {
             TrySyncSummary(force: true);
         }
+        if (stageStartTicks != 0)
+        {
+            long nowTicks = Stopwatch.GetTimestamp();
+            pendingSyncMs = (nowTicks - stageStartTicks) * 1000.0 / Stopwatch.Frequency;
+            stageStartTicks = nowTicks;
+        }
 
         UpdateSummaryFromStore();
+        if (stageStartTicks != 0)
+        {
+            long nowTicks = Stopwatch.GetTimestamp();
+            summaryMs = (nowTicks - stageStartTicks) * 1000.0 / Stopwatch.Frequency;
+            stageStartTicks = nowTicks;
+        }
         UpdateDescriptionLocal();
+        if (stageStartTicks != 0)
+        {
+            long nowTicks = Stopwatch.GetTimestamp();
+            descMs = (nowTicks - stageStartTicks) * 1000.0 / Stopwatch.Frequency;
+            stageStartTicks = nowTicks;
+        }
         TrySyncSummary();
+        if (stageStartTicks != 0)
+        {
+            long nowTicks = Stopwatch.GetTimestamp();
+            syncMs = (nowTicks - stageStartTicks) * 1000.0 / Stopwatch.Frequency;
+            stageStartTicks = nowTicks;
+        }
 
         if (perfStartTicks != 0)
         {
@@ -321,6 +382,18 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                     $"session={IsSessionActive()} inPlace={_inPlaceSessionActive} owner={(_sessionOwner != null ? _sessionOwner.Name : "none")} " +
                     $"entries={_sessionEntries.Count} page={Math.Max(1, _sessionCurrentPageIndex + 1)}/{Math.Max(1, _sessionPages.Count)} " +
                     $"pendingSummary={_pendingSummarySync}");
+            }
+
+            if (elapsedMs >= TerminalUpdateStageWarnMs && Timing.TotalTime >= _nextUpdateStageLogAt)
+            {
+                _nextUpdateStageLogAt = Timing.TotalTime + TerminalUpdateStageLogCooldownSeconds;
+                ModFileLog.Write(
+                    "Perf",
+                    $"{Constants.LogPrefix} TerminalUpdateStage id={item?.ID} db='{_resolvedDatabaseId}' totalMs={elapsedMs:0.###} " +
+                    $"autoCloseMs={autoCloseMs:0.###} flushIdleMs={flushIdleMs:0.###} xmlActionMs={xmlActionMs:0.###} " +
+                    $"pageFillMs={pageFillMs:0.###} pendingSyncMs={pendingSyncMs:0.###} summaryMs={summaryMs:0.###} " +
+                    $"descMs={descMs:0.###} syncMs={syncMs:0.###} session={IsSessionActive()} inPlace={_inPlaceSessionActive} " +
+                    $"owner={(_sessionOwner != null ? _sessionOwner.Name : "none")}");
             }
         }
     }
@@ -510,7 +583,6 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (!sessionActive)
         {
             if (ModFileLog.IsDebugEnabled &&
-                _cachedSessionOpen &&
                 Timing.TotalTime >= _nextVirtualViewDiagAt)
             {
                 _nextVirtualViewDiagAt = Timing.TotalTime + VirtualViewDiagCooldownSeconds;
@@ -575,8 +647,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     {
         bool open = IsSessionActive() || _cachedSessionOpen;
         if (ModFileLog.IsDebugEnabled &&
-            Timing.TotalTime >= _nextVirtualViewDiagAt &&
-            (open || _cachedSessionOpen))
+            Timing.TotalTime >= _nextVirtualViewDiagAt)
         {
             _nextVirtualViewDiagAt = Timing.TotalTime + VirtualViewDiagCooldownSeconds;
             ModFileLog.Write(
@@ -1047,8 +1118,16 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             return true;
         }
 
-        if (action != TerminalPanelAction.CloseSession && !HasRequiredPower()) { return false; }
-        if (Timing.TotalTime < _nextPanelActionAllowedTime) { return false; }
+        if (action != TerminalPanelAction.CloseSession && !HasRequiredPower())
+        {
+            LogFixedTerminal($"{action} rejected: no power id={item?.ID} voltage={GetCurrentVoltage():0.##}");
+            return false;
+        }
+        if (Timing.TotalTime < _nextPanelActionAllowedTime)
+        {
+            LogFixedTerminal($"{action} rejected: cooldown id={item?.ID}");
+            return false;
+        }
 
         if (!IsSessionActive())
         {
@@ -1064,10 +1143,19 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             {
                 _nextPanelActionAllowedTime = Timing.TotalTime + PanelActionCooldownSeconds;
             }
+            else if (action == TerminalPanelAction.CloseSession)
+            {
+                LogFixedTerminal($"close rejected: no active session id={item?.ID}");
+            }
             return closedApplied;
         }
 
-        if (!CanCharacterControlSession(actor)) { return false; }
+        if (!CanCharacterControlSession(actor))
+        {
+            LogFixedTerminal(
+                $"{action} rejected: owner mismatch id={item?.ID} owner={_sessionOwner?.Name ?? "none"} actor={actor?.Name ?? "none"}");
+            return false;
+        }
 
         bool applied;
         switch (action)
@@ -1096,6 +1184,8 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             case TerminalPanelAction.CloseSession:
                 if (Timing.TotalTime - _sessionOpenedAt < MinSessionDurationBeforeClose)
                 {
+                    LogFixedTerminal(
+                        $"close rejected: min duration id={item?.ID} openFor={(Timing.TotalTime - _sessionOpenedAt):0.###}");
                     applied = false;
                     break;
                 }
@@ -1117,6 +1207,10 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (applied)
         {
             _nextPanelActionAllowedTime = Timing.TotalTime + PanelActionCooldownSeconds;
+        }
+        else if (action == TerminalPanelAction.CloseSession)
+        {
+            LogFixedTerminal($"close rejected: generic id={item?.ID} session={IsSessionActive()} owner={_sessionOwner?.Name ?? "none"}");
         }
 
         return applied;
@@ -1160,10 +1254,32 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             return;
         }
 
+        if (actor == null || actor.Removed || actor.IsDead)
+        {
+            actor = Character.Controlled;
+        }
+        if (actor == null || actor.Removed || actor.IsDead)
+        {
+            actor = item?.ParentInventory?.Owner as Character;
+        }
+        if (action != TerminalPanelAction.OpenSession &&
+            action != TerminalPanelAction.ForceOpenSession &&
+            _sessionOwner == null &&
+            actor != null &&
+            !actor.Removed &&
+            !actor.IsDead)
+        {
+            _sessionOwner = actor;
+            ModFileLog.Write(
+                "Panel",
+                $"{Constants.LogPrefix} XML action adopted session owner '{actor.Name}' db='{_resolvedDatabaseId}' itemId={item?.ID}");
+        }
+
         bool applied = HandlePanelActionServer(action, actor);
         ModFileLog.Write(
             "Panel",
-            $"{Constants.LogPrefix} XML action consumed: {action} applied={applied} db='{_resolvedDatabaseId}' page={Math.Max(1, _cachedPageIndex)}/{Math.Max(1, _cachedPageTotal)} itemId={item?.ID}");
+            $"{Constants.LogPrefix} XML action consumed: {action} applied={applied} actor='{actor?.Name ?? "none"}' owner='{_sessionOwner?.Name ?? "none"}' " +
+            $"db='{_resolvedDatabaseId}' page={Math.Max(1, _cachedPageIndex)}/{Math.Max(1, _cachedPageTotal)} itemId={item?.ID}");
     }
 
     private bool TryHandleLockedOpen(Character actor, bool forceTakeover)
