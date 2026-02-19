@@ -12,6 +12,7 @@ DBServer.NetViewDelta = "DBIOTEST_ViewDelta"
 DBServer.Subscriptions = DBServer.Subscriptions or {}
 DBServer.NextViewSyncAt = DBServer.NextViewSyncAt or 0
 DBServer.NextPerfLogAt = DBServer.NextPerfLogAt or 0
+DBServer.NextSnapshotDiagAt = DBServer.NextSnapshotDiagAt or 0
 local PerfLogCooldown = 0.8
 local PerfSyncWarnMs = 8.0
 
@@ -180,6 +181,69 @@ local function GetTerminalComponent(terminal)
     return component
 end
 
+local function ForEachVirtualRow(rows, callback)
+    if rows == nil then
+        return false, 0, "rows_nil"
+    end
+
+    local indexedCount = nil
+    pcall(function() indexedCount = tonumber(rows.Count) end)
+    if indexedCount == nil then
+        pcall(function() indexedCount = tonumber(rows.Length) end)
+    end
+    if indexedCount ~= nil and indexedCount >= 0 then
+        local iterated = 0
+        local okIndexed = pcall(function()
+            for i = 0, indexedCount - 1 do
+                local row = nil
+                pcall(function() row = rows[i] end)
+                if row == nil then
+                    pcall(function() row = rows.get_Item(i) end)
+                end
+                if row ~= nil then
+                    iterated = iterated + 1
+                    callback(row)
+                end
+            end
+        end)
+        if okIndexed then
+            return true, iterated, "indexed"
+        end
+    end
+
+    local iterated = 0
+    local okIterator = pcall(function()
+        for row in rows do
+            if row ~= nil then
+                iterated = iterated + 1
+                callback(row)
+            end
+        end
+    end)
+    if okIterator then
+        return true, iterated, "iterator"
+    end
+
+    iterated = 0
+    local okEnumerator = pcall(function()
+        local enumerator = rows.GetEnumerator()
+        if enumerator ~= nil then
+            while enumerator.MoveNext() do
+                local row = enumerator.Current
+                if row ~= nil then
+                    iterated = iterated + 1
+                    callback(row)
+                end
+            end
+        end
+    end)
+    if okEnumerator then
+        return true, iterated, "enumerator"
+    end
+
+    return false, 0, "iteration_failed"
+end
+
 local function BuildEntryMapFromComponent(terminal)
     local component = GetTerminalComponent(terminal)
     if component == nil then
@@ -198,31 +262,47 @@ local function BuildEntryMapFromComponent(terminal)
     local totalEntries = 0
     local totalAmount = 0
 
-    local iterOk = pcall(function()
-        for row in rows do
-            if row ~= nil then
-                local identifier = tostring(row.Identifier or "")
-                local key = NormalizeIdentifier(identifier)
-                if key ~= "" then
-                    local amount = math.max(0, math.floor(tonumber(row.Amount) or 0))
-                    map[key] = {
-                        key = key,
-                        identifier = identifier,
-                        prefabIdentifier = tostring(row.PrefabIdentifier or identifier),
-                        displayName = tostring(row.DisplayName or identifier),
-                        amount = amount,
-                        bestQuality = math.floor(tonumber(row.BestQuality) or 0),
-                        avgCondition = tonumber(row.AverageCondition) or 100.0
-                    }
-                    totalEntries = totalEntries + 1
-                    totalAmount = totalAmount + amount
-                end
-            end
+    local iterOk, rowCount, iterMode = ForEachVirtualRow(rows, function(row)
+        local identifier = tostring(row.Identifier or "")
+        local key = NormalizeIdentifier(identifier)
+        if key ~= "" then
+            local amount = math.max(0, math.floor(tonumber(row.Amount) or 0))
+            map[key] = {
+                key = key,
+                identifier = identifier,
+                prefabIdentifier = tostring(row.PrefabIdentifier or identifier),
+                displayName = tostring(row.DisplayName or identifier),
+                amount = amount,
+                bestQuality = math.floor(tonumber(row.BestQuality) or 0),
+                avgCondition = tonumber(row.AverageCondition) or 100.0
+            }
+            totalEntries = totalEntries + 1
+            totalAmount = totalAmount + amount
         end
     end)
 
     if not iterOk then
+        local now = Now()
+        if now >= (DBServer.NextSnapshotDiagAt or 0) then
+            DBServer.NextSnapshotDiagAt = now + 0.9
+            Log(string.format(
+                "BuildEntryMapFromComponent FAILED terminal=%s mode=%s",
+                tostring(terminal and terminal.ID or "none"),
+                tostring(iterMode or "unknown")))
+        end
         return nil
+    end
+
+    local now = Now()
+    if now >= (DBServer.NextSnapshotDiagAt or 0) then
+        DBServer.NextSnapshotDiagAt = now + 0.9
+        Log(string.format(
+            "BuildEntryMapFromComponent terminal=%s mode=%s rowCount=%d entries=%d amount=%d",
+            tostring(terminal and terminal.ID or "none"),
+            tostring(iterMode or "?"),
+            tonumber(rowCount or 0),
+            tonumber(totalEntries or 0),
+            tonumber(totalAmount or 0)))
     end
 
     return map, totalEntries, totalAmount

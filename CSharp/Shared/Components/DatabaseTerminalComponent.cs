@@ -191,6 +191,8 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private const double TerminalUpdatePerfWarnMs = 8.0;
     private const double TerminalUpdatePerfLogCooldownSeconds = 0.8;
     private double _nextUpdatePerfLogAt;
+    private const double VirtualViewDiagCooldownSeconds = 0.85;
+    private double _nextVirtualViewDiagAt;
 
     private static readonly PropertyInfo ItemFullyInitializedProperty =
         typeof(Item).GetProperty("FullyInitialized", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
@@ -504,8 +506,20 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     public List<TerminalVirtualEntry> GetVirtualViewSnapshot(bool refreshCurrentPage = true)
     {
         var snapshot = new List<TerminalVirtualEntry>();
-        if (!IsSessionActive())
+        bool sessionActive = IsSessionActive();
+        if (!sessionActive)
         {
+            if (ModFileLog.IsDebugEnabled &&
+                _cachedSessionOpen &&
+                Timing.TotalTime >= _nextVirtualViewDiagAt)
+            {
+                _nextVirtualViewDiagAt = Timing.TotalTime + VirtualViewDiagCooldownSeconds;
+                ModFileLog.Write(
+                    "Terminal",
+                    $"{Constants.LogPrefix} VirtualViewSnapshot empty id={item?.ID} db='{_resolvedDatabaseId}' " +
+                    $"sessionActive={sessionActive} cachedOpen={_cachedSessionOpen} " +
+                    $"inPlace={_inPlaceSessionActive} sessionVariant={SessionVariant} sessionEntries={_sessionEntries.Count}");
+            }
             return snapshot;
         }
 
@@ -544,12 +558,34 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         snapshot.AddRange(grouped.Values
             .OrderBy(v => v.Identifier ?? "", StringComparer.OrdinalIgnoreCase));
+        if (ModFileLog.IsDebugEnabled && Timing.TotalTime >= _nextVirtualViewDiagAt)
+        {
+            _nextVirtualViewDiagAt = Timing.TotalTime + VirtualViewDiagCooldownSeconds;
+            ModFileLog.Write(
+                "Terminal",
+                $"{Constants.LogPrefix} VirtualViewSnapshot id={item?.ID} db='{_resolvedDatabaseId}' " +
+                $"snapshotEntries={snapshot.Count} sessionEntries={_sessionEntries.Count} " +
+                $"sessionActive={sessionActive} cachedOpen={_cachedSessionOpen} " +
+                $"inPlace={_inPlaceSessionActive} sessionVariant={SessionVariant}");
+        }
         return snapshot;
     }
 
     public bool IsVirtualSessionOpenForUi()
     {
-        return IsSessionActive() || _cachedSessionOpen;
+        bool open = IsSessionActive() || _cachedSessionOpen;
+        if (ModFileLog.IsDebugEnabled &&
+            Timing.TotalTime >= _nextVirtualViewDiagAt &&
+            (open || _cachedSessionOpen))
+        {
+            _nextVirtualViewDiagAt = Timing.TotalTime + VirtualViewDiagCooldownSeconds;
+            ModFileLog.Write(
+                "Terminal",
+                $"{Constants.LogPrefix} VirtualUiOpenState id={item?.ID} db='{_resolvedDatabaseId}' " +
+                $"open={open} sessionActive={IsSessionActive()} cachedOpen={_cachedSessionOpen} " +
+                $"inPlace={_inPlaceSessionActive} sessionVariant={SessionVariant}");
+        }
+        return open;
     }
 
     public string TryTakeOneByIdentifierFromVirtualSession(string identifier, Character actor)

@@ -35,6 +35,9 @@ DBClient.IconCache = DBClient.IconCache or {}
 local EnableNearbyTerminalScan = false
 local NearbyTerminalScanInterval = 1.0
 local NearbyTerminalScanDistance = 220
+local NearbyOpenFixedScanInterval = 0.65
+local TerminalLostGraceSeconds = 0.18
+local ActiveTerminalKeepAliveSeconds = 0.85
 local PerfLogCooldown = 0.8
 local PerfThinkWarnMs = 10.0
 local PerfBuildWarnMs = 6.0
@@ -68,6 +71,16 @@ local function Now()
     return t or 0
 end
 
+local function LogThrottled(key, cooldown, line)
+    local now = Now()
+    local stateKey = "__nextLogAt_" .. tostring(key or "default")
+    if now < (DBClient.State[stateKey] or 0) then
+        return
+    end
+    DBClient.State[stateKey] = now + (tonumber(cooldown) or 0.9)
+    Log(line)
+end
+
 local function GetActiveTerminalId()
     local terminal = DBClient.State.activeTerminal
     if terminal == nil or terminal.Removed then
@@ -77,6 +90,18 @@ local function GetActiveTerminalId()
     local id = "none"
     pcall(function()
         id = tostring(terminal.ID)
+    end)
+    return id or "none"
+end
+
+local function GetTerminalId(item)
+    if item == nil or item.Removed then
+        return "none"
+    end
+
+    local id = "none"
+    pcall(function()
+        id = tostring(item.ID)
     end)
     return id or "none"
 end
@@ -184,6 +209,19 @@ local function IsSessionTerminal(item)
     return hasTag == true
 end
 
+local function IsFixedTerminal(item)
+    if item == nil or item.Removed then
+        return false
+    end
+
+    local normalized = NormalizeIdentifier(GetItemIdentifier(item))
+    local hasTag = false
+    pcall(function()
+        hasTag = item.HasTag("database_terminal_fixed")
+    end)
+    return normalized == "databaseterminalfixed" or hasTag == true
+end
+
 local function IsComponentSessionOpenForUi(item)
     if item == nil or item.Removed then
         return false
@@ -212,12 +250,7 @@ local function IsActiveUiTerminal(item)
         return false
     end
 
-    local normalized = NormalizeIdentifier(GetItemIdentifier(item))
-    local isFixedTerminal = false
-    pcall(function()
-        isFixedTerminal = normalized == "databaseterminalfixed" or item.HasTag("database_terminal_fixed")
-    end)
-    if not isFixedTerminal then
+    if not IsFixedTerminal(item) then
         return false
     end
     return IsComponentSessionOpenForUi(item)
@@ -312,6 +345,81 @@ local function FindNearbySessionTerminal(character)
     return best
 end
 
+local function CanCharacterReachTerminal(character, terminal)
+    if character == nil or terminal == nil or terminal.Removed then
+        return false
+    end
+
+    local selected = nil
+    local selectedSecondary = nil
+    pcall(function() selected = character.SelectedItem end)
+    pcall(function() selectedSecondary = character.SelectedSecondaryItem end)
+    if selected == terminal or selectedSecondary == terminal then
+        return true
+    end
+
+    local owner = nil
+    pcall(function()
+        local parentInventory = terminal.ParentInventory
+        if parentInventory ~= nil then
+            owner = parentInventory.Owner
+        end
+    end)
+    if owner == character then
+        return true
+    end
+
+    local closeEnough = false
+    pcall(function()
+        closeEnough = Vector2.Distance(character.WorldPosition, terminal.WorldPosition) <= NearbyTerminalScanDistance
+    end)
+    return closeEnough == true
+end
+
+local function FindNearbyOpenFixedTerminal(character)
+    if character == nil or character.Removed then
+        return nil
+    end
+
+    local now = Now()
+    local cached = DBClient.State.nearbyOpenFixedTerminal
+    if cached ~= nil and
+        not cached.Removed and
+        IsFixedTerminal(cached) and
+        IsComponentSessionOpenForUi(cached) and
+        CanCharacterReachTerminal(character, cached) and
+        (now - (DBClient.State.lastNearbyOpenFixedScanAt or 0)) < NearbyOpenFixedScanInterval then
+        return cached
+    end
+
+    if (now - (DBClient.State.lastNearbyOpenFixedScanAt or 0)) < NearbyOpenFixedScanInterval then
+        return nil
+    end
+
+    DBClient.State.lastNearbyOpenFixedScanAt = now
+    DBClient.State.nearbyOpenFixedTerminal = nil
+
+    local best = nil
+    local bestDistanceSq = NearbyTerminalScanDistance * NearbyTerminalScanDistance
+    pcall(function()
+        for item in Item.ItemList do
+            if item ~= nil and
+                not item.Removed and
+                IsFixedTerminal(item) and
+                IsComponentSessionOpenForUi(item) then
+                local distanceSq = Vector2.DistanceSquared(character.WorldPosition, item.WorldPosition)
+                if distanceSq <= bestDistanceSq then
+                    bestDistanceSq = distanceSq
+                    best = item
+                end
+            end
+        end
+    end)
+
+    DBClient.State.nearbyOpenFixedTerminal = best
+    return best
+end
+
 local function FindHeldSessionTerminal(character)
     if character == nil then
         return nil
@@ -353,6 +461,28 @@ local function FindHeldSessionTerminal(character)
     return nil
 end
 
+local function ResolveUiTerminal(character)
+    local terminal = FindHeldSessionTerminal(character)
+    if terminal ~= nil then
+        return terminal, "held_or_inventory"
+    end
+
+    local active = DBClient.State.activeTerminal
+    if active ~= nil and
+        not active.Removed and
+        IsActiveUiTerminal(active) and
+        CanCharacterReachTerminal(character, active) then
+        return active, "sticky_active"
+    end
+
+    local nearbyOpenFixed = FindNearbyOpenFixedTerminal(character)
+    if nearbyOpenFixed ~= nil then
+        return nearbyOpenFixed, "nearby_open_fixed"
+    end
+
+    return nil, "none"
+end
+
 local function GetTerminalDatabaseId(terminal)
     if terminal == nil then
         return "default"
@@ -385,6 +515,69 @@ local function GetTerminalComponent(terminal)
     return component
 end
 
+local function ForEachVirtualRow(rows, callback)
+    if rows == nil then
+        return false, 0, "rows_nil"
+    end
+
+    local indexedCount = nil
+    pcall(function() indexedCount = tonumber(rows.Count) end)
+    if indexedCount == nil then
+        pcall(function() indexedCount = tonumber(rows.Length) end)
+    end
+    if indexedCount ~= nil and indexedCount >= 0 then
+        local iterated = 0
+        local okIndexed = pcall(function()
+            for i = 0, indexedCount - 1 do
+                local row = nil
+                pcall(function() row = rows[i] end)
+                if row == nil then
+                    pcall(function() row = rows.get_Item(i) end)
+                end
+                if row ~= nil then
+                    iterated = iterated + 1
+                    callback(row)
+                end
+            end
+        end)
+        if okIndexed then
+            return true, iterated, "indexed"
+        end
+    end
+
+    local iterated = 0
+    local okIterator = pcall(function()
+        for row in rows do
+            if row ~= nil then
+                iterated = iterated + 1
+                callback(row)
+            end
+        end
+    end)
+    if okIterator then
+        return true, iterated, "iterator"
+    end
+
+    iterated = 0
+    local okEnumerator = pcall(function()
+        local enumerator = rows.GetEnumerator()
+        if enumerator ~= nil then
+            while enumerator.MoveNext() do
+                local row = enumerator.Current
+                if row ~= nil then
+                    iterated = iterated + 1
+                    callback(row)
+                end
+            end
+        end
+    end)
+    if okEnumerator then
+        return true, iterated, "enumerator"
+    end
+
+    return false, 0, "iteration_failed"
+end
+
 local function BuildLocalEntryMap(terminal)
     local component = GetTerminalComponent(terminal)
     if component ~= nil then
@@ -396,31 +589,50 @@ local function BuildLocalEntryMap(terminal)
             local map = {}
             local totalEntries = 0
             local totalAmount = 0
-            local iterOk = pcall(function()
-                for row in rows do
-                    if row ~= nil then
-                        local identifier = tostring(row.Identifier or "")
-                        local key = NormalizeIdentifier(identifier)
-                        if key ~= "" then
-                            local amount = math.max(0, math.floor(tonumber(row.Amount) or 0))
-                            map[key] = {
-                                key = key,
-                                identifier = identifier,
-                                prefabIdentifier = tostring(row.PrefabIdentifier or identifier),
-                                displayName = tostring(row.DisplayName or identifier),
-                                amount = amount,
-                                bestQuality = math.floor(tonumber(row.BestQuality) or 0),
-                                avgCondition = tonumber(row.AverageCondition) or 100.0
-                            }
-                            totalEntries = totalEntries + 1
-                            totalAmount = totalAmount + amount
-                        end
-                    end
+            local iterOk, rowCount, iterMode = ForEachVirtualRow(rows, function(row)
+                local identifier = tostring(row.Identifier or "")
+                local key = NormalizeIdentifier(identifier)
+                if key ~= "" then
+                    local amount = math.max(0, math.floor(tonumber(row.Amount) or 0))
+                    map[key] = {
+                        key = key,
+                        identifier = identifier,
+                        prefabIdentifier = tostring(row.PrefabIdentifier or identifier),
+                        displayName = tostring(row.DisplayName or identifier),
+                        amount = amount,
+                        bestQuality = math.floor(tonumber(row.BestQuality) or 0),
+                        avgCondition = tonumber(row.AverageCondition) or 100.0
+                    }
+                    totalEntries = totalEntries + 1
+                    totalAmount = totalAmount + amount
                 end
             end)
             if iterOk then
+                LogThrottled(
+                    "localsnapshot",
+                    1.0,
+                    string.format(
+                        "LocalSnapshot terminal=%s mode=%s rowCount=%d entries=%d amount=%d",
+                        GetTerminalId(terminal),
+                        tostring(iterMode or "?"),
+                        tonumber(rowCount or 0),
+                        tonumber(totalEntries or 0),
+                        tonumber(totalAmount or 0)))
                 return map, totalEntries, totalAmount
             end
+
+            local open = false
+            pcall(function()
+                open = component.IsVirtualSessionOpenForUi() == true
+            end)
+            LogThrottled(
+                "localsnapshot-failed",
+                0.8,
+                string.format(
+                    "LocalSnapshot FAILED terminal=%s open=%s mode=%s -> fallback inventory",
+                    GetTerminalId(terminal),
+                    tostring(open == true),
+                    tostring(iterMode or "unknown")))
         end
     end
 
@@ -1091,20 +1303,47 @@ Hook.Add("think", "DBIOTEST_ClientTerminalUiThink", function()
     end
 
     local character = Character.Controlled
-    local terminal = FindHeldSessionTerminal(character)
+    local now = Now()
+    local terminal, terminalSource = ResolveUiTerminal(character)
 
     if terminal == nil then
-        DBClient.Panel.Visible = false
+        local active = DBClient.State.activeTerminal
+        local activeLostAgo = now - (DBClient.State.lastActiveSeenAt or 0)
+        if active ~= nil and not active.Removed and activeLostAgo < TerminalLostGraceSeconds then
+            terminal = active
+            terminalSource = "grace"
+        end
+    end
+
+    if terminal == nil then
         if DBClient.State.activeTerminal ~= nil then
+            local activeLostAgo = now - (DBClient.State.lastActiveSeenAt or 0)
+            if activeLostAgo < ActiveTerminalKeepAliveSeconds then
+                DBClient.Panel.Visible = true
+                LogPerf("think", thinkStartedAt, "state=keepalive")
+                return
+            end
+
+            local previousId = GetActiveTerminalId()
             SendUnsubscribe()
             ResetViewState(true)
+            LogThrottled(
+                "terminal-unbind",
+                0.4,
+                string.format(
+                    "TerminalUnbind terminal=%s reason='inactive' lostFor=%.2fs",
+                    previousId,
+                    activeLostAgo))
         end
+        DBClient.Panel.Visible = false
         LogPerf("think", thinkStartedAt, "state=no_terminal")
         return
     end
 
+    DBClient.State.lastActiveSeenAt = now
     DBClient.Panel.Visible = true
     if DBClient.State.activeTerminal ~= terminal then
+        local previousId = GetActiveTerminalId()
         SendUnsubscribe()
         DBClient.State.activeTerminal = terminal
         DBClient.State.databaseId = GetTerminalDatabaseId(terminal)
@@ -1112,10 +1351,17 @@ Hook.Add("think", "DBIOTEST_ClientTerminalUiThink", function()
         DBClient.State.lastLocalSync = 0
         ResetViewState(false)
         SendSubscribe(terminal, true)
+        LogThrottled(
+            "terminal-bind",
+            0.25,
+            string.format(
+                "TerminalBind prev=%s next=%s source=%s",
+                previousId,
+                GetTerminalId(terminal),
+                tostring(terminalSource or "unknown")))
     end
 
     if not Game.IsMultiplayer then
-        local now = Now()
         if (now - (DBClient.State.lastLocalSync or 0)) > 0.30 then
             local buildStartedAt = Now()
             local localMap, totalEntries, totalAmount = BuildLocalEntryMap(terminal)
