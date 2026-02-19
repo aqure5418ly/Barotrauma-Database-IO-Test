@@ -15,8 +15,16 @@ namespace DatabaseIOTest.Services
             Debug = 1
         }
 
+        private enum LogSource
+        {
+            Cs = 0,
+            Lua = 1
+        }
+
         private const string DebugEnvName = "DBIOTEST_DEBUG_LOG";
         private const string DebugMarkerFileName = "debug.enabled";
+        private const string CsLogFolderName = "cslog";
+        private const string LuaLogFolderName = "lualog";
         private static readonly object WriteLock = new object();
         private static readonly Encoding Utf8NoBom = new UTF8Encoding(false);
         private static bool _initDone;
@@ -24,7 +32,7 @@ namespace DatabaseIOTest.Services
         private static bool _debugEnabled;
         private static string _debugModeSource = "default";
         private static bool _initNoticeSent;
-        private static readonly List<string> LogDirectories = new List<string>();
+        private static readonly List<string> LogRoots = new List<string>();
 
         private static void EnsureInitialized()
         {
@@ -52,6 +60,8 @@ namespace DatabaseIOTest.Services
                     try
                     {
                         Directory.CreateDirectory(fullPath);
+                        Directory.CreateDirectory(Path.Combine(fullPath, CsLogFolderName));
+                        Directory.CreateDirectory(Path.Combine(fullPath, LuaLogFolderName));
                         unique.Add(fullPath);
                     }
                     catch
@@ -60,9 +70,9 @@ namespace DatabaseIOTest.Services
                     }
                 }
 
-                LogDirectories.Clear();
-                LogDirectories.AddRange(unique);
-                _enabled = LogDirectories.Count > 0;
+                LogRoots.Clear();
+                LogRoots.AddRange(unique);
+                _enabled = LogRoots.Count > 0;
                 _debugEnabled = ResolveDebugEnabled(out _debugModeSource);
             }
             catch
@@ -141,9 +151,9 @@ namespace DatabaseIOTest.Services
             {
                 if (_enabled)
                 {
-                    string joined = string.Join(" | ", LogDirectories);
+                    string joined = string.Join(" | ", LogRoots);
                     DebugConsole.NewMessage(
-                        $"{DatabaseIOTest.Constants.LogPrefix} File log ready: {joined} | debug={(_debugEnabled ? "on" : "off")} ({_debugModeSource})",
+                        $"{DatabaseIOTest.Constants.LogPrefix} File log ready: {joined} | route=cslog/lualog | debug={(_debugEnabled ? "on" : "off")} ({_debugModeSource})",
                         Color.LightGray);
                 }
                 else
@@ -266,15 +276,61 @@ namespace DatabaseIOTest.Services
 
         public static void Write(string category, string message)
         {
-            WriteInternal(category, message, LogLevel.Info);
+            WriteInternal(category, message, LogLevel.Info, null);
         }
 
         public static void WriteDebug(string category, string message)
         {
-            WriteInternal(category, message, LogLevel.Debug);
+            WriteInternal(category, message, LogLevel.Debug, null);
         }
 
-        private static void WriteInternal(string category, string message, LogLevel level)
+        public static void WriteLuaClient(string message)
+        {
+            WriteInternal("LuaClient", message, LogLevel.Info, LogSource.Lua);
+        }
+
+        public static void WriteLuaServer(string message)
+        {
+            WriteInternal("LuaServer", message, LogLevel.Info, LogSource.Lua);
+        }
+
+        public static void WriteLuaClientDebug(string message)
+        {
+            WriteInternal("LuaClient", message, LogLevel.Debug, LogSource.Lua);
+        }
+
+        public static void WriteLuaServerDebug(string message)
+        {
+            WriteInternal("LuaServer", message, LogLevel.Debug, LogSource.Lua);
+        }
+
+        private static LogSource ResolveSource(string category, LogSource? preferred)
+        {
+            if (preferred.HasValue) { return preferred.Value; }
+
+            if (!string.IsNullOrWhiteSpace(category) &&
+                category.StartsWith("Lua", StringComparison.OrdinalIgnoreCase))
+            {
+                return LogSource.Lua;
+            }
+
+            return LogSource.Cs;
+        }
+
+        private static string ResolveFileName(LogSource source)
+        {
+            string stamp = DateTime.Now.ToString("yyyyMMdd");
+            return source == LogSource.Lua
+                ? $"dbiotest-lua-{stamp}.log"
+                : $"dbiotest-cs-{stamp}.log";
+        }
+
+        private static string ResolveFolderName(LogSource source)
+        {
+            return source == LogSource.Lua ? LuaLogFolderName : CsLogFolderName;
+        }
+
+        private static void WriteInternal(string category, string message, LogLevel level, LogSource? sourceOverride)
         {
             EnsureInitialized();
             if (!_enabled) { return; }
@@ -282,19 +338,21 @@ namespace DatabaseIOTest.Services
 
             try
             {
-                string fileName = $"dbiotest-{DateTime.Now:yyyyMMdd}.log";
+                LogSource source = ResolveSource(category, sourceOverride);
+                string fileName = ResolveFileName(source);
+                string folderName = ResolveFolderName(source);
                 string levelTag = level == LogLevel.Debug ? " [DBG]" : "";
                 string line =
                     $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{GetRuntimeRole()}] [{category}]{levelTag} {message}{Environment.NewLine}";
 
                 lock (WriteLock)
                 {
-                    foreach (var dir in LogDirectories)
+                    foreach (var root in LogRoots)
                     {
-                        if (string.IsNullOrWhiteSpace(dir)) { continue; }
+                        if (string.IsNullOrWhiteSpace(root)) { continue; }
                         try
                         {
-                            string path = Path.Combine(dir, fileName);
+                            string path = Path.Combine(root, folderName, fileName);
                             File.AppendAllText(path, line, Utf8NoBom);
                         }
                         catch

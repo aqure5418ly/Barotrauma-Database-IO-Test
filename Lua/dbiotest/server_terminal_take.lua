@@ -18,21 +18,40 @@ local PerfSyncWarnMs = 8.0
 
 local function TryWriteFileLog(line)
     local text = tostring(line or "")
+    local wrote = false
+
     pcall(function()
+        if wrote then
+            return
+        end
         if DatabaseIOTest ~= nil and
             DatabaseIOTest.Services ~= nil and
             DatabaseIOTest.Services.ModFileLog ~= nil then
-            DatabaseIOTest.Services.ModFileLog.Write("LuaServer", text)
-            return
+            local logger = DatabaseIOTest.Services.ModFileLog
+            if logger.WriteLuaServer ~= nil then
+                logger.WriteLuaServer(text)
+            else
+                logger.Write("LuaServer", text)
+            end
+            wrote = true
         end
     end)
+
     pcall(function()
+        if wrote then
+            return
+        end
         if CS ~= nil and
             CS.DatabaseIOTest ~= nil and
             CS.DatabaseIOTest.Services ~= nil and
             CS.DatabaseIOTest.Services.ModFileLog ~= nil then
-            CS.DatabaseIOTest.Services.ModFileLog.Write("LuaServer", text)
-            return
+            local logger = CS.DatabaseIOTest.Services.ModFileLog
+            if logger.WriteLuaServer ~= nil then
+                logger.WriteLuaServer(text)
+            else
+                logger.Write("LuaServer", text)
+            end
+            wrote = true
         end
     end)
 end
