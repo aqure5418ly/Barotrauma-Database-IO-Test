@@ -25,5 +25,20 @@ local function safeLoad(relativePath)
     end
 end
 
-safeLoad("Lua/dbiotest/server_terminal_take.lua")
-safeLoad("Lua/dbiotest/client_terminal_ui.lua")
+local isClient = CLIENT == true
+local isServerAuthority = SERVER == true
+if not isServerAuthority then
+    local isMultiplayer = true
+    pcall(function()
+        isMultiplayer = Game.IsMultiplayer == true
+    end)
+    isServerAuthority = isClient and (not isMultiplayer)
+end
+
+if isServerAuthority then
+    safeLoad("Lua/dbiotest/server_terminal_take.lua")
+end
+
+if isClient then
+    safeLoad("Lua/dbiotest/client_terminal_ui.lua")
+end

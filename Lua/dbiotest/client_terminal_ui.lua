@@ -2,6 +2,11 @@ DatabaseIOTestLua = DatabaseIOTestLua or {}
 DatabaseIOTestLua.Client = DatabaseIOTestLua.Client or {}
 
 local DBClient = DatabaseIOTestLua.Client
+if DBClient.__loaded == true then
+    return
+end
+DBClient.__loaded = true
+
 DBClient.NetTakeRequest = "DBIOTEST_RequestTakeByIdentifier"
 DBClient.NetTakeResult = "DBIOTEST_TakeResult"
 DBClient.NetViewSubscribe = "DBIOTEST_ViewSubscribe"

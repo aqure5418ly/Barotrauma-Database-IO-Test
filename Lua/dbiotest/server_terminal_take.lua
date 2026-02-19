@@ -488,6 +488,11 @@ if not runAsServerAuthority then
     return
 end
 
+if DBServer.__loadedServer == true then
+    return
+end
+DBServer.__loadedServer = true
+
 Networking.Receive(DBServer.NetViewSubscribe, function(message, client)
     if client == nil or client.Character == nil then
         return
