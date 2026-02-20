@@ -245,6 +245,58 @@ local function ToTerminalEntityId(item)
     return math.floor(value or 0)
 end
 
+local function GetStoreBridge()
+    if DBServer.StoreBridge == false then
+        return nil
+    end
+    if DBServer.StoreBridge ~= nil then
+        return DBServer.StoreBridge
+    end
+
+    local bridge = nil
+    pcall(function()
+        if DatabaseIOTest ~= nil and
+            DatabaseIOTest.Services ~= nil and
+            DatabaseIOTest.Services.DatabaseStore ~= nil then
+            bridge = DatabaseIOTest.Services.DatabaseStore
+        end
+    end)
+    if bridge == nil then
+        pcall(function()
+            if CS ~= nil and
+                CS.DatabaseIOTest ~= nil and
+                CS.DatabaseIOTest.Services ~= nil and
+                CS.DatabaseIOTest.Services.DatabaseStore ~= nil then
+                bridge = CS.DatabaseIOTest.Services.DatabaseStore
+            end
+        end)
+    end
+    if bridge == nil then
+        pcall(function()
+            if DatabaseStore ~= nil then
+                bridge = DatabaseStore
+            end
+        end)
+    end
+    if bridge == nil then
+        pcall(function()
+            if CS ~= nil and CS.DatabaseStore ~= nil then
+                bridge = CS.DatabaseStore
+            end
+        end)
+    end
+
+    if bridge ~= nil then
+        DBServer.StoreBridge = bridge
+        Log("Lua bridge resolved: DatabaseStore")
+        return bridge
+    end
+
+    DBServer.StoreBridge = false
+    Log("Lua bridge unavailable: DatabaseStore not found.")
+    return nil
+end
+
 local function GetLuaBridge()
     if DBServer.LuaBridge == false then
         return nil
@@ -271,6 +323,20 @@ local function GetLuaBridge()
             end
         end)
     end
+    if bridge == nil then
+        pcall(function()
+            if DatabaseLuaBridge ~= nil then
+                bridge = DatabaseLuaBridge
+            end
+        end)
+    end
+    if bridge == nil then
+        pcall(function()
+            if CS ~= nil and CS.DatabaseLuaBridge ~= nil then
+                bridge = CS.DatabaseLuaBridge
+            end
+        end)
+    end
 
     if bridge ~= nil then
         DBServer.LuaBridge = bridge
@@ -283,142 +349,174 @@ local function GetLuaBridge()
     return nil
 end
 
-local function BridgeIsTerminalSessionOpen(terminalEntityId)
-    local bridge = GetLuaBridge()
-    if bridge == nil then
-        return false, false, "bridge_missing", "bridge=nil"
-    end
-
-    local errors = {}
-    local ok, result = pcall(function()
-        return bridge.IsTerminalSessionOpen(terminalEntityId)
-    end)
-    if ok then
-        return true, result == true, "dot", ""
-    end
-    table.insert(errors, tostring(result or ""))
-
-    ok, result = pcall(function()
-        return bridge.IsTerminalSessionOpen(bridge, terminalEntityId)
-    end)
-    if ok then
-        return true, result == true, "dot-self", ""
-    end
-    table.insert(errors, tostring(result or ""))
-
-    ok, result = pcall(function()
-        return bridge:IsTerminalSessionOpen(terminalEntityId)
-    end)
-    if ok then
-        return true, result == true, "colon", ""
-    end
-    table.insert(errors, tostring(result or ""))
-
-    return false, false, "invoke_failed", table.concat(errors, " || ")
-end
-
-local function BridgeGetTerminalVirtualSnapshot(terminalEntityId, refreshCurrentPage)
-    local bridge = GetLuaBridge()
+local function InvokeBridgeMethod(bridge, methodName, ...)
     if bridge == nil then
         return false, nil, "bridge_missing", "bridge=nil"
     end
 
-    local refresh = refreshCurrentPage == true
+    local args = table.pack(...)
     local errors = {}
-    local ok, result = pcall(function()
-        return bridge.GetTerminalVirtualSnapshot(terminalEntityId, refresh)
-    end)
-    if ok then
-        return true, result, "dot", ""
+    local function TryCall(mode, withSelf)
+        local ok, result = pcall(function()
+            local fn = bridge[methodName]
+            if fn == nil then
+                error("method_missing:" .. tostring(methodName))
+            end
+            if withSelf == true then
+                return fn(bridge, table.unpack(args, 1, args.n))
+            end
+            return fn(table.unpack(args, 1, args.n))
+        end)
+        if ok then
+            return true, result, mode, ""
+        end
+        table.insert(errors, tostring(result or ""))
+        return false, nil, nil, nil
     end
-    table.insert(errors, tostring(result or ""))
 
-    ok, result = pcall(function()
-        return bridge.GetTerminalVirtualSnapshot(bridge, terminalEntityId, refresh)
-    end)
-    if ok then
-        return true, result, "dot-self", ""
+    do
+        local ok, result, mode, err = TryCall("dot", false)
+        if ok then
+            return ok, result, mode, err
+        end
     end
-    table.insert(errors, tostring(result or ""))
-
-    ok, result = pcall(function()
-        return bridge:GetTerminalVirtualSnapshot(terminalEntityId, refresh)
-    end)
-    if ok then
-        return true, result, "colon", ""
+    do
+        local ok, result, mode, err = TryCall("dot-self", true)
+        if ok then
+            return ok, result, mode, err
+        end
     end
-    table.insert(errors, tostring(result or ""))
 
     return false, nil, "invoke_failed", table.concat(errors, " || ")
 end
 
-local function BridgeGetTerminalDatabaseId(terminalEntityId)
+local function BuildBridgeError(storeMode, storeErr, legacyMode, legacyErr)
+    local parts = {}
+    if tostring(storeErr or "") ~= "" then
+        table.insert(parts, "store(" .. tostring(storeMode or "?") .. ")=" .. tostring(storeErr))
+    end
+    if tostring(legacyErr or "") ~= "" then
+        table.insert(parts, "legacy(" .. tostring(legacyMode or "?") .. ")=" .. tostring(legacyErr))
+    end
+    local text = table.concat(parts, " || ")
+    if text == "" then
+        text = "bridge call failed"
+    end
+    return text
+end
+
+local function BridgeIsTerminalSessionOpen(terminalEntityId)
+    local store = GetStoreBridge()
+    local okStore, storeResult, storeMode, storeErr = InvokeBridgeMethod(
+        store,
+        "IsTerminalSessionOpenForLua",
+        terminalEntityId)
+    if okStore then
+        return true, storeResult == true, "store:" .. tostring(storeMode), ""
+    end
+
     local bridge = GetLuaBridge()
-    if bridge == nil then
-        return false, "default", "bridge_missing", "bridge=nil"
+    local okLegacy, legacyResult, legacyMode, legacyErr = InvokeBridgeMethod(
+        bridge,
+        "IsTerminalSessionOpen",
+        terminalEntityId)
+    if okLegacy then
+        return true, legacyResult == true, "legacy:" .. tostring(legacyMode), ""
     end
 
-    local errors = {}
-    local ok, result = pcall(function()
-        return bridge.GetTerminalDatabaseId(terminalEntityId)
-    end)
-    if ok then
-        return true, tostring(result or "default"), "dot", ""
+    if store == nil and bridge == nil then
+        return false, false, "bridge_missing", "store=nil;legacy=nil"
     end
-    table.insert(errors, tostring(result or ""))
 
-    ok, result = pcall(function()
-        return bridge.GetTerminalDatabaseId(bridge, terminalEntityId)
-    end)
-    if ok then
-        return true, tostring(result or "default"), "dot-self", ""
+    return false, false, "invoke_failed", BuildBridgeError(storeMode, storeErr, legacyMode, legacyErr)
+end
+
+local function BridgeGetTerminalVirtualSnapshot(terminalEntityId, refreshCurrentPage)
+    local refresh = refreshCurrentPage == true
+
+    local store = GetStoreBridge()
+    local okStore, storeRows, storeMode, storeErr = InvokeBridgeMethod(
+        store,
+        "GetTerminalVirtualSnapshotForLua",
+        terminalEntityId,
+        refresh)
+    if okStore then
+        return true, storeRows, "store:" .. tostring(storeMode), ""
     end
-    table.insert(errors, tostring(result or ""))
 
-    ok, result = pcall(function()
-        return bridge:GetTerminalDatabaseId(terminalEntityId)
-    end)
-    if ok then
-        return true, tostring(result or "default"), "colon", ""
+    local bridge = GetLuaBridge()
+    local okLegacy, legacyRows, legacyMode, legacyErr = InvokeBridgeMethod(
+        bridge,
+        "GetTerminalVirtualSnapshot",
+        terminalEntityId,
+        refresh)
+    if okLegacy then
+        return true, legacyRows, "legacy:" .. tostring(legacyMode), ""
     end
-    table.insert(errors, tostring(result or ""))
 
-    return false, "default", "invoke_failed", table.concat(errors, " || ")
+    if store == nil and bridge == nil then
+        return false, nil, "bridge_missing", "store=nil;legacy=nil"
+    end
+
+    return false, nil, "invoke_failed", BuildBridgeError(storeMode, storeErr, legacyMode, legacyErr)
+end
+
+local function BridgeGetTerminalDatabaseId(terminalEntityId)
+    local store = GetStoreBridge()
+    local okStore, storeDbId, storeMode, storeErr = InvokeBridgeMethod(
+        store,
+        "GetTerminalDatabaseIdForLua",
+        terminalEntityId)
+    if okStore then
+        return true, tostring(storeDbId or "default"), "store:" .. tostring(storeMode), ""
+    end
+
+    local bridge = GetLuaBridge()
+    local okLegacy, legacyDbId, legacyMode, legacyErr = InvokeBridgeMethod(
+        bridge,
+        "GetTerminalDatabaseId",
+        terminalEntityId)
+    if okLegacy then
+        return true, tostring(legacyDbId or "default"), "legacy:" .. tostring(legacyMode), ""
+    end
+
+    if store == nil and bridge == nil then
+        return false, "default", "bridge_missing", "store=nil;legacy=nil"
+    end
+
+    return false, "default", "invoke_failed", BuildBridgeError(storeMode, storeErr, legacyMode, legacyErr)
 end
 
 local function BridgeTryTakeOneByIdentifier(terminalEntityId, identifier, actor)
-    local bridge = GetLuaBridge()
-    if bridge == nil then
-        return false, "bridge_missing", "bridge_missing", "bridge=nil"
-    end
-
     local wanted = tostring(identifier or "")
-    local errors = {}
-    local ok, result = pcall(function()
-        return bridge.TryTakeOneByIdentifierFromTerminalSession(terminalEntityId, wanted, actor)
-    end)
-    if ok then
-        return true, tostring(result or ""), "dot", ""
-    end
-    table.insert(errors, tostring(result or ""))
 
-    ok, result = pcall(function()
-        return bridge.TryTakeOneByIdentifierFromTerminalSession(bridge, terminalEntityId, wanted, actor)
-    end)
-    if ok then
-        return true, tostring(result or ""), "dot-self", ""
+    local store = GetStoreBridge()
+    local okStore, storeReason, storeMode, storeErr = InvokeBridgeMethod(
+        store,
+        "TryTakeOneByIdentifierFromTerminalSessionForLua",
+        terminalEntityId,
+        wanted,
+        actor)
+    if okStore then
+        return true, tostring(storeReason or ""), "store:" .. tostring(storeMode), ""
     end
-    table.insert(errors, tostring(result or ""))
 
-    ok, result = pcall(function()
-        return bridge:TryTakeOneByIdentifierFromTerminalSession(terminalEntityId, wanted, actor)
-    end)
-    if ok then
-        return true, tostring(result or ""), "colon", ""
+    local bridge = GetLuaBridge()
+    local okLegacy, legacyReason, legacyMode, legacyErr = InvokeBridgeMethod(
+        bridge,
+        "TryTakeOneByIdentifierFromTerminalSession",
+        terminalEntityId,
+        wanted,
+        actor)
+    if okLegacy then
+        return true, tostring(legacyReason or ""), "legacy:" .. tostring(legacyMode), ""
     end
-    table.insert(errors, tostring(result or ""))
 
-    return false, "invoke_failed", "invoke_failed", table.concat(errors, " || ")
+    if store == nil and bridge == nil then
+        return false, "bridge_missing", "bridge_missing", "store=nil;legacy=nil"
+    end
+
+    return false, "invoke_failed", "invoke_failed", BuildBridgeError(storeMode, storeErr, legacyMode, legacyErr)
 end
 
 local function ResolveTerminalComponent(item)

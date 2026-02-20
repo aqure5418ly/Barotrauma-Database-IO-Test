@@ -1495,6 +1495,48 @@ namespace DatabaseIOTest.Services
             return null;
         }
 
+        // LuaCs cannot reliably call instance methods on custom component userdata in this runtime.
+        // These static helpers expose terminal session operations through DatabaseStore for Lua B1.
+        public static bool IsTerminalSessionOpenForLua(int terminalEntityId)
+        {
+            var terminal = FindRegisteredTerminal(terminalEntityId);
+            return terminal != null && terminal.IsVirtualSessionOpenForUi();
+        }
+
+        public static string GetTerminalDatabaseIdForLua(int terminalEntityId)
+        {
+            var terminal = FindRegisteredTerminal(terminalEntityId);
+            return Normalize(terminal?.DatabaseId ?? Constants.DefaultDatabaseId);
+        }
+
+        public static List<DatabaseTerminalComponent.TerminalVirtualEntry> GetTerminalVirtualSnapshotForLua(
+            int terminalEntityId,
+            bool refreshCurrentPage = true)
+        {
+            var terminal = FindRegisteredTerminal(terminalEntityId);
+            if (terminal == null)
+            {
+                return new List<DatabaseTerminalComponent.TerminalVirtualEntry>();
+            }
+
+            var rows = terminal.GetVirtualViewSnapshot(refreshCurrentPage);
+            return rows ?? new List<DatabaseTerminalComponent.TerminalVirtualEntry>();
+        }
+
+        public static string TryTakeOneByIdentifierFromTerminalSessionForLua(
+            int terminalEntityId,
+            string identifier,
+            Character actor)
+        {
+            var terminal = FindRegisteredTerminal(terminalEntityId);
+            if (terminal == null)
+            {
+                return "terminal_missing";
+            }
+
+            return terminal.TryTakeOneByIdentifierFromVirtualSession(identifier, actor) ?? "";
+        }
+
         private static bool IsBetterCandidate(DatabaseData candidate, DatabaseData baseline)
         {
             if (candidate == null) { return false; }
