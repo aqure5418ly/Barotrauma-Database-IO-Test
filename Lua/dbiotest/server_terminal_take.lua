@@ -15,8 +15,14 @@ DBServer.NextPerfLogAt = DBServer.NextPerfLogAt or 0
 DBServer.NextSnapshotDiagAt = DBServer.NextSnapshotDiagAt or 0
 local PerfLogCooldown = 0.8
 local PerfSyncWarnMs = 8.0
-local ForceLuaDebugLog = true
+local ForceLuaDebugLog = false
+pcall(function()
+    if DatabaseIOTestLua ~= nil and DatabaseIOTestLua.IsLuaDebugEnabled ~= nil then
+        ForceLuaDebugLog = DatabaseIOTestLua.IsLuaDebugEnabled() == true
+    end
+end)
 local LoggerBridgeMissingPrinted = false
+DBServer.ComponentCache = DBServer.ComponentCache or {}
 
 local function TryWriteFileLog(level, line)
     local text = tostring(line or "")
@@ -122,6 +128,11 @@ end
 
 local function Log(line)
     local text = "[DBIOTEST][B1][Server] " .. tostring(line or "")
+    pcall(function()
+        if DatabaseIOTestLua ~= nil and DatabaseIOTestLua.StampLogLine ~= nil then
+            text = DatabaseIOTestLua.StampLogLine(text)
+        end
+    end)
     TryWriteFileLog("info", text)
     print(text)
 end
@@ -131,10 +142,16 @@ local function LogDebug(line)
         return
     end
     local text = "[DBIOTEST][B1][Server][DBG] " .. tostring(line or "")
+    pcall(function()
+        if DatabaseIOTestLua ~= nil and DatabaseIOTestLua.StampLogLine ~= nil then
+            text = DatabaseIOTestLua.StampLogLine(text)
+        end
+    end)
     TryWriteFileLog("debug", text)
 end
 
 Log("server_terminal_take loaded; CLIENT=" .. tostring(CLIENT) .. " SERVER=" .. tostring(SERVER))
+Log("server debug enabled=" .. tostring(ForceLuaDebugLog))
 LogDebug(string.format(
     "NetChannels takeReq=%s takeResult=%s sub=%s unsub=%s snapshot=%s delta=%s",
     tostring(DBServer.NetTakeRequest),
@@ -204,6 +221,119 @@ local function GetItemIdentifier(item)
     return identifier or ""
 end
 
+local TerminalComponentLookupNames = {
+    "DatabaseTerminalComponent",
+    "databaseTerminalComponent",
+    "DatabaseIOTest.DatabaseTerminalComponent"
+}
+
+local function GetTerminalId(item)
+    if item == nil or item.Removed then
+        return "none"
+    end
+    local id = "none"
+    pcall(function()
+        id = tostring(item.ID)
+    end)
+    return id or "none"
+end
+
+local function ResolveTerminalComponent(item)
+    if item == nil or item.Removed then
+        return nil
+    end
+
+    local now = Now()
+    local cacheKey = tostring(GetTerminalId(item))
+    local cache = DBServer.ComponentCache[cacheKey]
+    if cache ~= nil and cache.item == item then
+        if cache.component ~= nil and cache.component ~= false then
+            return cache.component
+        end
+        if cache.component == false and now < (cache.retryAt or 0) then
+            return nil
+        end
+    end
+
+    local component = nil
+    for _, name in ipairs(TerminalComponentLookupNames) do
+        pcall(function()
+            if component == nil then
+                component = item.GetComponentString(name)
+            end
+        end)
+        if component ~= nil then
+            break
+        end
+    end
+
+    if component == nil then
+        pcall(function()
+            local components = item.Components
+            if components ~= nil then
+                for comp in components do
+                    if comp ~= nil then
+                        local typeName = string.lower(tostring(comp) or "")
+                        if string.find(typeName, "databaseterminalcomponent", 1, true) ~= nil then
+                            component = comp
+                            break
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    if component ~= nil then
+        DBServer.ComponentCache[cacheKey] = {
+            item = item,
+            component = component,
+            retryAt = 0
+        }
+        return component
+    end
+
+    DBServer.ComponentCache[cacheKey] = {
+        item = item,
+        component = false,
+        retryAt = now + 1.5
+    }
+    return nil
+end
+
+local UnpackArgs = table.unpack or unpack
+local function CallComponentMethod(component, methodName, ...)
+    if component == nil then
+        return false, nil, "component_nil", "component=nil"
+    end
+
+    local method = nil
+    local okGet, getErr = pcall(function()
+        method = component[methodName]
+    end)
+    if not okGet or method == nil then
+        return false, nil, "method_missing", tostring(getErr or "missing")
+    end
+
+    local args = table.pack(...)
+    local okSelf, resultSelf = pcall(function()
+        return method(component, UnpackArgs(args, 1, args.n))
+    end)
+    if okSelf then
+        return true, resultSelf, "self", ""
+    end
+
+    local selfErr = tostring(resultSelf or "")
+    local okBound, resultBound = pcall(function()
+        return method(UnpackArgs(args, 1, args.n))
+    end)
+    if okBound then
+        return true, resultBound, "bound", ""
+    end
+
+    return false, nil, "invoke_failed", selfErr .. " || " .. tostring(resultBound or "")
+end
+
 local function IsSessionTerminal(item)
     if item == nil or item.Removed then
         return false
@@ -225,15 +355,20 @@ local function IsSessionTerminal(item)
     end
 
     if normalized == "databaseterminalfixed" or hasFixedTag == true then
-        local component = nil
-        pcall(function()
-            component = item.GetComponentString("DatabaseTerminalComponent")
-        end)
+        local component = ResolveTerminalComponent(item)
         if component ~= nil then
-            local open = false
-            pcall(function()
-                open = component.IsVirtualSessionOpenForUi() == true
-            end)
+            local okOpen, openValue, openMode, openErr = CallComponentMethod(component, "IsVirtualSessionOpenForUi")
+            local open = okOpen and openValue == true
+            if not okOpen then
+                LogDebugThrottled(
+                    "server-fixed-open-callfail-" .. tostring(GetTerminalId(item)),
+                    2.0,
+                    string.format(
+                        "IsSessionTerminal fixed-open call failed terminal=%s mode=%s err=%s",
+                        tostring(GetTerminalId(item)),
+                        tostring(openMode or "?"),
+                        tostring(openErr or "")))
+            end
             return open == true
         end
     end
@@ -291,10 +426,7 @@ local function GetTerminalDatabaseId(terminal)
         return "default"
     end
 
-    local component = nil
-    pcall(function()
-        component = terminal.GetComponentString("DatabaseTerminalComponent")
-    end)
+    local component = ResolveTerminalComponent(terminal)
     if component == nil then
         return "default"
     end
@@ -311,11 +443,7 @@ local function GetTerminalComponent(terminal)
         return nil
     end
 
-    local component = nil
-    pcall(function()
-        component = terminal.GetComponentString("DatabaseTerminalComponent")
-    end)
-    return component
+    return ResolveTerminalComponent(terminal)
 end
 
 local function ForEachVirtualRow(rows, callback)
@@ -384,14 +512,25 @@ end
 local function BuildEntryMapFromComponent(terminal)
     local component = GetTerminalComponent(terminal)
     if component == nil then
+        LogDebugThrottled(
+            "server-buildmap-component-missing-" .. tostring(GetTerminalId(terminal)),
+            2.0,
+            string.format(
+                "BuildEntryMapFromComponent component missing terminal=%s",
+                tostring(GetTerminalId(terminal))))
         return nil
     end
 
-    local rows = nil
-    local ok = pcall(function()
-        rows = component.GetVirtualViewSnapshot(true)
-    end)
-    if not ok or rows == nil then
+    local okRows, rows, rowsMode, rowsErr = CallComponentMethod(component, "GetVirtualViewSnapshot", true)
+    if not okRows or rows == nil then
+        LogDebugThrottled(
+            "server-buildmap-callfail-" .. tostring(GetTerminalId(terminal)),
+            1.2,
+            string.format(
+                "BuildEntryMapFromComponent snapshot call failed terminal=%s mode=%s err=%s",
+                tostring(GetTerminalId(terminal)),
+                tostring(rowsMode or "?"),
+                tostring(rowsErr or "")))
         return nil
     end
 
@@ -423,9 +562,10 @@ local function BuildEntryMapFromComponent(terminal)
         if now >= (DBServer.NextSnapshotDiagAt or 0) then
             DBServer.NextSnapshotDiagAt = now + 0.9
             Log(string.format(
-                "BuildEntryMapFromComponent FAILED terminal=%s mode=%s",
+                "BuildEntryMapFromComponent FAILED terminal=%s mode=%s rowsMode=%s",
                 tostring(terminal and terminal.ID or "none"),
-                tostring(iterMode or "unknown")))
+                tostring(iterMode or "unknown"),
+                tostring(rowsMode or "?")))
         end
         return nil
     end
@@ -837,11 +977,14 @@ Networking.Receive(DBServer.NetTakeRequest, function(message, client)
 
     local component = GetTerminalComponent(terminal)
     if component ~= nil then
-        local okCall, reason = pcall(function()
-            return tostring(component.TryTakeOneByIdentifierFromVirtualSession(wantedIdentifier, character) or "")
-        end)
+        local okCall, reasonValue, callMode, callErr = CallComponentMethod(
+            component,
+            "TryTakeOneByIdentifierFromVirtualSession",
+            wantedIdentifier,
+            character)
+        local reason = tostring(reasonValue or "")
         if okCall then
-            if tostring(reason or "") ~= "" then
+            if reason ~= "" then
                 LogDebug("NetTakeRequest failed by virtual API reason='" .. tostring(reason) .. "'")
                 SendTakeResult(client, false, MapVirtualTakeError(reason))
                 return
@@ -852,8 +995,11 @@ Networking.Receive(DBServer.NetTakeRequest, function(message, client)
             LogDebug("NetTakeRequest succeeded and flagged terminal dirty.")
             return
         end
-        Log("Virtual take API failed: " .. tostring(reason))
-        LogDebug("NetTakeRequest virtual API threw exception.")
+        Log("Virtual take API failed: " .. tostring(callErr or reason or ""))
+        LogDebug(string.format(
+            "NetTakeRequest virtual API invoke failed mode=%s err=%s",
+            tostring(callMode or "?"),
+            tostring(callErr or "")))
     end
 
     SendTakeResult(client, false, L("dbiotest.ui.take.notready", "Terminal API is not ready."))
@@ -874,15 +1020,17 @@ Hook.Add("think", "DBIOTEST_ServerViewSyncThink", function()
     local snapshotCount = 0
     local deltaCount = 0
     local fallbackLookupCount = 0
-    LogDebugThrottled("server-sync-loop", 1.2, string.format(
-        "SyncThink loop begin subCount=%d",
-        tonumber((function()
-            local c = 0
-            for _ in pairs(DBServer.Subscriptions) do
-                c = c + 1
-            end
-            return c
-        end)())))
+    local estimatedSubCount = 0
+    for _ in pairs(DBServer.Subscriptions) do
+        estimatedSubCount = estimatedSubCount + 1
+    end
+    if estimatedSubCount > 0 then
+        LogDebugThrottled("server-sync-loop-active", 1.8, string.format(
+            "SyncThink loop begin subCount=%d",
+            estimatedSubCount))
+    else
+        LogDebugThrottled("server-sync-loop-idle", 8.0, "SyncThink loop begin subCount=0")
+    end
 
     for client, sub in pairs(DBServer.Subscriptions) do
         subCount = subCount + 1
@@ -970,9 +1118,11 @@ Hook.Add("think", "DBIOTEST_ServerViewSyncThink", function()
             fallbackLookupCount))
     end
 
+    local summaryState = subCount > 0 and "active" or "idle"
+    local summaryCooldown = subCount > 0 and 1.2 or 8.0
     LogDebugThrottled(
-        "server-sync-summary",
-        0.9,
+        "server-sync-summary-" .. summaryState,
+        summaryCooldown,
         string.format(
             "SyncThink summary %.2fms subs=%d processed=%d removed=%d snapshots=%d deltas=%d fallback=%d",
             elapsedMs,
@@ -988,6 +1138,7 @@ LogDebug("Hook.Add registered: DBIOTEST_ServerViewSyncThink")
 Hook.Add("roundEnd", "DBIOTEST_ServerViewRoundEnd", function()
     DBServer.Subscriptions = {}
     DBServer.NextPerfLogAt = 0
+    DBServer.ComponentCache = {}
     LogDebug("Hook roundEnd: cleared subscriptions.")
 end)
 LogDebug("Hook.Add registered: DBIOTEST_ServerViewRoundEnd")
@@ -995,6 +1146,7 @@ LogDebug("Hook.Add registered: DBIOTEST_ServerViewRoundEnd")
 Hook.Add("stop", "DBIOTEST_ServerViewStop", function()
     DBServer.Subscriptions = {}
     DBServer.NextPerfLogAt = 0
+    DBServer.ComponentCache = {}
     LogDebug("Hook stop: cleared subscriptions.")
 end)
 LogDebug("Hook.Add registered: DBIOTEST_ServerViewStop")

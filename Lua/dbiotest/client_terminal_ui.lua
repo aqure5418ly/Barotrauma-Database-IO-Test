@@ -30,6 +30,8 @@ DBClient.State = DBClient.State or {
     awaitingSnapshot = false,
     dirty = true
 }
+DBClient.State.componentCache = DBClient.State.componentCache or {}
+DBClient.State.componentMissDiag = DBClient.State.componentMissDiag or {}
 
 DBClient.IconCache = DBClient.IconCache or {}
 local EnableNearbyTerminalScan = false
@@ -42,7 +44,12 @@ local PerfLogCooldown = 0.8
 local PerfThinkWarnMs = 10.0
 local PerfBuildWarnMs = 6.0
 local PerfRedrawWarnMs = 6.0
-local ForceLuaDebugLog = true
+local ForceLuaDebugLog = false
+pcall(function()
+    if DatabaseIOTestLua ~= nil and DatabaseIOTestLua.IsLuaDebugEnabled ~= nil then
+        ForceLuaDebugLog = DatabaseIOTestLua.IsLuaDebugEnabled() == true
+    end
+end)
 local LoggerBridgeMissingPrinted = false
 
 local function TryWriteFileLog(level, line)
@@ -149,6 +156,11 @@ end
 
 local function Log(line)
     local text = "[DBIOTEST][B1][Client] " .. tostring(line or "")
+    pcall(function()
+        if DatabaseIOTestLua ~= nil and DatabaseIOTestLua.StampLogLine ~= nil then
+            text = DatabaseIOTestLua.StampLogLine(text)
+        end
+    end)
     TryWriteFileLog("info", text)
     print(text)
 end
@@ -158,10 +170,16 @@ local function LogDebug(line)
         return
     end
     local text = "[DBIOTEST][B1][Client][DBG] " .. tostring(line or "")
+    pcall(function()
+        if DatabaseIOTestLua ~= nil and DatabaseIOTestLua.StampLogLine ~= nil then
+            text = DatabaseIOTestLua.StampLogLine(text)
+        end
+    end)
     TryWriteFileLog("debug", text)
 end
 
 Log("client_terminal_ui loaded; CLIENT=" .. tostring(CLIENT) .. " SERVER=" .. tostring(SERVER))
+Log("client debug enabled=" .. tostring(ForceLuaDebugLog))
 LogDebug(string.format(
     "NetChannels takeReq=%s takeResult=%s sub=%s unsub=%s snapshot=%s delta=%s",
     tostring(DBClient.NetTakeRequest),
@@ -241,6 +259,109 @@ local function GetTerminalId(item)
         id = tostring(item.ID)
     end)
     return id or "none"
+end
+
+local TerminalComponentLookupNames = {
+    "DatabaseTerminalComponent",
+    "databaseTerminalComponent",
+    "DatabaseIOTest.DatabaseTerminalComponent"
+}
+
+local function ResolveTerminalComponent(item)
+    if item == nil or item.Removed then
+        return nil
+    end
+
+    local now = Now()
+    local terminalId = GetTerminalId(item)
+    local cacheKey = tostring(terminalId)
+    local cache = DBClient.State.componentCache[cacheKey]
+    if cache ~= nil and cache.item == item then
+        if cache.component ~= nil and cache.component ~= false then
+            return cache.component
+        end
+        if cache.component == false and now < (cache.retryAt or 0) then
+            return nil
+        end
+    end
+
+    local component = nil
+    for _, name in ipairs(TerminalComponentLookupNames) do
+        pcall(function()
+            if component == nil then
+                component = item.GetComponentString(name)
+            end
+        end)
+        if component ~= nil then
+            break
+        end
+    end
+
+    if component == nil then
+        pcall(function()
+            local components = item.Components
+            if components ~= nil then
+                for comp in components do
+                    if comp ~= nil then
+                        local typeName = string.lower(tostring(comp) or "")
+                        if string.find(typeName, "databaseterminalcomponent", 1, true) ~= nil then
+                            component = comp
+                            break
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    if component ~= nil then
+        DBClient.State.componentCache[cacheKey] = {
+            item = item,
+            component = component,
+            retryAt = 0
+        }
+        return component
+    end
+
+    DBClient.State.componentCache[cacheKey] = {
+        item = item,
+        component = false,
+        retryAt = now + 1.5
+    }
+    return nil
+end
+
+local UnpackArgs = table.unpack or unpack
+local function CallComponentMethod(component, methodName, ...)
+    if component == nil then
+        return false, nil, "component_nil", "component=nil"
+    end
+
+    local method = nil
+    local okGet, getErr = pcall(function()
+        method = component[methodName]
+    end)
+    if not okGet or method == nil then
+        return false, nil, "method_missing", tostring(getErr or "missing")
+    end
+
+    local args = table.pack(...)
+    local okSelf, resultSelf = pcall(function()
+        return method(component, UnpackArgs(args, 1, args.n))
+    end)
+    if okSelf then
+        return true, resultSelf, "self", ""
+    end
+
+    local selfErr = tostring(resultSelf or "")
+    local okBound, resultBound = pcall(function()
+        return method(UnpackArgs(args, 1, args.n))
+    end)
+    if okBound then
+        return true, resultBound, "bound", ""
+    end
+
+    return false, nil, "invoke_failed", selfErr .. " || " .. tostring(resultBound or "")
 end
 
 local function LogPerf(tag, startedAt, extra)
@@ -364,14 +485,11 @@ local function IsComponentSessionOpenForUi(item)
         return false
     end
 
-    local component = nil
-    pcall(function()
-        component = item.GetComponentString("DatabaseTerminalComponent")
-    end)
+    local component = ResolveTerminalComponent(item)
     if component == nil then
         LogDebugThrottled(
             "ui-component-missing-" .. tostring(GetTerminalId(item)),
-            1.0,
+            5.0,
             string.format(
                 "IsComponentSessionOpenForUi component missing terminal=%s identifier=%s",
                 tostring(GetTerminalId(item)),
@@ -379,17 +497,26 @@ local function IsComponentSessionOpenForUi(item)
         return false
     end
 
-    local open = false
-    pcall(function()
-        open = component.IsVirtualSessionOpenForUi() == true
-    end)
+    local okCall, openValue, callMode, callErr = CallComponentMethod(component, "IsVirtualSessionOpenForUi")
+    local open = okCall and openValue == true
+    if not okCall then
+        LogDebugThrottled(
+            "ui-component-open-callfail-" .. tostring(GetTerminalId(item)),
+            2.0,
+            string.format(
+                "IsComponentSessionOpenForUi call failed terminal=%s mode=%s err=%s",
+                tostring(GetTerminalId(item)),
+                tostring(callMode or "?"),
+                tostring(callErr or "")))
+    end
     LogDebugThrottled(
         "ui-component-open-" .. tostring(GetTerminalId(item)),
-        0.8,
+        2.5,
         string.format(
-            "IsComponentSessionOpenForUi terminal=%s open=%s",
+            "IsComponentSessionOpenForUi terminal=%s open=%s mode=%s",
             tostring(GetTerminalId(item)),
-            tostring(open == true)))
+            tostring(open == true),
+            tostring(callMode or "?")))
     return open == true
 end
 
@@ -552,20 +679,32 @@ local function FindNearbyOpenFixedTerminal(character)
 
     local best = nil
     local bestDistanceSq = NearbyTerminalScanDistance * NearbyTerminalScanDistance
+    local fixedCount = 0
+    local fixedOpenCount = 0
     pcall(function()
         for item in Item.ItemList do
-            if item ~= nil and
-                not item.Removed and
-                IsFixedTerminal(item) and
-                IsComponentSessionOpenForUi(item) then
-                local distanceSq = Vector2.DistanceSquared(character.WorldPosition, item.WorldPosition)
-                if distanceSq <= bestDistanceSq then
-                    bestDistanceSq = distanceSq
-                    best = item
+            if item ~= nil and not item.Removed and IsFixedTerminal(item) then
+                fixedCount = fixedCount + 1
+                if IsComponentSessionOpenForUi(item) then
+                    fixedOpenCount = fixedOpenCount + 1
+                    local distanceSq = Vector2.DistanceSquared(character.WorldPosition, item.WorldPosition)
+                    if distanceSq <= bestDistanceSq then
+                        bestDistanceSq = distanceSq
+                        best = item
+                    end
                 end
             end
         end
     end)
+
+    LogDebugThrottled(
+        "nearby-open-fixed-scan",
+        1.5,
+        string.format(
+            "NearbyOpenFixedScan fixed=%d open=%d best=%s",
+            tonumber(fixedCount or 0),
+            tonumber(fixedOpenCount or 0),
+            tostring(GetTerminalId(best))))
 
     DBClient.State.nearbyOpenFixedTerminal = best
     return best
@@ -639,10 +778,7 @@ local function GetTerminalDatabaseId(terminal)
         return "default"
     end
 
-    local component = nil
-    pcall(function()
-        component = terminal.GetComponentString("DatabaseTerminalComponent")
-    end)
+    local component = ResolveTerminalComponent(terminal)
     if component == nil then
         return "default"
     end
@@ -659,11 +795,7 @@ local function GetTerminalComponent(terminal)
         return nil
     end
 
-    local component = nil
-    pcall(function()
-        component = terminal.GetComponentString("DatabaseTerminalComponent")
-    end)
-    return component
+    return ResolveTerminalComponent(terminal)
 end
 
 local function ForEachVirtualRow(rows, callback)
@@ -730,13 +862,21 @@ local function ForEachVirtualRow(rows, callback)
 end
 
 local function BuildLocalEntryMap(terminal)
+    local terminalId = GetTerminalId(terminal)
+
+    local function ShortErr(err)
+        local text = tostring(err or "")
+        text = text:gsub("[\r\n]+", " ")
+        if string.len(text) > 180 then
+            text = string.sub(text, 1, 180) .. "..."
+        end
+        return text
+    end
+
     local component = GetTerminalComponent(terminal)
     if component ~= nil then
-        local rows = nil
-        local ok = pcall(function()
-            rows = component.GetVirtualViewSnapshot(true)
-        end)
-        if ok and rows ~= nil then
+        local okRows, rows, rowsMode, rowsErr = CallComponentMethod(component, "GetVirtualViewSnapshot", true)
+        if okRows and rows ~= nil then
             local map = {}
             local totalEntries = 0
             local totalAmount = 0
@@ -759,12 +899,13 @@ local function BuildLocalEntryMap(terminal)
                 end
             end)
             if iterOk then
-                LogThrottled(
-                    "localsnapshot",
-                    1.0,
+                LogDebugThrottled(
+                    "localsnapshot-debug-" .. tostring(terminalId),
+                    1.5,
                     string.format(
-                        "LocalSnapshot terminal=%s mode=%s rowCount=%d entries=%d amount=%d",
-                        GetTerminalId(terminal),
+                        "LocalSnapshot terminal=%s rowsMode=%s iterMode=%s rowCount=%d entries=%d amount=%d",
+                        terminalId,
+                        tostring(rowsMode or "?"),
                         tostring(iterMode or "?"),
                         tonumber(rowCount or 0),
                         tonumber(totalEntries or 0),
@@ -772,19 +913,42 @@ local function BuildLocalEntryMap(terminal)
                 return map, totalEntries, totalAmount
             end
 
-            local open = false
-            pcall(function()
-                open = component.IsVirtualSessionOpenForUi() == true
-            end)
+            local okOpen, openValue, openMode, openErr = CallComponentMethod(component, "IsVirtualSessionOpenForUi")
+            local open = okOpen and openValue == true
             LogThrottled(
-                "localsnapshot-failed",
-                0.8,
+                "localsnapshot-failed-" .. tostring(terminalId),
+                1.2,
                 string.format(
-                    "LocalSnapshot FAILED terminal=%s open=%s mode=%s -> fallback inventory",
-                    GetTerminalId(terminal),
+                    "LocalSnapshot FAILED terminal=%s open=%s rowsMode=%s iterMode=%s openMode=%s err='%s' openErr='%s' -> fallback inventory",
+                    terminalId,
                     tostring(open == true),
-                    tostring(iterMode or "unknown")))
+                    tostring(rowsMode or "unknown"),
+                    tostring(iterMode or "unknown"),
+                    tostring(openMode or "?"),
+                    ShortErr(rowsErr),
+                    ShortErr(openErr)))
+        else
+            local okOpen, openValue, openMode, openErr = CallComponentMethod(component, "IsVirtualSessionOpenForUi")
+            LogThrottled(
+                "localsnapshot-callfail-" .. tostring(terminalId),
+                1.2,
+                string.format(
+                    "LocalSnapshot call failed terminal=%s rowsMode=%s err='%s' open=%s openMode=%s openErr='%s' -> fallback inventory",
+                    terminalId,
+                    tostring(rowsMode or "?"),
+                    ShortErr(rowsErr),
+                    tostring(okOpen and openValue == true),
+                    tostring(openMode or "?"),
+                    ShortErr(openErr)))
         end
+    else
+        LogDebugThrottled(
+            "localsnapshot-component-missing-" .. tostring(terminalId),
+            2.0,
+            string.format(
+                "LocalSnapshot component missing terminal=%s identifier=%s; fallback inventory",
+                tostring(terminalId),
+                tostring(GetItemIdentifier(terminal))))
     end
 
     local map = {}
@@ -817,6 +981,14 @@ local function BuildLocalEntryMap(terminal)
     for _, _ in pairs(map) do
         totalEntries = totalEntries + 1
     end
+    LogDebugThrottled(
+        "localsnapshot-fallback-" .. tostring(terminalId),
+        2.0,
+        string.format(
+            "LocalSnapshot fallback inventory terminal=%s entries=%d amount=%d",
+            tostring(terminalId),
+            tonumber(totalEntries or 0),
+            tonumber(totalAmount or 0)))
     return map, totalEntries, totalAmount
 end
 
@@ -1094,17 +1266,23 @@ local function RequestTake(entry)
     local reasonCode = ""
     local component = GetTerminalComponent(terminal)
     if component ~= nil then
-        local okCall, reason = pcall(function()
-            return tostring(component.TryTakeOneByIdentifierFromVirtualSession(entry.identifier, character) or "")
-        end)
+        local okCall, reasonValue, callMode, callErr = CallComponentMethod(
+            component,
+            "TryTakeOneByIdentifierFromVirtualSession",
+            entry.identifier,
+            character)
         if okCall then
-            reasonCode = tostring(reason or "")
+            reasonCode = tostring(reasonValue or "")
             LogDebug(string.format(
-                "RequestTake local call result reasonCode='%s'",
-                tostring(reasonCode)))
+                "RequestTake local call result reasonCode='%s' mode=%s",
+                tostring(reasonCode),
+                tostring(callMode or "?")))
         else
             reasonCode = "not_ready"
-            LogDebug("RequestTake local call failed with exception; reasonCode='not_ready'.")
+            LogDebug(string.format(
+                "RequestTake local call failed mode=%s err=%s; reasonCode='not_ready'.",
+                tostring(callMode or "?"),
+                tostring(callErr or "")))
         end
         if reasonCode == "" then
             success = true
@@ -1538,7 +1716,7 @@ Hook.Add("think", "DBIOTEST_ClientTerminalUiThink", function()
             SendUnsubscribe()
             ResetViewState(true)
         end
-        LogDebugThrottled("think-no-session", 1.0, "Think state=no_session panel hidden")
+        LogDebugThrottled("think-no-session", 6.0, "Think state=no_session panel hidden")
         LogPerf("think", thinkStartedAt, "state=no_session")
         return
     end
@@ -1563,7 +1741,7 @@ Hook.Add("think", "DBIOTEST_ClientTerminalUiThink", function()
                 DBClient.Panel.Visible = true
                 LogDebugThrottled(
                     "think-keepalive",
-                    0.6,
+                    2.5,
                     string.format("Think keepalive activeLostAgo=%.2f", activeLostAgo))
                 LogPerf("think", thinkStartedAt, "state=keepalive")
                 return
@@ -1581,7 +1759,7 @@ Hook.Add("think", "DBIOTEST_ClientTerminalUiThink", function()
                     activeLostAgo))
         end
         DBClient.Panel.Visible = false
-        LogDebugThrottled("think-no-terminal", 0.8, "Think state=no_terminal panel hidden")
+        LogDebugThrottled("think-no-terminal", 6.0, "Think state=no_terminal panel hidden")
         LogPerf("think", thinkStartedAt, "state=no_terminal")
         return
     end
@@ -1641,7 +1819,7 @@ Hook.Add("think", "DBIOTEST_ClientTerminalUiThink", function()
                     tonumber(totalEntries or 0),
                     tonumber(totalAmount or 0)))
             else
-                LogDebugThrottled("localsync-unchanged", 0.8, "LocalSync unchanged.")
+                LogDebugThrottled("localsync-unchanged", 4.0, "LocalSync unchanged.")
             end
         end
     else
@@ -1663,13 +1841,13 @@ end)
 LogDebug("Hook.Add registered: DBIOTEST_ClientTerminalUiThink")
 
 Networking.Receive(DBClient.NetViewSnapshot, function(message)
-    LogDebug("Networking.Receive snapshot packet.")
+    LogDebugThrottled("net-snapshot-recv", 2.0, "Networking.Receive snapshot packet.")
     ApplySnapshot(message)
 end)
 LogDebug("Networking.Receive registered: " .. tostring(DBClient.NetViewSnapshot))
 
 Networking.Receive(DBClient.NetViewDelta, function(message)
-    LogDebug("Networking.Receive delta packet.")
+    LogDebugThrottled("net-delta-recv", 2.0, "Networking.Receive delta packet.")
     ApplyDelta(message)
 end)
 LogDebug("Networking.Receive registered: " .. tostring(DBClient.NetViewDelta))
