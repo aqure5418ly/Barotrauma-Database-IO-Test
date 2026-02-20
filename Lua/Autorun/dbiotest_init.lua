@@ -306,6 +306,7 @@ DatabaseIOTestLua.FlushLuaFileLog = FlushLuaFileLog
 
 local function BootInfo(line)
     local text = "[DBIOTEST][B1][Bootstrap] " .. tostring(line or "")
+    text = StampLogLine(text)
     local wrote = TryWriteBootstrap("info", text)
     if not wrote then
         AppendLuaFileLogLine(text)
@@ -317,6 +318,7 @@ local function BootDebug(line)
         return
     end
     local text = "[DBIOTEST][B1][Bootstrap][DBG] " .. tostring(line or "")
+    text = StampLogLine(text)
     local wrote = TryWriteBootstrap("debug", text)
     if not wrote then
         AppendLuaFileLogLine("[DBG->INFO] " .. text)

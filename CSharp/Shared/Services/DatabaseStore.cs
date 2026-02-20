@@ -1479,6 +1479,22 @@ namespace DatabaseIOTest.Services
             return CompactItems(CloneItemList(items ?? new List<ItemData>()));
         }
 
+        public static DatabaseTerminalComponent FindRegisteredTerminal(int terminalEntityId)
+        {
+            if (terminalEntityId <= 0) { return null; }
+
+            foreach (var pair in _terminals)
+            {
+                if (TryGetTerminalByEntityId(pair.Key, terminalEntityId, out var terminal) &&
+                    terminal != null)
+                {
+                    return terminal;
+                }
+            }
+
+            return null;
+        }
+
         private static bool IsBetterCandidate(DatabaseData candidate, DatabaseData baseline)
         {
             if (candidate == null) { return false; }

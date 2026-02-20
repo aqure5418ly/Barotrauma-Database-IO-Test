@@ -10,6 +10,8 @@ DBServer.NetViewSnapshot = "DBIOTEST_ViewSnapshot"
 DBServer.NetViewDelta = "DBIOTEST_ViewDelta"
 
 DBServer.Subscriptions = DBServer.Subscriptions or {}
+DBServer.LocalSubscription = DBServer.LocalSubscription or nil
+DBServer.LocalOutbox = DBServer.LocalOutbox or {}
 DBServer.NextViewSyncAt = DBServer.NextViewSyncAt or 0
 DBServer.NextPerfLogAt = DBServer.NextPerfLogAt or 0
 DBServer.NextSnapshotDiagAt = DBServer.NextSnapshotDiagAt or 0
@@ -238,6 +240,187 @@ local function GetTerminalId(item)
     return id or "none"
 end
 
+local function ToTerminalEntityId(item)
+    local value = tonumber(GetTerminalId(item))
+    return math.floor(value or 0)
+end
+
+local function GetLuaBridge()
+    if DBServer.LuaBridge == false then
+        return nil
+    end
+    if DBServer.LuaBridge ~= nil then
+        return DBServer.LuaBridge
+    end
+
+    local bridge = nil
+    pcall(function()
+        if DatabaseIOTest ~= nil and
+            DatabaseIOTest.Services ~= nil and
+            DatabaseIOTest.Services.DatabaseLuaBridge ~= nil then
+            bridge = DatabaseIOTest.Services.DatabaseLuaBridge
+        end
+    end)
+    if bridge == nil then
+        pcall(function()
+            if CS ~= nil and
+                CS.DatabaseIOTest ~= nil and
+                CS.DatabaseIOTest.Services ~= nil and
+                CS.DatabaseIOTest.Services.DatabaseLuaBridge ~= nil then
+                bridge = CS.DatabaseIOTest.Services.DatabaseLuaBridge
+            end
+        end)
+    end
+
+    if bridge ~= nil then
+        DBServer.LuaBridge = bridge
+        Log("Lua bridge resolved: DatabaseLuaBridge")
+        return bridge
+    end
+
+    DBServer.LuaBridge = false
+    Log("Lua bridge unavailable: DatabaseLuaBridge not found.")
+    return nil
+end
+
+local function BridgeIsTerminalSessionOpen(terminalEntityId)
+    local bridge = GetLuaBridge()
+    if bridge == nil then
+        return false, false, "bridge_missing", "bridge=nil"
+    end
+
+    local errors = {}
+    local ok, result = pcall(function()
+        return bridge.IsTerminalSessionOpen(terminalEntityId)
+    end)
+    if ok then
+        return true, result == true, "dot", ""
+    end
+    table.insert(errors, tostring(result or ""))
+
+    ok, result = pcall(function()
+        return bridge.IsTerminalSessionOpen(bridge, terminalEntityId)
+    end)
+    if ok then
+        return true, result == true, "dot-self", ""
+    end
+    table.insert(errors, tostring(result or ""))
+
+    ok, result = pcall(function()
+        return bridge:IsTerminalSessionOpen(terminalEntityId)
+    end)
+    if ok then
+        return true, result == true, "colon", ""
+    end
+    table.insert(errors, tostring(result or ""))
+
+    return false, false, "invoke_failed", table.concat(errors, " || ")
+end
+
+local function BridgeGetTerminalVirtualSnapshot(terminalEntityId, refreshCurrentPage)
+    local bridge = GetLuaBridge()
+    if bridge == nil then
+        return false, nil, "bridge_missing", "bridge=nil"
+    end
+
+    local refresh = refreshCurrentPage == true
+    local errors = {}
+    local ok, result = pcall(function()
+        return bridge.GetTerminalVirtualSnapshot(terminalEntityId, refresh)
+    end)
+    if ok then
+        return true, result, "dot", ""
+    end
+    table.insert(errors, tostring(result or ""))
+
+    ok, result = pcall(function()
+        return bridge.GetTerminalVirtualSnapshot(bridge, terminalEntityId, refresh)
+    end)
+    if ok then
+        return true, result, "dot-self", ""
+    end
+    table.insert(errors, tostring(result or ""))
+
+    ok, result = pcall(function()
+        return bridge:GetTerminalVirtualSnapshot(terminalEntityId, refresh)
+    end)
+    if ok then
+        return true, result, "colon", ""
+    end
+    table.insert(errors, tostring(result or ""))
+
+    return false, nil, "invoke_failed", table.concat(errors, " || ")
+end
+
+local function BridgeGetTerminalDatabaseId(terminalEntityId)
+    local bridge = GetLuaBridge()
+    if bridge == nil then
+        return false, "default", "bridge_missing", "bridge=nil"
+    end
+
+    local errors = {}
+    local ok, result = pcall(function()
+        return bridge.GetTerminalDatabaseId(terminalEntityId)
+    end)
+    if ok then
+        return true, tostring(result or "default"), "dot", ""
+    end
+    table.insert(errors, tostring(result or ""))
+
+    ok, result = pcall(function()
+        return bridge.GetTerminalDatabaseId(bridge, terminalEntityId)
+    end)
+    if ok then
+        return true, tostring(result or "default"), "dot-self", ""
+    end
+    table.insert(errors, tostring(result or ""))
+
+    ok, result = pcall(function()
+        return bridge:GetTerminalDatabaseId(terminalEntityId)
+    end)
+    if ok then
+        return true, tostring(result or "default"), "colon", ""
+    end
+    table.insert(errors, tostring(result or ""))
+
+    return false, "default", "invoke_failed", table.concat(errors, " || ")
+end
+
+local function BridgeTryTakeOneByIdentifier(terminalEntityId, identifier, actor)
+    local bridge = GetLuaBridge()
+    if bridge == nil then
+        return false, "bridge_missing", "bridge_missing", "bridge=nil"
+    end
+
+    local wanted = tostring(identifier or "")
+    local errors = {}
+    local ok, result = pcall(function()
+        return bridge.TryTakeOneByIdentifierFromTerminalSession(terminalEntityId, wanted, actor)
+    end)
+    if ok then
+        return true, tostring(result or ""), "dot", ""
+    end
+    table.insert(errors, tostring(result or ""))
+
+    ok, result = pcall(function()
+        return bridge.TryTakeOneByIdentifierFromTerminalSession(bridge, terminalEntityId, wanted, actor)
+    end)
+    if ok then
+        return true, tostring(result or ""), "dot-self", ""
+    end
+    table.insert(errors, tostring(result or ""))
+
+    ok, result = pcall(function()
+        return bridge:TryTakeOneByIdentifierFromTerminalSession(terminalEntityId, wanted, actor)
+    end)
+    if ok then
+        return true, tostring(result or ""), "colon", ""
+    end
+    table.insert(errors, tostring(result or ""))
+
+    return false, "invoke_failed", "invoke_failed", table.concat(errors, " || ")
+end
+
 local function ResolveTerminalComponent(item)
     if item == nil or item.Removed then
         return nil
@@ -301,37 +484,99 @@ local function ResolveTerminalComponent(item)
     return nil
 end
 
-local UnpackArgs = table.unpack or unpack
 local function CallComponentMethod(component, methodName, ...)
     if component == nil then
         return false, nil, "component_nil", "component=nil"
     end
 
-    local method = nil
-    local okGet, getErr = pcall(function()
-        method = component[methodName]
-    end)
-    if not okGet or method == nil then
-        return false, nil, "method_missing", tostring(getErr or "missing")
-    end
-
     local args = table.pack(...)
-    local okSelf, resultSelf = pcall(function()
-        return method(component, UnpackArgs(args, 1, args.n))
-    end)
-    if okSelf then
-        return true, resultSelf, "self", ""
+    local errors = {}
+    local function TryCall(mode, fn)
+        local ok, result = pcall(fn)
+        if ok then
+            return true, result, mode, ""
+        end
+        table.insert(errors, tostring(result or ""))
+        return false, nil, nil, nil
     end
 
-    local selfErr = tostring(resultSelf or "")
-    local okBound, resultBound = pcall(function()
-        return method(UnpackArgs(args, 1, args.n))
-    end)
-    if okBound then
-        return true, resultBound, "bound", ""
+    if methodName == "IsVirtualSessionOpenForUi" then
+        do
+            local ok, result, mode, err = TryCall("dot", function()
+                return component.IsVirtualSessionOpenForUi()
+            end)
+            if ok then return ok, result, mode, err end
+        end
+        do
+            local ok, result, mode, err = TryCall("colon", function()
+                return component:IsVirtualSessionOpenForUi()
+            end)
+            if ok then return ok, result, mode, err end
+        end
+        do
+            local ok, result, mode, err = TryCall("dot-self", function()
+                return component.IsVirtualSessionOpenForUi(component)
+            end)
+            if ok then return ok, result, mode, err end
+        end
+    elseif methodName == "GetVirtualViewSnapshot" then
+        local refresh = args[1]
+        do
+            local ok, result, mode, err = TryCall("dot", function()
+                return component.GetVirtualViewSnapshot(refresh)
+            end)
+            if ok then return ok, result, mode, err end
+        end
+        do
+            local ok, result, mode, err = TryCall("colon", function()
+                return component:GetVirtualViewSnapshot(refresh)
+            end)
+            if ok then return ok, result, mode, err end
+        end
+        do
+            local ok, result, mode, err = TryCall("dot-self", function()
+                return component.GetVirtualViewSnapshot(component, refresh)
+            end)
+            if ok then return ok, result, mode, err end
+        end
+        do
+            local ok, result, mode, err = TryCall("dot-noarg", function()
+                return component.GetVirtualViewSnapshot()
+            end)
+            if ok then return ok, result, mode, err end
+        end
+        do
+            local ok, result, mode, err = TryCall("colon-noarg", function()
+                return component:GetVirtualViewSnapshot()
+            end)
+            if ok then return ok, result, mode, err end
+        end
+    elseif methodName == "TryTakeOneByIdentifierFromVirtualSession" then
+        local identifier = args[1]
+        local actor = args[2]
+        do
+            local ok, result, mode, err = TryCall("dot", function()
+                return component.TryTakeOneByIdentifierFromVirtualSession(identifier, actor)
+            end)
+            if ok then return ok, result, mode, err end
+        end
+        do
+            local ok, result, mode, err = TryCall("colon", function()
+                return component:TryTakeOneByIdentifierFromVirtualSession(identifier, actor)
+            end)
+            if ok then return ok, result, mode, err end
+        end
+        do
+            local ok, result, mode, err = TryCall("dot-self", function()
+                return component.TryTakeOneByIdentifierFromVirtualSession(component, identifier, actor)
+            end)
+            if ok then return ok, result, mode, err end
+        end
+    else
+        return false, nil, "method_unsupported", tostring(methodName or "")
     end
 
-    return false, nil, "invoke_failed", selfErr .. " || " .. tostring(resultBound or "")
+    return false, nil, "invoke_failed", table.concat(errors, " || ")
 end
 
 local function IsSessionTerminal(item)
@@ -355,6 +600,20 @@ local function IsSessionTerminal(item)
     end
 
     if normalized == "databaseterminalfixed" or hasFixedTag == true then
+        local terminalEntityId = ToTerminalEntityId(item)
+        local bridgeOk, bridgeOpen, bridgeMode, bridgeErr = BridgeIsTerminalSessionOpen(terminalEntityId)
+        if bridgeOk then
+            return bridgeOpen == true
+        end
+        LogDebugThrottled(
+            "server-fixed-open-bridge-fail-" .. tostring(GetTerminalId(item)),
+            2.0,
+            string.format(
+                "IsSessionTerminal fixed-open bridge failed terminal=%s mode=%s err=%s",
+                tostring(GetTerminalId(item)),
+                tostring(bridgeMode or "?"),
+                tostring(bridgeErr or "")))
+
         local component = ResolveTerminalComponent(item)
         if component ~= nil then
             local okOpen, openValue, openMode, openErr = CallComponentMethod(component, "IsVirtualSessionOpenForUi")
@@ -425,6 +684,19 @@ local function GetTerminalDatabaseId(terminal)
     if terminal == nil then
         return "default"
     end
+
+    local bridgeOk, bridgeDbId, bridgeMode, bridgeErr = BridgeGetTerminalDatabaseId(ToTerminalEntityId(terminal))
+    if bridgeOk and tostring(bridgeDbId or "") ~= "" then
+        return tostring(bridgeDbId or "default")
+    end
+    LogDebugThrottled(
+        "server-getdbid-bridge-fail-" .. tostring(GetTerminalId(terminal)),
+        2.0,
+        string.format(
+            "GetTerminalDatabaseId bridge failed terminal=%s mode=%s err=%s",
+            tostring(GetTerminalId(terminal)),
+            tostring(bridgeMode or "?"),
+            tostring(bridgeErr or "")))
 
     local component = ResolveTerminalComponent(terminal)
     if component == nil then
@@ -510,6 +782,57 @@ local function ForEachVirtualRow(rows, callback)
 end
 
 local function BuildEntryMapFromComponent(terminal)
+    local terminalEntityId = ToTerminalEntityId(terminal)
+    local bridgeRowsOk, bridgeRows, bridgeRowsMode, bridgeRowsErr = BridgeGetTerminalVirtualSnapshot(terminalEntityId, true)
+    if bridgeRowsOk and bridgeRows ~= nil then
+        local map = {}
+        local totalEntries = 0
+        local totalAmount = 0
+
+        local iterOk, rowCount, iterMode = ForEachVirtualRow(bridgeRows, function(row)
+            local identifier = tostring(row.Identifier or "")
+            local key = NormalizeIdentifier(identifier)
+            if key ~= "" then
+                local amount = math.max(0, math.floor(tonumber(row.Amount) or 0))
+                map[key] = {
+                    key = key,
+                    identifier = identifier,
+                    prefabIdentifier = tostring(row.PrefabIdentifier or identifier),
+                    displayName = tostring(row.DisplayName or identifier),
+                    amount = amount,
+                    bestQuality = math.floor(tonumber(row.BestQuality) or 0),
+                    avgCondition = tonumber(row.AverageCondition) or 100.0
+                }
+                totalEntries = totalEntries + 1
+                totalAmount = totalAmount + amount
+            end
+        end)
+
+        if iterOk then
+            LogDebugThrottled(
+                "server-buildmap-bridge-" .. tostring(GetTerminalId(terminal)),
+                1.2,
+                string.format(
+                    "BuildEntryMapFromComponent bridge terminal=%s mode=%s iter=%s rows=%d entries=%d amount=%d",
+                    tostring(GetTerminalId(terminal)),
+                    tostring(bridgeRowsMode or "?"),
+                    tostring(iterMode or "?"),
+                    tonumber(rowCount or 0),
+                    tonumber(totalEntries or 0),
+                    tonumber(totalAmount or 0)))
+            return map, totalEntries, totalAmount
+        end
+    else
+        LogDebugThrottled(
+            "server-buildmap-bridge-fail-" .. tostring(GetTerminalId(terminal)),
+            1.5,
+            string.format(
+                "BuildEntryMapFromComponent bridge call failed terminal=%s mode=%s err=%s",
+                tostring(GetTerminalId(terminal)),
+                tostring(bridgeRowsMode or "?"),
+                tostring(bridgeRowsErr or "")))
+    end
+
     local component = GetTerminalComponent(terminal)
     if component == nil then
         LogDebugThrottled(
@@ -654,6 +977,60 @@ local function BuildDelta(previousEntries, currentEntries)
     return removed, upserts
 end
 
+local function CloneEntryList(source)
+    local list = {}
+    for _, entry in ipairs(source or {}) do
+        list[#list + 1] = {
+            key = tostring(entry.key or NormalizeIdentifier(entry.identifier or "")),
+            identifier = tostring(entry.identifier or ""),
+            prefabIdentifier = tostring(entry.prefabIdentifier or entry.identifier or ""),
+            displayName = tostring(entry.displayName or entry.identifier or ""),
+            amount = tonumber(entry.amount) or 0,
+            bestQuality = tonumber(entry.bestQuality) or 0,
+            avgCondition = tonumber(entry.avgCondition) or 100.0
+        }
+    end
+    return list
+end
+
+local function CloneStringList(source)
+    local list = {}
+    for _, value in ipairs(source or {}) do
+        list[#list + 1] = tostring(value or "")
+    end
+    return list
+end
+
+local function BuildOrderedEntryList(entries)
+    local list = {}
+    for _, entry in pairs(entries or {}) do
+        list[#list + 1] = {
+            key = tostring(entry.key or NormalizeIdentifier(entry.identifier or "")),
+            identifier = tostring(entry.identifier or ""),
+            prefabIdentifier = tostring(entry.prefabIdentifier or entry.identifier or ""),
+            displayName = tostring(entry.displayName or entry.identifier or ""),
+            amount = tonumber(entry.amount) or 0,
+            bestQuality = tonumber(entry.bestQuality) or 0,
+            avgCondition = tonumber(entry.avgCondition) or 100.0
+        }
+    end
+    table.sort(list, function(a, b)
+        return string.lower(tostring(a.identifier or "")) < string.lower(tostring(b.identifier or ""))
+    end)
+    return list
+end
+
+local function PushLocalPacket(packet)
+    if packet == nil then
+        return
+    end
+    DBServer.LocalOutbox = DBServer.LocalOutbox or {}
+    table.insert(DBServer.LocalOutbox, packet)
+    while #DBServer.LocalOutbox > 64 do
+        table.remove(DBServer.LocalOutbox, 1)
+    end
+end
+
 local function WriteEntry(message, entry)
     message.WriteString(tostring(entry.identifier or ""))
     message.WriteString(tostring(entry.prefabIdentifier or entry.identifier or ""))
@@ -671,13 +1048,7 @@ local function SendSnapshot(client, sub, entries, totalEntries, totalAmount, rea
         return
     end
 
-    local list = {}
-    for _, entry in pairs(entries or {}) do
-        table.insert(list, entry)
-    end
-    table.sort(list, function(a, b)
-        return string.lower(tostring(a.identifier or "")) < string.lower(tostring(b.identifier or ""))
-    end)
+    local list = BuildOrderedEntryList(entries)
 
     local message = Networking.Start(DBServer.NetViewSnapshot)
     message.WriteString(tostring(sub.terminalEntityId or ""))
@@ -808,10 +1179,17 @@ local function FlagTerminalDirty(terminalEntityId)
             flagged = flagged + 1
         end
     end
+    local localFlagged = 0
+    local localSub = DBServer.LocalSubscription
+    if localSub ~= nil and tostring(localSub.terminalEntityId or "") == target then
+        localSub.forcePush = true
+        localFlagged = 1
+    end
     LogDebug(string.format(
-        "FlagTerminalDirty terminal=%s flaggedSubscriptions=%d",
+        "FlagTerminalDirty terminal=%s flaggedSubscriptions=%d flaggedLocal=%d",
         tostring(target),
-        tonumber(flagged or 0)))
+        tonumber(flagged or 0),
+        tonumber(localFlagged or 0)))
 end
 
 local function SendTakeResult(client, success, text)
@@ -851,6 +1229,315 @@ local function MapVirtualTakeError(reason)
         return L("dbiotest.ui.take.invalidterminal", "Terminal session not found.")
     end
     return L("dbiotest.ui.take.failed", "Failed to transfer item.")
+end
+
+local function EnsureLocalSubscription(terminal, character)
+    if terminal == nil or terminal.Removed then
+        return nil
+    end
+
+    local terminalId = tostring(terminal.ID)
+    local current = DBServer.LocalSubscription
+    if current ~= nil and tostring(current.terminalEntityId or "") == terminalId then
+        current.terminal = terminal
+        current.character = character
+        return current
+    end
+
+    local sub = {
+        terminalEntityId = terminalId,
+        terminal = terminal,
+        character = character,
+        databaseId = GetTerminalDatabaseId(terminal),
+        serial = 0,
+        lastEntries = {},
+        lastTotalEntries = 0,
+        lastTotalAmount = 0,
+        forceSnapshot = true,
+        forcePush = true
+    }
+    DBServer.LocalSubscription = sub
+    Log(string.format(
+        "LocalSubscribe terminal=%s db='%s'",
+        tostring(terminalId),
+        tostring(sub.databaseId or "default")))
+    return sub
+end
+
+local function RemoveLocalSubscription(reason)
+    local sub = DBServer.LocalSubscription
+    if sub ~= nil then
+        Log(string.format(
+            "LocalUnsubscribe terminal=%s reason='%s'",
+            tostring(sub.terminalEntityId or ""),
+            tostring(reason or "")))
+    end
+    DBServer.LocalSubscription = nil
+end
+
+local function PushLocalSnapshot(sub, entries, totalEntries, totalAmount, reason)
+    if sub == nil then
+        return
+    end
+
+    local payload = BuildOrderedEntryList(entries)
+    PushLocalPacket({
+        kind = "snapshot",
+        terminalEntityId = tostring(sub.terminalEntityId or ""),
+        databaseId = tostring(sub.databaseId or "default"),
+        serial = tonumber(sub.serial or 0),
+        totalEntries = tonumber(totalEntries or 0),
+        totalAmount = tonumber(totalAmount or 0),
+        payload = payload,
+        reason = tostring(reason or "snapshot")
+    })
+    LogDebug(string.format(
+        "LocalSnapshot queued terminal=%s serial=%s entries=%d amount=%d payload=%d reason='%s' queue=%d",
+        tostring(sub.terminalEntityId or ""),
+        tostring(sub.serial or 0),
+        tonumber(totalEntries or 0),
+        tonumber(totalAmount or 0),
+        tonumber(#payload or 0),
+        tostring(reason or "snapshot"),
+        tonumber(#(DBServer.LocalOutbox or {}) or 0)))
+end
+
+local function PushLocalDelta(sub, removed, upserts, totalEntries, totalAmount, reason)
+    if sub == nil then
+        return
+    end
+
+    PushLocalPacket({
+        kind = "delta",
+        terminalEntityId = tostring(sub.terminalEntityId or ""),
+        databaseId = tostring(sub.databaseId or "default"),
+        serial = tonumber(sub.serial or 0),
+        totalEntries = tonumber(totalEntries or 0),
+        totalAmount = tonumber(totalAmount or 0),
+        removed = CloneStringList(removed),
+        upserts = CloneEntryList(upserts),
+        reason = tostring(reason or "delta")
+    })
+    LogDebug(string.format(
+        "LocalDelta queued terminal=%s serial=%s removed=%d upserts=%d entries=%d amount=%d reason='%s' queue=%d",
+        tostring(sub.terminalEntityId or ""),
+        tostring(sub.serial or 0),
+        tonumber(#removed or 0),
+        tonumber(#upserts or 0),
+        tonumber(totalEntries or 0),
+        tonumber(totalAmount or 0),
+        tostring(reason or "delta"),
+        tonumber(#(DBServer.LocalOutbox or {}) or 0)))
+end
+
+local function SyncLocalSubscription()
+    local snapshotCount = 0
+    local deltaCount = 0
+    local sub = DBServer.LocalSubscription
+    if sub == nil then
+        return snapshotCount, deltaCount
+    end
+
+    local terminal = sub.terminal
+    if terminal == nil or terminal.Removed then
+        terminal = FindItemByEntityId(sub.terminalEntityId)
+        sub.terminal = terminal
+    end
+    if terminal == nil or terminal.Removed or not IsSessionTerminal(terminal) then
+        RemoveLocalSubscription("terminal missing")
+        return snapshotCount, deltaCount
+    end
+
+    local character = sub.character
+    if character == nil or character.Removed then
+        pcall(function()
+            character = Character.Controlled
+        end)
+        sub.character = character
+    end
+    if character == nil or character.Removed or character.IsDead then
+        RemoveLocalSubscription("character missing")
+        return snapshotCount, deltaCount
+    end
+    if not CharacterCanUseTerminal(character, terminal) then
+        RemoveLocalSubscription("out of range")
+        return snapshotCount, deltaCount
+    end
+
+    local entries, totalEntries, totalAmount = BuildEntryMap(terminal)
+    local removed, upserts = BuildDelta(sub.lastEntries, entries)
+    local changed = sub.forcePush == true or #removed > 0 or #upserts > 0
+    if not changed then
+        return snapshotCount, deltaCount
+    end
+
+    sub.serial = tonumber(sub.serial or 0) + 1
+    sub.databaseId = GetTerminalDatabaseId(terminal)
+    local tooManyChanges = (#removed + #upserts) > 24
+    if sub.forceSnapshot == true or sub.serial <= 1 or tooManyChanges then
+        PushLocalSnapshot(sub, entries, totalEntries, totalAmount, tooManyChanges and "change burst" or "snapshot")
+        snapshotCount = snapshotCount + 1
+    else
+        PushLocalDelta(sub, removed, upserts, totalEntries, totalAmount, "delta")
+        deltaCount = deltaCount + 1
+    end
+
+    sub.lastEntries = CloneEntryMap(entries)
+    sub.lastTotalEntries = totalEntries
+    sub.lastTotalAmount = totalAmount
+    sub.forceSnapshot = false
+    sub.forcePush = false
+
+    return snapshotCount, deltaCount
+end
+
+function DBServer.LocalB1Subscribe(terminalEntityId, character)
+    if Game.IsMultiplayer then
+        return false, "multiplayer"
+    end
+
+    local terminal = FindItemByEntityId(terminalEntityId)
+    if terminal == nil or not IsSessionTerminal(terminal) then
+        RemoveLocalSubscription("invalid terminal")
+        return false, "invalid terminal"
+    end
+    if character == nil or not CharacterCanUseTerminal(character, terminal) then
+        return false, "permission denied"
+    end
+
+    local sub = EnsureLocalSubscription(terminal, character)
+    if sub == nil then
+        return false, "subscribe failed"
+    end
+    sub.forceSnapshot = true
+    sub.forcePush = true
+    return true, ""
+end
+
+function DBServer.LocalB1Unsubscribe(terminalEntityId)
+    if Game.IsMultiplayer then
+        return false, "multiplayer"
+    end
+
+    local sub = DBServer.LocalSubscription
+    if sub == nil then
+        return true, "none"
+    end
+
+    local target = tostring(terminalEntityId or "")
+    if target == "" or tostring(sub.terminalEntityId or "") == target then
+        RemoveLocalSubscription("local client request")
+        return true, ""
+    end
+
+    return false, "terminal mismatch"
+end
+
+function DBServer.LocalB1Poll()
+    if Game.IsMultiplayer then
+        return {}
+    end
+
+    local packets = DBServer.LocalOutbox or {}
+    DBServer.LocalOutbox = {}
+    return packets
+end
+
+function DBServer.LocalB1IsTerminalSessionOpen(terminalEntityId, character)
+    if Game.IsMultiplayer then
+        return false
+    end
+
+    local terminal = FindItemByEntityId(terminalEntityId)
+    if terminal == nil or terminal.Removed then
+        return false
+    end
+    if not IsSessionTerminal(terminal) then
+        return false
+    end
+    if character ~= nil and not CharacterCanUseTerminal(character, terminal) then
+        return false
+    end
+    return true
+end
+
+function DBServer.LocalB1GetTerminalDatabaseId(terminalEntityId)
+    if Game.IsMultiplayer then
+        return "default"
+    end
+
+    local terminal = FindItemByEntityId(terminalEntityId)
+    if terminal == nil or terminal.Removed then
+        return "default"
+    end
+    return tostring(GetTerminalDatabaseId(terminal) or "default")
+end
+
+function DBServer.LocalB1RequestTake(terminalEntityId, wantedIdentifier, character)
+    if Game.IsMultiplayer then
+        return false, L("dbiotest.ui.take.notready", "Terminal API is not ready.")
+    end
+
+    local terminal = nil
+    local sub = DBServer.LocalSubscription
+    if sub ~= nil and tostring(sub.terminalEntityId or "") == tostring(terminalEntityId or "") then
+        terminal = sub.terminal
+    end
+    if terminal == nil or terminal.Removed then
+        terminal = FindItemByEntityId(terminalEntityId)
+        if sub ~= nil and terminal ~= nil then
+            sub.terminal = terminal
+        end
+    end
+
+    if terminal == nil or not IsSessionTerminal(terminal) then
+        return false, L("dbiotest.ui.take.invalidterminal", "Terminal session not found.")
+    end
+    if character == nil or not CharacterCanUseTerminal(character, terminal) then
+        return false, L("dbiotest.ui.take.denied", "You are not allowed to use this terminal.")
+    end
+
+    local numericTerminalId = tonumber(terminalEntityId) or ToTerminalEntityId(terminal)
+    local bridgeOk, bridgeReason, bridgeMode, bridgeErr = BridgeTryTakeOneByIdentifier(
+        numericTerminalId,
+        wantedIdentifier,
+        character)
+    if bridgeOk then
+        local reason = tostring(bridgeReason or "")
+        if reason ~= "" then
+            return false, MapVirtualTakeError(reason)
+        end
+        FlagTerminalDirty(terminalEntityId)
+        LogDebug(string.format(
+            "LocalB1RequestTake succeeded by bridge mode=%s terminal=%s wanted=%s",
+            tostring(bridgeMode or "?"),
+            tostring(terminalEntityId or ""),
+            tostring(wantedIdentifier or "")))
+        return true, L("dbiotest.ui.take.success", "Item moved to terminal buffer.")
+    end
+    LogDebug(string.format(
+        "LocalB1RequestTake bridge invoke failed mode=%s err=%s; fallback component API.",
+        tostring(bridgeMode or "?"),
+        tostring(bridgeErr or "")))
+
+    local component = GetTerminalComponent(terminal)
+    if component ~= nil then
+        local okCall, reasonValue = CallComponentMethod(
+            component,
+            "TryTakeOneByIdentifierFromVirtualSession",
+            wantedIdentifier,
+            character)
+        local reason = tostring(reasonValue or "")
+        if okCall then
+            if reason ~= "" then
+                return false, MapVirtualTakeError(reason)
+            end
+            FlagTerminalDirty(terminalEntityId)
+            return true, L("dbiotest.ui.take.success", "Item moved to terminal buffer.")
+        end
+    end
+
+    return false, L("dbiotest.ui.take.notready", "Terminal API is not ready.")
 end
 
 local runAsServerAuthority = SERVER == true
@@ -975,6 +1662,31 @@ Networking.Receive(DBServer.NetTakeRequest, function(message, client)
         return
     end
 
+    local numericTerminalId = tonumber(terminalEntityId) or ToTerminalEntityId(terminal)
+    local bridgeOk, bridgeReason, bridgeMode, bridgeErr = BridgeTryTakeOneByIdentifier(
+        numericTerminalId,
+        wantedIdentifier,
+        character)
+    if bridgeOk then
+        local reason = tostring(bridgeReason or "")
+        if reason ~= "" then
+            LogDebug("NetTakeRequest failed by bridge reason='" .. tostring(reason) .. "'")
+            SendTakeResult(client, false, MapVirtualTakeError(reason))
+            return
+        end
+
+        SendTakeResult(client, true, L("dbiotest.ui.take.success", "Item moved to terminal buffer."))
+        FlagTerminalDirty(terminalEntityId)
+        LogDebug(string.format(
+            "NetTakeRequest succeeded by bridge mode=%s and flagged terminal dirty.",
+            tostring(bridgeMode or "?")))
+        return
+    end
+    LogDebug(string.format(
+        "NetTakeRequest bridge invoke failed mode=%s err=%s; fallback component API.",
+        tostring(bridgeMode or "?"),
+        tostring(bridgeErr or "")))
+
     local component = GetTerminalComponent(terminal)
     if component ~= nil then
         local okCall, reasonValue, callMode, callErr = CallComponentMethod(
@@ -1019,6 +1731,8 @@ Hook.Add("think", "DBIOTEST_ServerViewSyncThink", function()
     local processedCount = 0
     local snapshotCount = 0
     local deltaCount = 0
+    local localSnapshotCount = 0
+    local localDeltaCount = 0
     local fallbackLookupCount = 0
     local estimatedSubCount = 0
     for _ in pairs(DBServer.Subscriptions) do
@@ -1103,40 +1817,53 @@ Hook.Add("think", "DBIOTEST_ServerViewSyncThink", function()
         RemoveSubscription(entry.client, entry.reason)
     end
 
+    if not Game.IsMultiplayer then
+        localSnapshotCount, localDeltaCount = SyncLocalSubscription()
+    end
+
     local elapsedMs = math.max(0, (Now() - syncStartedAt) * 1000.0)
-    if (elapsedMs >= PerfSyncWarnMs or fallbackLookupCount > 0) and
+    if (elapsedMs >= PerfSyncWarnMs or fallbackLookupCount > 0 or localSnapshotCount > 0 or localDeltaCount > 0) and
         now >= (DBServer.NextPerfLogAt or 0) then
         DBServer.NextPerfLogAt = now + PerfLogCooldown
         Log(string.format(
-            "[PERF] SyncThink %.2fms subs=%d processed=%d removed=%d snapshots=%d deltas=%d fallbackLookup=%d",
+            "[PERF] SyncThink %.2fms subs=%d processed=%d removed=%d snapshots=%d deltas=%d localSnapshots=%d localDeltas=%d fallbackLookup=%d localQueue=%d",
             elapsedMs,
             subCount,
             processedCount,
             #toRemove,
             snapshotCount,
             deltaCount,
-            fallbackLookupCount))
+            localSnapshotCount,
+            localDeltaCount,
+            fallbackLookupCount,
+            tonumber(#(DBServer.LocalOutbox or {}) or 0)))
     end
 
-    local summaryState = subCount > 0 and "active" or "idle"
-    local summaryCooldown = subCount > 0 and 1.2 or 8.0
+    local summaryState = (subCount > 0 or DBServer.LocalSubscription ~= nil) and "active" or "idle"
+    local summaryCooldown = (subCount > 0 or DBServer.LocalSubscription ~= nil) and 1.2 or 8.0
     LogDebugThrottled(
         "server-sync-summary-" .. summaryState,
         summaryCooldown,
         string.format(
-            "SyncThink summary %.2fms subs=%d processed=%d removed=%d snapshots=%d deltas=%d fallback=%d",
+            "SyncThink summary %.2fms subs=%d processed=%d removed=%d snapshots=%d deltas=%d localSnapshots=%d localDeltas=%d fallback=%d localQueue=%d localSub=%s",
             elapsedMs,
             subCount,
             processedCount,
             #toRemove,
             snapshotCount,
             deltaCount,
-            fallbackLookupCount))
+            localSnapshotCount,
+            localDeltaCount,
+            fallbackLookupCount,
+            tonumber(#(DBServer.LocalOutbox or {}) or 0),
+            tostring(DBServer.LocalSubscription ~= nil)))
 end)
 LogDebug("Hook.Add registered: DBIOTEST_ServerViewSyncThink")
 
 Hook.Add("roundEnd", "DBIOTEST_ServerViewRoundEnd", function()
     DBServer.Subscriptions = {}
+    DBServer.LocalSubscription = nil
+    DBServer.LocalOutbox = {}
     DBServer.NextPerfLogAt = 0
     DBServer.ComponentCache = {}
     LogDebug("Hook roundEnd: cleared subscriptions.")
@@ -1145,6 +1872,8 @@ LogDebug("Hook.Add registered: DBIOTEST_ServerViewRoundEnd")
 
 Hook.Add("stop", "DBIOTEST_ServerViewStop", function()
     DBServer.Subscriptions = {}
+    DBServer.LocalSubscription = nil
+    DBServer.LocalOutbox = {}
     DBServer.NextPerfLogAt = 0
     DBServer.ComponentCache = {}
     LogDebug("Hook stop: cleared subscriptions.")
