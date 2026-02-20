@@ -11,7 +11,7 @@ namespace DatabaseIOTest
         private const string RoundStartHookId = "DBIOTEST.RoundStart";
         private const string RoundEndHookId = "DBIOTEST.RoundEnd";
         private const string HarmonyId = "DatabaseIOTest.SaveConsistency";
-        private const string BuildStamp = "dev-20260219-b2";
+        private const string BuildStamp = "dev-20260220-b3";
         private Harmony _harmony;
 
         public DatabaseIOMod()
@@ -31,6 +31,7 @@ namespace DatabaseIOTest
             Services.ModFileLog.Write(
                 "Core",
                 $"{Constants.LogPrefix} BuildStamp='{BuildStamp}' asm='{asmLocation}' cwd='{Environment.CurrentDirectory}'");
+            LogLuaBridgeDiagnostics();
             DebugConsole.NewMessage($"{Constants.LogPrefix} Loaded", Microsoft.Xna.Framework.Color.Green);
             RegisterHooks();
             InstallPatches();
@@ -117,6 +118,32 @@ namespace DatabaseIOTest
             finally
             {
                 _harmony = null;
+            }
+        }
+
+        private static void LogLuaBridgeDiagnostics()
+        {
+            try
+            {
+                var storeType = typeof(Services.DatabaseStore);
+                var legacyBridgeType = typeof(Services.DatabaseLuaBridge);
+                bool hasStoreOpen = storeType.GetMethod("IsTerminalSessionOpenForLua", BindingFlags.Public | BindingFlags.Static) != null;
+                bool hasStoreDbId = storeType.GetMethod("GetTerminalDatabaseIdForLua", BindingFlags.Public | BindingFlags.Static) != null;
+                bool hasStoreSnapshot = storeType.GetMethod("GetTerminalVirtualSnapshotForLua", BindingFlags.Public | BindingFlags.Static) != null;
+                bool hasStoreTake = storeType.GetMethod("TryTakeOneByIdentifierFromTerminalSessionForLua", BindingFlags.Public | BindingFlags.Static) != null;
+                bool hasLegacyOpen = legacyBridgeType.GetMethod("IsTerminalSessionOpen", BindingFlags.Public | BindingFlags.Static) != null;
+                bool hasLegacySnapshot = legacyBridgeType.GetMethod("GetTerminalVirtualSnapshot", BindingFlags.Public | BindingFlags.Static) != null;
+                bool hasLegacyTake = legacyBridgeType.GetMethod("TryTakeOneByIdentifierFromTerminalSession", BindingFlags.Public | BindingFlags.Static) != null;
+
+                Services.ModFileLog.Write(
+                    "Core",
+                    $"{Constants.LogPrefix} LuaBridgeDiag storeType='{storeType.FullName}' legacyType='{legacyBridgeType.FullName}' " +
+                    $"storeOpen={hasStoreOpen} storeDbId={hasStoreDbId} storeSnapshot={hasStoreSnapshot} storeTake={hasStoreTake} " +
+                    $"legacyOpen={hasLegacyOpen} legacySnapshot={hasLegacySnapshot} legacyTake={hasLegacyTake}");
+            }
+            catch (Exception ex)
+            {
+                Services.ModFileLog.Write("Core", $"{Constants.LogPrefix} LuaBridgeDiag failed: {ex.Message}");
             }
         }
     }

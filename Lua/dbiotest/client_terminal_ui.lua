@@ -266,6 +266,77 @@ local function ToTerminalEntityId(item)
     return math.floor(value or 0)
 end
 
+local function ShortText(value, maxLen)
+    local text = tostring(value or "")
+    text = text:gsub("[\r\n]+", " ")
+    local cap = tonumber(maxLen) or 160
+    if string.len(text) > cap then
+        text = string.sub(text, 1, cap) .. "..."
+    end
+    return text
+end
+
+local function ProbeValue(label, getter)
+    local ok, value = pcall(getter)
+    if not ok then
+        return string.format("%s ok=false err=%s", tostring(label), ShortText(value, 220))
+    end
+    return string.format(
+        "%s ok=true type=%s value=%s",
+        tostring(label),
+        tostring(type(value)),
+        ShortText(value, 140))
+end
+
+local function LogBridgeProbe(tag)
+    local key = "__bridgeProbePrinted_" .. tostring(tag or "default")
+    if DBClient.State[key] == true then
+        return
+    end
+    DBClient.State[key] = true
+
+    local lines = {
+        ProbeValue("DatabaseIOTest", function() return DatabaseIOTest end),
+        ProbeValue("DatabaseIOTest.Services", function() return DatabaseIOTest.Services end),
+        ProbeValue("DatabaseIOTest.Services.DatabaseLuaBridge", function() return DatabaseIOTest.Services.DatabaseLuaBridge end),
+        ProbeValue("CS.DatabaseIOTest", function() return CS.DatabaseIOTest end),
+        ProbeValue("CS.DatabaseIOTest.Services", function() return CS.DatabaseIOTest.Services end),
+        ProbeValue("CS.DatabaseIOTest.Services.DatabaseLuaBridge", function() return CS.DatabaseIOTest.Services.DatabaseLuaBridge end),
+        ProbeValue("DatabaseIOTestLua", function() return DatabaseIOTestLua end),
+        ProbeValue("DatabaseIOTestLua.Server", function() return DatabaseIOTestLua.Server end),
+        ProbeValue("DatabaseIOTestLua.Server.LocalB1Subscribe", function() return DatabaseIOTestLua.Server.LocalB1Subscribe end),
+        ProbeValue("DatabaseIOTestLua.Server.LocalB1Poll", function() return DatabaseIOTestLua.Server.LocalB1Poll end),
+        ProbeValue("DatabaseIOTestLua.Server.LocalB1IsTerminalSessionOpen", function() return DatabaseIOTestLua.Server.LocalB1IsTerminalSessionOpen end),
+        ProbeValue("DatabaseIOTestLua.Server.LocalB1GetTerminalDatabaseId", function() return DatabaseIOTestLua.Server.LocalB1GetTerminalDatabaseId end),
+        ProbeValue("DatabaseIOTestLua.Server.LocalB1RequestTake", function() return DatabaseIOTestLua.Server.LocalB1RequestTake end)
+    }
+
+    Log(string.format("BridgeProbe[%s] begin", tostring(tag or "")))
+    for _, line in ipairs(lines) do
+        Log(string.format("BridgeProbe[%s] %s", tostring(tag or ""), tostring(line)))
+    end
+    Log(string.format("BridgeProbe[%s] end", tostring(tag or "")))
+end
+
+local function LogBridgeMethodProbe(tag, bridge, methods)
+    if bridge == nil then
+        Log(string.format("BridgeMethodProbe[%s] bridge=nil", tostring(tag or "")))
+        return
+    end
+    for _, methodName in ipairs(methods or {}) do
+        local ok, member = pcall(function()
+            return bridge[methodName]
+        end)
+        Log(string.format(
+            "BridgeMethodProbe[%s] method=%s ok=%s type=%s value=%s",
+            tostring(tag or ""),
+            tostring(methodName or ""),
+            tostring(ok == true),
+            tostring(ok and type(member) or "error"),
+            ShortText(ok and member or member, 160)))
+    end
+end
+
 local function GetLuaBridge()
     if DBClient.LuaBridge == false then
         return nil
@@ -296,11 +367,18 @@ local function GetLuaBridge()
     if bridge ~= nil then
         DBClient.LuaBridge = bridge
         Log("Lua bridge resolved: DatabaseLuaBridge")
+        LogBridgeMethodProbe("legacy-client", bridge, {
+            "IsTerminalSessionOpen",
+            "GetTerminalDatabaseId",
+            "GetTerminalVirtualSnapshot",
+            "TryTakeOneByIdentifierFromTerminalSession"
+        })
         return bridge
     end
 
     DBClient.LuaBridge = false
     Log("Lua bridge unavailable: DatabaseLuaBridge not found.")
+    LogBridgeProbe("legacy-client-missing")
     return nil
 end
 
@@ -463,11 +541,20 @@ local function GetLocalServerBridge()
     if bridge ~= nil then
         DBClient.LocalServerBridge = bridge
         Log("Local server bridge resolved: DatabaseIOTestLua.Server")
+        LogBridgeMethodProbe("local-server", bridge, {
+            "LocalB1Subscribe",
+            "LocalB1Unsubscribe",
+            "LocalB1Poll",
+            "LocalB1IsTerminalSessionOpen",
+            "LocalB1GetTerminalDatabaseId",
+            "LocalB1RequestTake"
+        })
         return bridge
     end
 
     DBClient.LocalServerBridge = false
     Log("Local server bridge unavailable: LocalB1 API not found.")
+    LogBridgeProbe("local-server-missing")
     return nil
 end
 

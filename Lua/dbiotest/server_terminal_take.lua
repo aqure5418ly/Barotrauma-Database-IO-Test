@@ -245,6 +245,79 @@ local function ToTerminalEntityId(item)
     return math.floor(value or 0)
 end
 
+local function ShortText(value, maxLen)
+    local text = tostring(value or "")
+    text = text:gsub("[\r\n]+", " ")
+    local cap = tonumber(maxLen) or 160
+    if string.len(text) > cap then
+        text = string.sub(text, 1, cap) .. "..."
+    end
+    return text
+end
+
+local function ProbeValue(label, getter)
+    local ok, value = pcall(getter)
+    if not ok then
+        return string.format("%s ok=false err=%s", tostring(label), ShortText(value, 220))
+    end
+    return string.format(
+        "%s ok=true type=%s value=%s",
+        tostring(label),
+        tostring(type(value)),
+        ShortText(value, 140))
+end
+
+local function LogBridgeProbe(tag)
+    local key = "__bridgeProbePrinted_" .. tostring(tag or "default")
+    if DBServer[key] == true then
+        return
+    end
+    DBServer[key] = true
+
+    local lines = {
+        ProbeValue("DatabaseIOTest", function() return DatabaseIOTest end),
+        ProbeValue("DatabaseIOTest.Services", function() return DatabaseIOTest.Services end),
+        ProbeValue("DatabaseIOTest.Services.ModFileLog", function() return DatabaseIOTest.Services.ModFileLog end),
+        ProbeValue("DatabaseIOTest.Services.DatabaseStore", function() return DatabaseIOTest.Services.DatabaseStore end),
+        ProbeValue("DatabaseIOTest.Services.DatabaseLuaBridge", function() return DatabaseIOTest.Services.DatabaseLuaBridge end),
+        ProbeValue("CS", function() return CS end),
+        ProbeValue("CS.DatabaseIOTest", function() return CS.DatabaseIOTest end),
+        ProbeValue("CS.DatabaseIOTest.Services", function() return CS.DatabaseIOTest.Services end),
+        ProbeValue("CS.DatabaseIOTest.Services.ModFileLog", function() return CS.DatabaseIOTest.Services.ModFileLog end),
+        ProbeValue("CS.DatabaseIOTest.Services.DatabaseStore", function() return CS.DatabaseIOTest.Services.DatabaseStore end),
+        ProbeValue("CS.DatabaseIOTest.Services.DatabaseLuaBridge", function() return CS.DatabaseIOTest.Services.DatabaseLuaBridge end),
+        ProbeValue("DatabaseStore", function() return DatabaseStore end),
+        ProbeValue("DatabaseLuaBridge", function() return DatabaseLuaBridge end),
+        ProbeValue("CS.DatabaseStore", function() return CS.DatabaseStore end),
+        ProbeValue("CS.DatabaseLuaBridge", function() return CS.DatabaseLuaBridge end)
+    }
+
+    Log(string.format("BridgeProbe[%s] begin", tostring(tag or "")))
+    for _, line in ipairs(lines) do
+        Log(string.format("BridgeProbe[%s] %s", tostring(tag or ""), tostring(line)))
+    end
+    Log(string.format("BridgeProbe[%s] end", tostring(tag or "")))
+end
+
+local function LogBridgeMethodProbe(tag, bridge, methods)
+    if bridge == nil then
+        Log(string.format("BridgeMethodProbe[%s] bridge=nil", tostring(tag or "")))
+        return
+    end
+    for _, methodName in ipairs(methods or {}) do
+        local ok, member = pcall(function()
+            return bridge[methodName]
+        end)
+        Log(string.format(
+            "BridgeMethodProbe[%s] method=%s ok=%s type=%s value=%s",
+            tostring(tag or ""),
+            tostring(methodName or ""),
+            tostring(ok == true),
+            tostring(ok and type(member) or "error"),
+            ShortText(ok and member or member, 160)))
+    end
+end
+
 local function GetStoreBridge()
     if DBServer.StoreBridge == false then
         return nil
@@ -289,11 +362,20 @@ local function GetStoreBridge()
     if bridge ~= nil then
         DBServer.StoreBridge = bridge
         Log("Lua bridge resolved: DatabaseStore")
+        LogBridgeMethodProbe("store", bridge, {
+            "IsTerminalSessionOpenForLua",
+            "GetTerminalDatabaseIdForLua",
+            "GetTerminalVirtualSnapshotForLua",
+            "TryTakeOneByIdentifierFromTerminalSessionForLua",
+            "IsLocked",
+            "GetItemCount"
+        })
         return bridge
     end
 
     DBServer.StoreBridge = false
     Log("Lua bridge unavailable: DatabaseStore not found.")
+    LogBridgeProbe("store-missing")
     return nil
 end
 
@@ -341,11 +423,18 @@ local function GetLuaBridge()
     if bridge ~= nil then
         DBServer.LuaBridge = bridge
         Log("Lua bridge resolved: DatabaseLuaBridge")
+        LogBridgeMethodProbe("legacy", bridge, {
+            "IsTerminalSessionOpen",
+            "GetTerminalDatabaseId",
+            "GetTerminalVirtualSnapshot",
+            "TryTakeOneByIdentifierFromTerminalSession"
+        })
         return bridge
     end
 
     DBServer.LuaBridge = false
     Log("Lua bridge unavailable: DatabaseLuaBridge not found.")
+    LogBridgeProbe("legacy-missing")
     return nil
 end
 
@@ -1329,6 +1418,35 @@ local function MapVirtualTakeError(reason)
     return L("dbiotest.ui.take.failed", "Failed to transfer item.")
 end
 
+local function DescribeTerminalState(terminal)
+    if terminal == nil then
+        return "terminal=nil"
+    end
+
+    local id = GetTerminalId(terminal)
+    local removed = false
+    local identifier = ""
+    local hasSessionTag = false
+    local hasFixedTag = false
+    local isSession = false
+    pcall(function()
+        removed = terminal.Removed == true
+        identifier = tostring(GetItemIdentifier(terminal) or "")
+        hasSessionTag = terminal.HasTag("database_terminal_session") == true
+        hasFixedTag = terminal.HasTag("database_terminal_fixed") == true
+        isSession = IsSessionTerminal(terminal)
+    end)
+
+    return string.format(
+        "id=%s removed=%s identifier=%s tagSession=%s tagFixed=%s isSession=%s",
+        tostring(id),
+        tostring(removed),
+        tostring(identifier),
+        tostring(hasSessionTag),
+        tostring(hasFixedTag),
+        tostring(isSession))
+end
+
 local function EnsureLocalSubscription(terminal, character)
     if terminal == nil or terminal.Removed then
         return nil
@@ -1442,6 +1560,12 @@ local function SyncLocalSubscription()
         sub.terminal = terminal
     end
     if terminal == nil or terminal.Removed or not IsSessionTerminal(terminal) then
+        LogDebugThrottled(
+            "local-sub-drop-terminal-" .. tostring(sub.terminalEntityId or ""),
+            0.8,
+            string.format(
+                "SyncLocalSubscription drop: terminal missing state=%s",
+                DescribeTerminalState(terminal)))
         RemoveLocalSubscription("terminal missing")
         return snapshotCount, deltaCount
     end
@@ -1496,6 +1620,13 @@ function DBServer.LocalB1Subscribe(terminalEntityId, character)
 
     local terminal = FindItemByEntityId(terminalEntityId)
     if terminal == nil or not IsSessionTerminal(terminal) then
+        LogDebugThrottled(
+            "local-subscribe-invalid-" .. tostring(terminalEntityId or ""),
+            0.8,
+            string.format(
+                "LocalB1Subscribe invalid terminal id=%s state=%s",
+                tostring(terminalEntityId or ""),
+                DescribeTerminalState(terminal)))
         RemoveLocalSubscription("invalid terminal")
         return false, "invalid terminal"
     end
