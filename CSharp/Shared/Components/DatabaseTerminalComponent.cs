@@ -28,7 +28,8 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         NextMatch = 7,
         CycleSortMode = 8,
         ToggleSortOrder = 9,
-        CompactItems = 10
+        CompactItems = 10,
+        TakeByIdentifier = 11
     }
 
     private enum TerminalSortMode : int
@@ -223,6 +224,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private int _lastAppliedStoreVersion = -1;
 
     private byte _pendingClientAction;
+    private string _pendingClientTakeIdentifier = "";
     private int _luaTakeRequestNonce;
     private int _lastProcessedLuaTakeRequestNonce;
     private bool _processingLuaTakeRequest;
@@ -230,7 +232,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private double _lastXmlActionAt;
     private double _nextLuaBridgeDiagAt;
     private const double LuaBridgeDiagCooldownSeconds = 1.0;
-    private const double XmlActionDebounceSeconds = 0.45;
+    private const double XmlActionDebounceSeconds = 0.75;
     private const char LuaRowSeparator = (char)0x1E;
     private const char LuaFieldSeparator = (char)0x1F;
 
@@ -262,14 +264,22 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private GUIFrame _panelFrame;
     private GUITextBlock _panelTitle;
     private GUITextBlock _panelPageInfo;
+    private GUITextBlock _panelStatusText;
     private GUIButton _panelPrevButton;
     private GUIButton _panelNextButton;
     private GUIButton _panelCloseButton;
+    private readonly List<GUIButton> _panelEntryButtons = new List<GUIButton>();
+    private readonly List<TerminalVirtualEntry> _panelEntrySnapshot = new List<TerminalVirtualEntry>();
+    private int _panelEntryPageIndex;
+    private double _nextPanelEntryRefreshAt;
     private double _nextClientPanelActionAllowedTime;
-    private const float PanelInteractionRange = 220f;
+    private const float PanelInteractionRange = 340f;
     private const bool EnablePanelDebugLog = true;
     private const double PanelDebugLogCooldown = 0.35;
     private const double PanelQueueLogCooldown = 2.0;
+    private const double PanelEntryRefreshInterval = 0.25;
+    private const int PanelEntryButtonCount = 12;
+    private const int PanelEntryColumns = 4;
     private const double PanelFocusStickySeconds = 1.25;
     private bool _panelLastVisible;
     private string _panelLastHiddenReason = "";
@@ -507,6 +517,14 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (Timing.TotalTime - _creationTime < 0.35) { return true; }
         if (!IsServerAuthority) { return false; }
 
+        // In C# panel mode, consume direct secondary-use only while a session is active.
+        // This prevents click-through toggles while interacting with panel buttons/icons,
+        // while still allowing closed terminals to open normally.
+        if (EnableCsPanelOverlay && IsSessionActive())
+        {
+            return true;
+        }
+
         if (!SessionVariant && !HasRequiredPower())
         {
             if (Timing.TotalTime >= _nextNoPowerLogTime)
@@ -592,19 +610,43 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     public void ClientEventWrite(IWriteMessage msg, NetEntityEvent.IData extraData = null)
     {
+        var action = (TerminalPanelAction)_pendingClientAction;
         msg.WriteByte(_pendingClientAction);
+        if (action == TerminalPanelAction.TakeByIdentifier)
+        {
+            msg.WriteString(_pendingClientTakeIdentifier ?? "");
+        }
         _pendingClientAction = (byte)TerminalPanelAction.None;
+        _pendingClientTakeIdentifier = "";
     }
 
     public void ServerEventRead(IReadMessage msg, Client c)
     {
         var action = (TerminalPanelAction)msg.ReadByte();
+        string takeIdentifier = "";
+        if (action == TerminalPanelAction.TakeByIdentifier)
+        {
+            takeIdentifier = (msg.ReadString() ?? "").Trim();
+        }
         if (action == TerminalPanelAction.None) { return; }
-        if (!SessionVariant) { return; }
+        if (!SessionVariant && !_inPlaceSessionActive) { return; }
 
         Character actor = c?.Character;
         if (actor == null || actor.Removed || actor.IsDead)
         {
+            return;
+        }
+
+        if (action == TerminalPanelAction.TakeByIdentifier)
+        {
+            string result = TryTakeOneByIdentifierFromVirtualSession(takeIdentifier, actor);
+            if (!string.IsNullOrEmpty(result))
+            {
+                ModFileLog.Write(
+                    "Panel",
+                    $"{Constants.LogPrefix} take request denied id={item?.ID} db='{_resolvedDatabaseId}' actor='{actor?.Name ?? "none"}' " +
+                    $"identifier='{takeIdentifier}' reason='{result}'");
+            }
             return;
         }
 
@@ -1461,7 +1503,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                 applied = TryCompactSessionItems(actor);
                 break;
             case TerminalPanelAction.CloseSession:
-                if (Timing.TotalTime - _sessionOpenedAt < MinSessionDurationBeforeClose)
+                if (!UseInPlaceSession && Timing.TotalTime - _sessionOpenedAt < MinSessionDurationBeforeClose)
                 {
                     LogFixedTerminal(
                         $"close rejected: min duration id={item?.ID} openFor={(Timing.TotalTime - _sessionOpenedAt):0.###}");
@@ -1527,12 +1569,18 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         _lastXmlAction = action;
         _lastXmlActionAt = Timing.TotalTime;
 
-        if (EnableCsPanelOverlay && UseInPlaceSession && IsSessionActive())
+        if (EnableCsPanelOverlay && UseInPlaceSession)
         {
-            ModFileLog.Write(
-                "Panel",
-                $"{Constants.LogPrefix} XML action ignored in CS panel in-place mode: {action} db='{_resolvedDatabaseId}' itemId={item?.ID}");
-            return;
+            bool allowOpenWhenClosed =
+                !IsSessionActive() &&
+                (action == TerminalPanelAction.OpenSession || action == TerminalPanelAction.ForceOpenSession);
+            if (!allowOpenWhenClosed)
+            {
+                ModFileLog.Write(
+                    "Panel",
+                    $"{Constants.LogPrefix} XML action ignored in CS panel in-place mode: {action} db='{_resolvedDatabaseId}' itemId={item?.ID}");
+                return;
+            }
         }
 
         bool allowWhenClosed = action == TerminalPanelAction.OpenSession ||
@@ -2281,6 +2329,20 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         var inventory = GetTerminalInventory();
         if (inventory == null) { return false; }
         if (_sessionCurrentPageIndex < 0 || _sessionCurrentPageIndex >= _sessionPages.Count) { return false; }
+
+        // In C# panel mode, keep the terminal buffer empty until user explicitly takes one entry.
+        // This avoids auto-spawning full pages into the container.
+        if (EnableCsPanelOverlay)
+        {
+            SpawnService.ClearInventory(inventory);
+            _currentPageLoadedAt = 0;
+            _pendingPageFillCheckGeneration = -1;
+            _pendingPageFillCheckExpectedCount = 0;
+            _pendingPageFillCheckPageIndex = -1;
+            _pendingPageFillCheckRetries = 0;
+            _currentPageFillVerified = true;
+            return true;
+        }
 
         SpawnService.ClearInventory(inventory);
 
@@ -3035,6 +3097,225 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         ModFileLog.Write("Panel", line);
     }
 
+    private static string TrimEntryLabel(string value, int maxChars)
+    {
+        if (string.IsNullOrWhiteSpace(value)) { return ""; }
+        string text = value.Trim();
+        if (text.Length <= maxChars) { return text; }
+        if (maxChars <= 1) { return text.Substring(0, 1); }
+        return text.Substring(0, maxChars - 1) + "…";
+    }
+
+    private int GetPanelEntryPageCount()
+    {
+        if (_panelEntrySnapshot.Count <= 0) { return 1; }
+        return Math.Max(1, (int)Math.Ceiling((double)_panelEntrySnapshot.Count / Math.Max(1, PanelEntryButtonCount)));
+    }
+
+    private int GetPanelEntryPageStartIndex()
+    {
+        return Math.Max(0, _panelEntryPageIndex) * Math.Max(1, PanelEntryButtonCount);
+    }
+
+    private List<TerminalVirtualEntry> ParsePanelEntriesFromLuaPayload()
+    {
+        var rows = new List<TerminalVirtualEntry>();
+        string payload = LuaB1RowsPayload ?? "";
+        if (string.IsNullOrEmpty(payload)) { return rows; }
+
+        string[] rowParts = payload.Split(LuaRowSeparator);
+        for (int i = 0; i < rowParts.Length; i++)
+        {
+            string row = rowParts[i] ?? "";
+            if (string.IsNullOrWhiteSpace(row)) { continue; }
+            string[] fields = row.Split(LuaFieldSeparator);
+            if (fields.Length <= 0) { continue; }
+
+            string id = (fields[0] ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(id)) { continue; }
+            string prefabId = fields.Length > 1 ? (fields[1] ?? "").Trim() : id;
+            string displayName = fields.Length > 2 ? (fields[2] ?? "").Trim() : id;
+
+            int amount = 0;
+            if (fields.Length > 3)
+            {
+                int.TryParse(fields[3] ?? "0", out amount);
+            }
+            int quality = 0;
+            if (fields.Length > 4)
+            {
+                int.TryParse(fields[4] ?? "0", out quality);
+            }
+            float condition = 100f;
+            if (fields.Length > 5)
+            {
+                float.TryParse(
+                    fields[5] ?? "100",
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out condition);
+            }
+
+            rows.Add(new TerminalVirtualEntry
+            {
+                Identifier = id,
+                PrefabIdentifier = string.IsNullOrWhiteSpace(prefabId) ? id : prefabId,
+                DisplayName = string.IsNullOrWhiteSpace(displayName) ? id : displayName,
+                Amount = Math.Max(0, amount),
+                BestQuality = Math.Max(0, quality),
+                AverageCondition = Math.Max(0f, condition)
+            });
+        }
+
+        return rows;
+    }
+
+    private void RefreshPanelEntrySnapshot(bool force = false)
+    {
+        if (!force && Timing.TotalTime < _nextPanelEntryRefreshAt) { return; }
+        _nextPanelEntryRefreshAt = Timing.TotalTime + PanelEntryRefreshInterval;
+
+        _panelEntrySnapshot.Clear();
+        List<TerminalVirtualEntry> source;
+        if (IsServerAuthority)
+        {
+            source = GetVirtualViewSnapshot(refreshCurrentPage: false);
+        }
+        else
+        {
+            source = ParsePanelEntriesFromLuaPayload();
+        }
+
+        if (source != null && source.Count > 0)
+        {
+            _panelEntrySnapshot.AddRange(source
+                .Where(entry => entry != null && !string.IsNullOrWhiteSpace(entry.Identifier))
+                .OrderBy(entry => entry.DisplayName ?? entry.Identifier ?? "", StringComparer.OrdinalIgnoreCase));
+        }
+
+        int pageCount = GetPanelEntryPageCount();
+        if (_panelEntryPageIndex >= pageCount)
+        {
+            _panelEntryPageIndex = Math.Max(0, pageCount - 1);
+        }
+    }
+
+    private bool TryApplyEntryIconToButton(GUIButton button, string identifier)
+    {
+        if (button == null || string.IsNullOrWhiteSpace(identifier)) { return false; }
+
+        var prefab = ItemPrefab.FindByIdentifier(identifier.ToIdentifier()) as ItemPrefab;
+        Sprite icon = prefab?.InventoryIcon ?? prefab?.Sprite;
+        if (icon == null) { return false; }
+
+        var buttonType = button.GetType();
+        string[] propertyCandidates = { "Sprite", "Icon", "Image", "OverrideSprite" };
+        for (int i = 0; i < propertyCandidates.Length; i++)
+        {
+            string name = propertyCandidates[i];
+            try
+            {
+                var prop = buttonType.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (prop == null || !prop.CanWrite) { continue; }
+                if (!prop.PropertyType.IsAssignableFrom(icon.GetType())) { continue; }
+                prop.SetValue(button, icon);
+                return true;
+            }
+            catch
+            {
+                // Best-effort only.
+            }
+        }
+
+        return false;
+    }
+
+    private void ApplyPanelEntriesToButtons()
+    {
+        if (_panelEntryButtons.Count <= 0) { return; }
+
+        int start = GetPanelEntryPageStartIndex();
+        int available = _panelEntrySnapshot.Count;
+        for (int i = 0; i < _panelEntryButtons.Count; i++)
+        {
+            var button = _panelEntryButtons[i];
+            if (button == null) { continue; }
+
+            int idx = start + i;
+            if (idx >= 0 && idx < available)
+            {
+                var entry = _panelEntrySnapshot[idx];
+                string shortName = TrimEntryLabel(entry?.DisplayName ?? entry?.Identifier ?? "", 9);
+                int amount = Math.Max(0, entry?.Amount ?? 0);
+                string amountText = $"x{amount}";
+                bool iconApplied = TryApplyEntryIconToButton(button, entry?.PrefabIdentifier ?? entry?.Identifier ?? "");
+
+                button.Visible = true;
+                button.Enabled = _cachedSessionOpen && amount > 0;
+                button.Text = iconApplied ? amountText : $"{shortName} {amountText}";
+                button.ToolTip =
+                    $"{entry?.DisplayName ?? entry?.Identifier ?? ""}\n" +
+                    $"{T("dbiotest.terminal.amount", "Amount")}: {amount}\n" +
+                    $"{T("dbiotest.terminal.leftclicktake", "Left click to move 1 item to buffer.")}";
+            }
+            else
+            {
+                button.Visible = true;
+                button.Enabled = false;
+                button.Text = "";
+                button.ToolTip = "";
+            }
+        }
+    }
+
+    private void HandlePanelEntryButtonClicked(int localIndex)
+    {
+        if (localIndex < 0 || localIndex >= _panelEntryButtons.Count) { return; }
+        if (!_cachedSessionOpen) { return; }
+
+        int idx = GetPanelEntryPageStartIndex() + localIndex;
+        if (idx < 0 || idx >= _panelEntrySnapshot.Count) { return; }
+        var entry = _panelEntrySnapshot[idx];
+        string identifier = entry?.Identifier ?? "";
+        if (string.IsNullOrWhiteSpace(identifier)) { return; }
+        LogPanelDebug(
+            $"entry click slot={localIndex} idx={idx} identifier='{identifier}' amount={Math.Max(0, entry?.Amount ?? 0)}");
+
+        RequestPanelTakeByIdentifierClient(identifier);
+    }
+
+    private void RequestPanelTakeByIdentifierClient(string identifier)
+    {
+        if (string.IsNullOrWhiteSpace(identifier)) { return; }
+        if (Timing.TotalTime < _nextClientPanelActionAllowedTime)
+        {
+            LogPanelDebug($"take blocked by cooldown identifier='{identifier}'");
+            return;
+        }
+        _nextClientPanelActionAllowedTime = Timing.TotalTime + PanelActionCooldownSeconds;
+
+        if (IsServerAuthority)
+        {
+            Character actor = Character.Controlled ?? _sessionOwner;
+            string result = TryTakeOneByIdentifierFromVirtualSession(identifier, actor);
+            if (string.IsNullOrEmpty(result))
+            {
+                LogPanelDebug($"take local success identifier='{identifier}'");
+            }
+            else
+            {
+                LogPanelDebug($"take local failed identifier='{identifier}' reason='{result}'");
+            }
+            RefreshPanelEntrySnapshot(force: true);
+            return;
+        }
+
+        _pendingClientTakeIdentifier = identifier;
+        _pendingClientAction = (byte)TerminalPanelAction.TakeByIdentifier;
+        LogPanelDebug($"take sent to server identifier='{identifier}'");
+        item.CreateClientEvent(this);
+    }
+
     private void SetPanelVisible(bool visible, string reason)
     {
         if (_panelFrame != null)
@@ -3087,28 +3368,53 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         var content = new GUILayoutGroup(new RectTransform(new Vector2(0.94f, 0.90f), _panelFrame.RectTransform, Anchor.Center));
 
         _panelTitle = new GUITextBlock(
-            new RectTransform(new Vector2(1f, 0.28f), content.RectTransform),
-            T("dbiotest.panel.title", "Database Page Controls"),
+            new RectTransform(new Vector2(1f, 0.17f), content.RectTransform),
+            T("dbiotest.panel.title", "Database Terminal"),
             textAlignment: Alignment.Center);
 
         _panelPageInfo = new GUITextBlock(
-            new RectTransform(new Vector2(1f, 0.20f), content.RectTransform),
+            new RectTransform(new Vector2(1f, 0.10f), content.RectTransform),
             "",
             textAlignment: Alignment.Center);
 
-        var row = new GUILayoutGroup(new RectTransform(new Vector2(1f, 0.42f), content.RectTransform), isHorizontal: true);
+        var row = new GUILayoutGroup(new RectTransform(new Vector2(1f, 0.18f), content.RectTransform), isHorizontal: true);
 
         _panelPrevButton = new GUIButton(new RectTransform(new Vector2(0.33f, 1f), row.RectTransform), T("dbiotest.panel.prev", "Prev"));
         _panelPrevButton.OnClicked = (_, __) =>
         {
-            RequestPanelActionClient(TerminalPanelAction.PrevPage);
+            bool inPlaceClosed = UseInPlaceSession && !SessionVariant && !_cachedSessionOpen;
+            if (inPlaceClosed)
+            {
+                RequestPanelActionClient(TerminalPanelAction.OpenSession);
+                return true;
+            }
+
+            if (_panelEntryPageIndex > 0)
+            {
+                _panelEntryPageIndex--;
+                RefreshPanelEntrySnapshot(force: true);
+                UpdateClientPanelVisuals();
+            }
             return true;
         };
 
         _panelNextButton = new GUIButton(new RectTransform(new Vector2(0.33f, 1f), row.RectTransform), T("dbiotest.panel.next", "Next"));
         _panelNextButton.OnClicked = (_, __) =>
         {
-            RequestPanelActionClient(TerminalPanelAction.NextPage);
+            bool inPlaceClosed = UseInPlaceSession && !SessionVariant && !_cachedSessionOpen;
+            if (inPlaceClosed)
+            {
+                RequestPanelActionClient(TerminalPanelAction.ForceOpenSession);
+                return true;
+            }
+
+            int pageCount = GetPanelEntryPageCount();
+            if (_panelEntryPageIndex + 1 < pageCount)
+            {
+                _panelEntryPageIndex++;
+                RefreshPanelEntrySnapshot(force: true);
+                UpdateClientPanelVisuals();
+            }
             return true;
         };
 
@@ -3118,6 +3424,36 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             RequestPanelActionClient(TerminalPanelAction.CloseSession);
             return true;
         };
+
+        int rowCount = Math.Max(1, PanelEntryButtonCount / Math.Max(1, PanelEntryColumns));
+        var entryGrid = new GUILayoutGroup(new RectTransform(new Vector2(1f, 0.42f), content.RectTransform), isHorizontal: false);
+        _panelEntryButtons.Clear();
+        for (int r = 0; r < rowCount; r++)
+        {
+            var rowGroup = new GUILayoutGroup(
+                new RectTransform(new Vector2(1f, 1f / rowCount), entryGrid.RectTransform),
+                isHorizontal: true);
+            for (int c = 0; c < PanelEntryColumns; c++)
+            {
+                int slot = r * PanelEntryColumns + c;
+                var entryButton = new GUIButton(
+                    new RectTransform(new Vector2(1f / PanelEntryColumns, 1f), rowGroup.RectTransform),
+                    "");
+                entryButton.OnClicked = (_, __) =>
+                {
+                    HandlePanelEntryButtonClicked(slot);
+                    return true;
+                };
+                entryButton.Visible = true;
+                entryButton.Enabled = false;
+                _panelEntryButtons.Add(entryButton);
+            }
+        }
+
+        _panelStatusText = new GUITextBlock(
+            new RectTransform(new Vector2(1f, 0.13f), content.RectTransform),
+            "",
+            textAlignment: Alignment.Left);
 
         UpdateClientPanelVisuals();
     }
@@ -3176,13 +3512,6 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             return;
         }
 
-        if (UseInPlaceSession && !SessionVariant && !_cachedSessionOpen)
-        {
-            ReleaseClientPanelFocusIfOwned("in-place session closed");
-            SetPanelVisible(false, "in-place session closed");
-            return;
-        }
-
         Character controlled = Character.Controlled;
         if (controlled == null)
         {
@@ -3194,7 +3523,19 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         bool isSelected = controlled.SelectedItem == item || controlled.SelectedSecondaryItem == item;
         bool isInControlledInventory = item.ParentInventory?.Owner == controlled;
         bool isNearby = Vector2.DistanceSquared(controlled.WorldPosition, item.WorldPosition) <= PanelInteractionRange * PanelInteractionRange;
-        bool shouldShow = isSelected || isInControlledInventory || isNearby;
+        bool shouldShow;
+        if (UseInPlaceSession)
+        {
+            shouldShow = isSelected || isNearby;
+        }
+        else if (SessionVariant)
+        {
+            shouldShow = _cachedSessionOpen && (isSelected || isInControlledInventory);
+        }
+        else
+        {
+            shouldShow = isSelected;
+        }
         if (!shouldShow)
         {
             ReleaseClientPanelFocusIfOwned("outside visibility conditions");
@@ -3212,9 +3553,9 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             bool focusExpired = _clientPanelFocusItemId <= 0 || Timing.TotalTime > _clientPanelFocusUntil;
             if (focusExpired)
             {
-                if ((UseInPlaceSession && isNearby) || (SessionVariant && isInControlledInventory))
+                if (UseInPlaceSession && isNearby)
                 {
-                    ClaimClientPanelFocus(UseInPlaceSession ? "in-place-nearby" : "session-in-inventory");
+                    ClaimClientPanelFocus("in-place-nearby");
                 }
             }
         }
@@ -3251,30 +3592,78 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private void UpdateClientPanelVisuals()
     {
         if (_panelFrame == null) { return; }
+        RefreshPanelEntrySnapshot();
+        bool inPlaceClosed = UseInPlaceSession && !SessionVariant && !_cachedSessionOpen;
+
+        int pageCount = GetPanelEntryPageCount();
+        int safePage = Math.Max(0, Math.Min(_panelEntryPageIndex, Math.Max(0, pageCount - 1)));
+        _panelEntryPageIndex = safePage;
+        int totalAmount = 0;
+        for (int i = 0; i < _panelEntrySnapshot.Count; i++)
+        {
+            totalAmount += Math.Max(0, _panelEntrySnapshot[i]?.Amount ?? 0);
+        }
+
         if (_panelTitle != null)
         {
-            _panelTitle.Text = $"{T("dbiotest.panel.title", "Database Page Controls")} [{_resolvedDatabaseId}]";
+            string suffix = inPlaceClosed ? $" [{T("dbiotest.panel.closedtag", "closed")}]" : "";
+            _panelTitle.Text = $"{T("dbiotest.panel.title", "Database Terminal")} [{_resolvedDatabaseId}]{suffix}";
         }
 
         if (_panelPageInfo != null)
         {
-            _panelPageInfo.Text = $"{T("dbiotest.terminal.page", "Page")}: {Math.Max(1, _cachedPageIndex)}/{Math.Max(1, _cachedPageTotal)}";
+            if (inPlaceClosed)
+            {
+                _panelPageInfo.Text =
+                    $"{T("dbiotest.terminal.state", "State")}: {T("dbiotest.panel.closedtag", "closed")} | " +
+                    $"{T("dbiotest.terminal.count", "Stored Item Count")}: {_cachedItemCount}";
+            }
+            else
+            {
+                _panelPageInfo.Text =
+                    $"{T("dbiotest.terminal.page", "Page")}: {safePage + 1}/{Math.Max(1, pageCount)} | " +
+                    $"{T("dbiotest.terminal.entries", "Entries")}: {_panelEntrySnapshot.Count} | " +
+                    $"{T("dbiotest.terminal.amount", "Amount")}: {totalAmount}";
+            }
         }
 
         if (_panelPrevButton != null)
         {
-            _panelPrevButton.Enabled = _cachedSessionOpen && _cachedPageIndex > 1;
+            _panelPrevButton.Text = inPlaceClosed
+                ? T("dbiotest.btn.open", "Open")
+                : T("dbiotest.panel.prev", "Prev");
+            _panelPrevButton.Enabled = inPlaceClosed || (_cachedSessionOpen && safePage > 0);
         }
 
         if (_panelNextButton != null)
         {
-            _panelNextButton.Enabled = _cachedSessionOpen && _cachedPageIndex < _cachedPageTotal;
+            _panelNextButton.Text = inPlaceClosed
+                ? T("dbiotest.btn.force", "Force")
+                : T("dbiotest.panel.next", "Next");
+            _panelNextButton.Enabled = inPlaceClosed || (_cachedSessionOpen && (safePage + 1) < pageCount);
         }
 
         if (_panelCloseButton != null)
         {
+            _panelCloseButton.Text = T("dbiotest.panel.close", "Close");
             _panelCloseButton.Enabled = _cachedSessionOpen;
         }
+
+        if (_panelStatusText != null)
+        {
+            if (inPlaceClosed)
+            {
+                _panelStatusText.Text = T("dbiotest.panel.fixedclosedhint", "Session closed. Click Open or Force to start.");
+            }
+            else
+            {
+                _panelStatusText.Text = _cachedSessionOpen
+                    ? T("dbiotest.panel.takehint", "Click an icon to move 1 item to buffer.")
+                    : T("dbiotest.panel.closedhint", "Session closed. Use Open button on terminal.");
+            }
+        }
+
+        ApplyPanelEntriesToButtons();
     }
 
     private void RequestPanelActionClient(TerminalPanelAction action)

@@ -78,8 +78,8 @@
       maxstacksize="1"
       ExtraStackSize="63"
       slotsperrow="5"
-      canbeselected="false"
-      hideitems="true"
+      canbeselected="true"
+      hideitems="false"
       keepopenwhenequipped="true"
       movableframe="true"
       allowuioverlap="true">
@@ -167,8 +167,8 @@
       maxstacksize="1"
       ExtraStackSize="63"
       slotsperrow="5"
-      canbeselected="false"
-      hideitems="true"
+      canbeselected="true"
+      hideitems="false"
       msg="ItemMsgInteractSelect"
       keepopenwhenequipped="true"
       movableframe="true"
@@ -178,7 +178,7 @@
         <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
       </SubContainer>
     </ItemContainer>
-    <CustomInterface canbeselected="true" allowuioverlap="true">
+    <CustomInterface canbeselected="false" allowuioverlap="true">
       <GuiFrame relativesize="0.30,0.22" anchor="BottomLeft" relativeoffset="0.04,0.08" style="ItemUI" />
       <Button text="dbiotest.btn.open">
         <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="4" />

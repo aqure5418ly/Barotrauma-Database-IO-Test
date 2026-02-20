@@ -11,7 +11,7 @@ namespace DatabaseIOTest
         private const string RoundStartHookId = "DBIOTEST.RoundStart";
         private const string RoundEndHookId = "DBIOTEST.RoundEnd";
         private const string HarmonyId = "DatabaseIOTest.SaveConsistency";
-        private const string BuildStamp = "dev-20260220-b4-s4-focusfix";
+        private const string BuildStamp = "dev-20260220-b4-s8-fixed-flicker-cut";
         private Harmony _harmony;
 
         public DatabaseIOMod()
