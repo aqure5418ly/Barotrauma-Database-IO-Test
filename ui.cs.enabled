@@ -1,0 +1,2 @@
+Enable C# terminal UI mode.
+Remove this file (or add ui.lua.enabled) to restore Lua client UI loading.

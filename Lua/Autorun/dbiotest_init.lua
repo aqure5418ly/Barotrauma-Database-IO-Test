@@ -124,10 +124,60 @@ local function ResolveLuaDebugEnabled(basePath)
     return enabled, source
 end
 
+local function MarkerExists(path)
+    if File == nil then
+        return false
+    end
+    local exists = false
+    pcall(function()
+        exists = File.Exists(path) == true
+    end)
+    return exists == true
+end
+
+local function ResolveClientUiMode(basePath)
+    local base = tostring(basePath or ""):gsub("\\", "/")
+    base = base:gsub("/+$", "")
+    if base == "" then
+        return "lua", "default:lua"
+    end
+
+    local luaMarkers = {
+        base .. "/ui.lua.enabled",
+        base .. "/ui.mode.lua"
+    }
+    local csMarkers = {
+        base .. "/ui.cs.enabled",
+        base .. "/ui.mode.cs"
+    }
+
+    for _, path in ipairs(luaMarkers) do
+        if MarkerExists(path) then
+            return "lua", "marker:" .. tostring(path)
+        end
+    end
+
+    for _, path in ipairs(csMarkers) do
+        if MarkerExists(path) then
+            return "cs", "marker:" .. tostring(path)
+        end
+    end
+
+    return "lua", "default:lua"
+end
+
 ForceLuaDebugLog, DatabaseIOTestLua.DebugSource = ResolveLuaDebugEnabled(DatabaseIOTestLua.Path)
 DatabaseIOTestLua.DebugEnabled = ForceLuaDebugLog == true
 DatabaseIOTestLua.IsLuaDebugEnabled = function()
     return DatabaseIOTestLua.DebugEnabled == true
+end
+
+DatabaseIOTestLua.ClientUiMode, DatabaseIOTestLua.ClientUiSource =
+    ResolveClientUiMode(DatabaseIOTestLua.Path)
+DatabaseIOTestLua.UseCsTerminalUi = DatabaseIOTestLua.ClientUiMode == "cs"
+DatabaseIOTestLua.DisableLuaClientUi = DatabaseIOTestLua.UseCsTerminalUi == true
+DatabaseIOTestLua.IsLuaClientUiEnabled = function()
+    return DatabaseIOTestLua.DisableLuaClientUi ~= true
 end
 
 local function TryWriteBootstrap(level, line)
@@ -346,6 +396,11 @@ else
     print("[Database IO Test][Lua][Bootstrap] Local file logger unavailable: " .. tostring(DatabaseIOTestLua.FileLog.lastError or "unknown"))
 end
 BootInfo(string.format("Lua debug enabled=%s source=%s", tostring(ForceLuaDebugLog), tostring(DatabaseIOTestLua.DebugSource or "unknown")))
+BootInfo(string.format(
+    "Client UI mode=%s source=%s luaClientUiEnabled=%s",
+    tostring(DatabaseIOTestLua.ClientUiMode or "lua"),
+    tostring(DatabaseIOTestLua.ClientUiSource or "unknown"),
+    tostring(DatabaseIOTestLua.DisableLuaClientUi ~= true)))
 
 local function safeLoad(relativePath)
     local fullPath = basePath .. "/" .. relativePath
@@ -400,7 +455,13 @@ else
 end
 
 if isClient then
-    safeLoad("Lua/dbiotest/client_terminal_ui.lua")
+    if DatabaseIOTestLua.DisableLuaClientUi == true then
+        BootInfo(string.format(
+            "Skip client_terminal_ui.lua because C# UI mode is enabled (%s).",
+            tostring(DatabaseIOTestLua.ClientUiSource or "unknown")))
+    else
+        safeLoad("Lua/dbiotest/client_terminal_ui.lua")
+    end
 else
     BootDebug("Skip client_terminal_ui.lua because CLIENT is false.")
 end

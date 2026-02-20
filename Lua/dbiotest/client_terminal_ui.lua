@@ -193,6 +193,14 @@ if not CLIENT then
     return
 end
 
+if DatabaseIOTestLua ~= nil and DatabaseIOTestLua.DisableLuaClientUi == true then
+    Log(string.format(
+        "client_terminal_ui disabled by switch: mode=%s source=%s",
+        tostring(DatabaseIOTestLua.ClientUiMode or "cs"),
+        tostring(DatabaseIOTestLua.ClientUiSource or "unknown")))
+    return
+end
+
 local function L(key, fallback)
     local value = nil
     pcall(function()

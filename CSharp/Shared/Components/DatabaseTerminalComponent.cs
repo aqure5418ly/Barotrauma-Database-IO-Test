@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using Barotrauma;
 using Barotrauma.Items.Components;
 using Barotrauma.Networking;
@@ -122,6 +123,50 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     [Editable, Serialize(false, IsPropertySaveable.Yes, description: "Sort descending when true.")]
     public bool SortDescending { get; set; } = false;
 
+    [Editable, Serialize(true, IsPropertySaveable.Yes, description: "Enable C# client terminal panel overlay for testing.")]
+    public bool EnableCsPanelOverlay { get; set; } = true;
+
+    [Serialize(false, IsPropertySaveable.No, description: "Lua B1: session open state.")]
+    public bool LuaB1SessionOpen { get; set; } = false;
+
+    [Serialize(Constants.DefaultDatabaseId, IsPropertySaveable.No, description: "Lua B1: normalized database id.")]
+    public string LuaB1DatabaseId { get; set; } = Constants.DefaultDatabaseId;
+
+    [Serialize(0, IsPropertySaveable.No, description: "Lua B1: snapshot serial.")]
+    public int LuaB1RowsSerial { get; set; } = 0;
+
+    [Serialize(0, IsPropertySaveable.No, description: "Lua B1: snapshot total entry rows.")]
+    public int LuaB1TotalEntries { get; set; } = 0;
+
+    [Serialize(0, IsPropertySaveable.No, description: "Lua B1: snapshot total item amount.")]
+    public int LuaB1TotalAmount { get; set; } = 0;
+
+    [Serialize("", IsPropertySaveable.No, description: "Lua B1: row payload (RS=0x1E, FS=0x1F).")]
+    public string LuaB1RowsPayload { get; set; } = "";
+
+    [Serialize(0, IsPropertySaveable.No, description: "Lua B1: client take request nonce.")]
+    public int LuaTakeRequestNonce
+    {
+        get => _luaTakeRequestNonce;
+        set
+        {
+            _luaTakeRequestNonce = value;
+            TryProcessLuaTakeRequestFromBridge();
+        }
+    }
+
+    [Serialize("", IsPropertySaveable.No, description: "Lua B1: client take request identifier.")]
+    public string LuaTakeRequestIdentifier { get; set; } = "";
+
+    [Serialize(0, IsPropertySaveable.No, description: "Lua B1: actor entity id for take request.")]
+    public int LuaTakeRequestActorId { get; set; } = 0;
+
+    [Serialize(0, IsPropertySaveable.No, description: "Lua B1: last processed take request nonce.")]
+    public int LuaTakeResultNonce { get; set; } = 0;
+
+    [Serialize("", IsPropertySaveable.No, description: "Lua B1: take request result code.")]
+    public string LuaTakeResultCode { get; set; } = "";
+
     private string _resolvedDatabaseId = Constants.DefaultDatabaseId;
     private Character _sessionOwner;
     private double _sessionOpenedAt;
@@ -178,6 +223,16 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private int _lastAppliedStoreVersion = -1;
 
     private byte _pendingClientAction;
+    private int _luaTakeRequestNonce;
+    private int _lastProcessedLuaTakeRequestNonce;
+    private bool _processingLuaTakeRequest;
+    private TerminalPanelAction _lastXmlAction = TerminalPanelAction.None;
+    private double _lastXmlActionAt;
+    private double _nextLuaBridgeDiagAt;
+    private const double LuaBridgeDiagCooldownSeconds = 1.0;
+    private const double XmlActionDebounceSeconds = 0.45;
+    private const char LuaRowSeparator = (char)0x1E;
+    private const char LuaFieldSeparator = (char)0x1F;
 
     private bool IsServerAuthority => GameMain.NetworkMember == null || GameMain.NetworkMember.IsServer;
     private const double ToggleCooldownSeconds = 0.6;
@@ -212,13 +267,57 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private GUIButton _panelCloseButton;
     private double _nextClientPanelActionAllowedTime;
     private const float PanelInteractionRange = 220f;
-    private const bool EnableCsPanelOverlay = false;
-    private const bool EnablePanelDebugLog = false;
+    private const bool EnablePanelDebugLog = true;
     private const double PanelDebugLogCooldown = 0.35;
+    private const double PanelQueueLogCooldown = 2.0;
+    private const double PanelFocusStickySeconds = 1.25;
     private bool _panelLastVisible;
     private string _panelLastHiddenReason = "";
     private double _nextPanelStateLogAllowedTime;
     private double _nextNoCanvasLogAllowedTime;
+    private double _nextPanelQueueLogAllowedTime;
+    private double _nextPanelQueueWarnLogAllowedTime;
+    private static int _clientPanelFocusItemId = -1;
+    private static double _clientPanelFocusUntil;
+    private static string _clientPanelFocusReason = "";
+    private static readonly MethodInfo AddToGuiUpdateListMethodWithOrder =
+        typeof(GUIComponent).GetMethod(
+            "AddToGUIUpdateList",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            null,
+            new[] { typeof(bool), typeof(int) },
+            null);
+    private static readonly MethodInfo AddToGuiUpdateListMethodNoArgs =
+        typeof(GUIComponent).GetMethod(
+            "AddToGUIUpdateList",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            null,
+            Type.EmptyTypes,
+            null);
+
+    private void ClaimClientPanelFocus(string reason)
+    {
+        if (item == null || item.Removed) { return; }
+        _clientPanelFocusItemId = item.ID;
+        _clientPanelFocusUntil = Timing.TotalTime + PanelFocusStickySeconds;
+        _clientPanelFocusReason = reason ?? "";
+    }
+
+    private void RefreshClientPanelFocusLeaseIfOwned()
+    {
+        if (item == null || item.Removed) { return; }
+        if (_clientPanelFocusItemId != item.ID) { return; }
+        _clientPanelFocusUntil = Timing.TotalTime + PanelFocusStickySeconds;
+    }
+
+    private void ReleaseClientPanelFocusIfOwned(string reason)
+    {
+        if (item == null || item.Removed) { return; }
+        if (_clientPanelFocusItemId != item.ID) { return; }
+        _clientPanelFocusItemId = -1;
+        _clientPanelFocusUntil = 0;
+        _clientPanelFocusReason = reason ?? "";
+    }
 #endif
 
     public DatabaseTerminalComponent(Item item, ContentXElement element) : base(item, element)
@@ -253,6 +352,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             UpdateSummaryFromStore();
             UpdateDescriptionLocal();
             TrySyncSummary(force: true);
+            RefreshLuaB1BridgeState(force: true);
         }
         else
         {
@@ -323,6 +423,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         }
 
         ConsumeXmlActionRequest();
+        TryProcessLuaTakeRequestFromBridge();
         if (stageStartTicks != 0)
         {
             long nowTicks = Stopwatch.GetTimestamp();
@@ -363,6 +464,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             stageStartTicks = nowTicks;
         }
         TrySyncSummary();
+        RefreshLuaB1BridgeState();
         if (stageStartTicks != 0)
         {
             long nowTicks = Stopwatch.GetTimestamp();
@@ -688,7 +790,181 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         UpdateSummaryFromStore();
         UpdateDescriptionLocal();
         TrySyncSummary(force: true);
+        RefreshLuaB1BridgeState(force: true);
         return "";
+    }
+
+    private static Character FindCharacterByEntityId(int entityId)
+    {
+        if (entityId <= 0) { return null; }
+        foreach (var character in Character.CharacterList)
+        {
+            if (character == null || character.Removed) { continue; }
+            if (character.ID == entityId) { return character; }
+        }
+        return null;
+    }
+
+    private static string SanitizeLuaBridgeField(string value)
+    {
+        if (string.IsNullOrEmpty(value)) { return ""; }
+        return value
+            .Replace(LuaFieldSeparator, ' ')
+            .Replace(LuaRowSeparator, ' ')
+            .Replace('\r', ' ')
+            .Replace('\n', ' ');
+    }
+
+    private static string EncodeLuaB1Rows(IReadOnlyList<TerminalVirtualEntry> rows)
+    {
+        if (rows == null || rows.Count <= 0) { return ""; }
+
+        var builder = new StringBuilder(rows.Count * 36);
+        for (int i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            if (row == null) { continue; }
+            if (builder.Length > 0) { builder.Append(LuaRowSeparator); }
+
+            builder.Append(SanitizeLuaBridgeField(row.Identifier ?? ""));
+            builder.Append(LuaFieldSeparator);
+            builder.Append(SanitizeLuaBridgeField(row.PrefabIdentifier ?? row.Identifier ?? ""));
+            builder.Append(LuaFieldSeparator);
+            builder.Append(SanitizeLuaBridgeField(row.DisplayName ?? row.Identifier ?? ""));
+            builder.Append(LuaFieldSeparator);
+            builder.Append(Math.Max(0, row.Amount));
+            builder.Append(LuaFieldSeparator);
+            builder.Append(Math.Max(0, row.BestQuality));
+            builder.Append(LuaFieldSeparator);
+            builder.Append(row.AverageCondition.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        return builder.ToString();
+    }
+
+    private List<TerminalVirtualEntry> BuildLuaB1Rows()
+    {
+        var grouped = new Dictionary<string, TerminalVirtualEntry>(StringComparer.OrdinalIgnoreCase);
+        var conditionWeight = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var entry in _sessionEntries)
+        {
+            if (entry == null) { continue; }
+            string id = (entry.Identifier ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(id)) { continue; }
+
+            int amount = Math.Max(1, entry.StackSize);
+            if (!grouped.TryGetValue(id, out var row))
+            {
+                row = new TerminalVirtualEntry
+                {
+                    Identifier = id,
+                    PrefabIdentifier = id,
+                    DisplayName = id,
+                    Amount = 0,
+                    BestQuality = 0,
+                    AverageCondition = 100f
+                };
+                grouped[id] = row;
+                conditionWeight[id] = 0;
+            }
+
+            row.Amount += amount;
+            row.BestQuality = Math.Max(row.BestQuality, entry.Quality);
+            int weight = conditionWeight[id] + amount;
+            float weighted = row.AverageCondition * conditionWeight[id] + entry.Condition * amount;
+            row.AverageCondition = weight <= 0 ? 100f : weighted / weight;
+            conditionWeight[id] = weight;
+        }
+
+        return grouped.Values
+            .OrderBy(v => v.Identifier ?? "", StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private void RefreshLuaB1BridgeState(bool force = false)
+    {
+        if (!IsServerAuthority) { return; }
+
+        bool sessionOpen = IsSessionActive();
+        string dbId = DatabaseStore.Normalize(_resolvedDatabaseId);
+        int totalEntries = 0;
+        int totalAmount = 0;
+        string payload = "";
+
+        if (sessionOpen && _sessionEntries.Count > 0)
+        {
+            var rows = BuildLuaB1Rows();
+            totalEntries = rows.Count;
+            totalAmount = rows.Sum(row => Math.Max(0, row?.Amount ?? 0));
+            payload = EncodeLuaB1Rows(rows);
+        }
+
+        bool changed = force ||
+                       LuaB1SessionOpen != sessionOpen ||
+                       !string.Equals(LuaB1DatabaseId ?? "", dbId, StringComparison.OrdinalIgnoreCase) ||
+                       LuaB1TotalEntries != totalEntries ||
+                       LuaB1TotalAmount != totalAmount ||
+                       !string.Equals(LuaB1RowsPayload ?? "", payload ?? "", StringComparison.Ordinal);
+        if (!changed) { return; }
+
+        LuaB1SessionOpen = sessionOpen;
+        LuaB1DatabaseId = dbId;
+        LuaB1TotalEntries = totalEntries;
+        LuaB1TotalAmount = totalAmount;
+        LuaB1RowsPayload = payload ?? "";
+        LuaB1RowsSerial = unchecked(LuaB1RowsSerial + 1);
+        if (LuaB1RowsSerial <= 0) { LuaB1RowsSerial = 1; }
+
+        if (ModFileLog.IsDebugEnabled &&
+            Timing.TotalTime >= _nextLuaBridgeDiagAt)
+        {
+            _nextLuaBridgeDiagAt = Timing.TotalTime + LuaBridgeDiagCooldownSeconds;
+            ModFileLog.WriteDebug(
+                "Terminal",
+                $"{Constants.LogPrefix} LuaB1State id={item?.ID} db='{LuaB1DatabaseId}' open={LuaB1SessionOpen} " +
+                $"serial={LuaB1RowsSerial} entries={LuaB1TotalEntries} amount={LuaB1TotalAmount} payloadLen={(LuaB1RowsPayload?.Length ?? 0)}");
+        }
+    }
+
+    private void TryProcessLuaTakeRequestFromBridge()
+    {
+        if (!IsServerAuthority) { return; }
+        if (_processingLuaTakeRequest) { return; }
+
+        int nonce = _luaTakeRequestNonce;
+        if (nonce <= 0 || nonce == _lastProcessedLuaTakeRequestNonce) { return; }
+
+        _processingLuaTakeRequest = true;
+        try
+        {
+            _lastProcessedLuaTakeRequestNonce = nonce;
+            Character actor = FindCharacterByEntityId(LuaTakeRequestActorId) ?? _sessionOwner;
+            string reason = TryTakeOneByIdentifierFromVirtualSession(LuaTakeRequestIdentifier, actor);
+            LuaTakeResultNonce = nonce;
+            LuaTakeResultCode = reason ?? "";
+            RefreshLuaB1BridgeState(force: true);
+
+            if (ModFileLog.IsDebugEnabled)
+            {
+                ModFileLog.WriteDebug(
+                    "Terminal",
+                    $"{Constants.LogPrefix} LuaTakeRequest processed id={item?.ID} db='{_resolvedDatabaseId}' nonce={nonce} " +
+                    $"identifier='{LuaTakeRequestIdentifier ?? ""}' actor={LuaTakeRequestActorId} result='{LuaTakeResultCode ?? ""}'");
+            }
+        }
+        catch (Exception ex)
+        {
+            LuaTakeResultNonce = nonce;
+            LuaTakeResultCode = "exception";
+            ModFileLog.Write(
+                "Terminal",
+                $"{Constants.LogPrefix} LuaTakeRequest failed id={item?.ID} db='{_resolvedDatabaseId}' nonce={nonce}: {ex.Message}");
+        }
+        finally
+        {
+            _processingLuaTakeRequest = false;
+        }
     }
 
     public int CountTakeableForAutomation(Func<ItemData, bool> predicate)
@@ -910,6 +1186,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                     terminal.UpdateSummaryFromStore();
                     terminal.UpdateDescriptionLocal();
                     terminal.TrySyncSummary(force: true);
+                    terminal.RefreshLuaB1BridgeState(force: true);
                 }
 
                 DatabaseStore.TransferTerminalLock(_resolvedDatabaseId, item.ID, spawned.ID);
@@ -965,6 +1242,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         UpdateSummaryFromStore();
         UpdateDescriptionLocal();
         TrySyncSummary(force: true);
+        RefreshLuaB1BridgeState(force: true);
         DebugConsole.NewMessage($"{Constants.LogPrefix} In-place terminal session opened for '{_resolvedDatabaseId}'.", Microsoft.Xna.Framework.Color.LightGray);
     }
 
@@ -1047,6 +1325,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                         terminal.UpdateSummaryFromStore();
                         terminal.UpdateDescriptionLocal();
                         terminal.TrySyncSummary(force: true);
+                        terminal.RefreshLuaB1BridgeState(force: true);
                     }
                 },
                 () =>
@@ -1237,6 +1516,25 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             _ => TerminalPanelAction.None
         };
         if (action == TerminalPanelAction.None) { return; }
+
+        if (action == _lastXmlAction && Timing.TotalTime - _lastXmlActionAt < XmlActionDebounceSeconds)
+        {
+            ModFileLog.Write(
+                "Panel",
+                $"{Constants.LogPrefix} XML action ignored by debounce: {action} db='{_resolvedDatabaseId}' itemId={item?.ID}");
+            return;
+        }
+        _lastXmlAction = action;
+        _lastXmlActionAt = Timing.TotalTime;
+
+        if (EnableCsPanelOverlay && UseInPlaceSession && IsSessionActive())
+        {
+            ModFileLog.Write(
+                "Panel",
+                $"{Constants.LogPrefix} XML action ignored in CS panel in-place mode: {action} db='{_resolvedDatabaseId}' itemId={item?.ID}");
+            return;
+        }
+
         bool allowWhenClosed = action == TerminalPanelAction.OpenSession ||
                                action == TerminalPanelAction.ForceOpenSession ||
                                action == TerminalPanelAction.CycleSortMode ||
@@ -1874,6 +2172,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         UpdateSummaryFromStore();
         UpdateDescriptionLocal();
         TrySyncSummary(force: true);
+        RefreshLuaB1BridgeState(force: true);
         DebugConsole.NewMessage($"{Constants.LogPrefix} In-place terminal session closed ({reason}) for '{_resolvedDatabaseId}'.", Microsoft.Xna.Framework.Color.LightGray);
     }
 
@@ -2782,6 +3081,8 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             $"panel created id={item?.ID} db='{_resolvedDatabaseId}' " +
             $"rect=({_panelFrame.Rect.X},{_panelFrame.Rect.Y},{_panelFrame.Rect.Width},{_panelFrame.Rect.Height}) " +
             $"canvas=({GUI.Canvas.Rect.X},{GUI.Canvas.Rect.Y},{GUI.Canvas.Rect.Width},{GUI.Canvas.Rect.Height})");
+        LogPanelDebug(
+            $"panel draw queue methods id={item?.ID} withOrder={(AddToGuiUpdateListMethodWithOrder != null)} noArgs={(AddToGuiUpdateListMethodNoArgs != null)}");
 
         var content = new GUILayoutGroup(new RectTransform(new Vector2(0.94f, 0.90f), _panelFrame.RectTransform, Anchor.Center));
 
@@ -2821,28 +3122,117 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         UpdateClientPanelVisuals();
     }
 
+    private void QueuePanelForGuiUpdate()
+    {
+        if (_panelFrame == null) { return; }
+
+        MethodInfo method = AddToGuiUpdateListMethodWithOrder ?? AddToGuiUpdateListMethodNoArgs;
+        if (method == null)
+        {
+            if (Timing.TotalTime >= _nextPanelQueueWarnLogAllowedTime)
+            {
+                LogPanelDebug($"panel queue failed id={item?.ID}: AddToGUIUpdateList method not found");
+                _nextPanelQueueWarnLogAllowedTime = Timing.TotalTime + PanelQueueLogCooldown;
+            }
+            return;
+        }
+
+        try
+        {
+            if (ReferenceEquals(method, AddToGuiUpdateListMethodWithOrder))
+            {
+                method.Invoke(_panelFrame, new object[] { false, 1 });
+            }
+            else
+            {
+                method.Invoke(_panelFrame, null);
+            }
+
+            if (Timing.TotalTime >= _nextPanelQueueLogAllowedTime)
+            {
+                int argCount = method.GetParameters().Length;
+                LogPanelDebug(
+                    $"panel queued id={item?.ID} methodArgs={argCount} visible={_panelFrame.Visible} enabled={_panelFrame.Enabled}");
+                _nextPanelQueueLogAllowedTime = Timing.TotalTime + PanelQueueLogCooldown;
+            }
+        }
+        catch (Exception ex)
+        {
+            if (Timing.TotalTime >= _nextPanelQueueWarnLogAllowedTime)
+            {
+                LogPanelDebug($"panel queue exception id={item?.ID}: {ex.GetType().Name}: {ex.Message}");
+                _nextPanelQueueWarnLogAllowedTime = Timing.TotalTime + PanelQueueLogCooldown;
+            }
+        }
+    }
+
     private void UpdateClientPanel()
     {
-        if (item == null || item.Removed || !SessionVariant)
+        bool panelCandidate = SessionVariant || UseInPlaceSession;
+        if (item == null || item.Removed || !panelCandidate)
         {
-            SetPanelVisible(false, "invalid item or not session variant");
+            ReleaseClientPanelFocusIfOwned("invalid item or unsupported panel mode");
+            SetPanelVisible(false, "invalid item or unsupported panel mode");
+            return;
+        }
+
+        if (UseInPlaceSession && !SessionVariant && !_cachedSessionOpen)
+        {
+            ReleaseClientPanelFocusIfOwned("in-place session closed");
+            SetPanelVisible(false, "in-place session closed");
             return;
         }
 
         Character controlled = Character.Controlled;
         if (controlled == null)
         {
+            ReleaseClientPanelFocusIfOwned("no controlled character");
             SetPanelVisible(false, "no controlled character");
             return;
         }
 
-        bool shouldShow = controlled.SelectedItem == item ||
-                          controlled.SelectedSecondaryItem == item ||
-                          item.ParentInventory?.Owner == controlled ||
-                          Vector2.DistanceSquared(controlled.WorldPosition, item.WorldPosition) <= PanelInteractionRange * PanelInteractionRange;
+        bool isSelected = controlled.SelectedItem == item || controlled.SelectedSecondaryItem == item;
+        bool isInControlledInventory = item.ParentInventory?.Owner == controlled;
+        bool isNearby = Vector2.DistanceSquared(controlled.WorldPosition, item.WorldPosition) <= PanelInteractionRange * PanelInteractionRange;
+        bool shouldShow = isSelected || isInControlledInventory || isNearby;
         if (!shouldShow)
         {
+            ReleaseClientPanelFocusIfOwned("outside visibility conditions");
             SetPanelVisible(false, "outside visibility conditions");
+            return;
+        }
+
+        if (isSelected)
+        {
+            ClaimClientPanelFocus("selected");
+        }
+        else
+        {
+            RefreshClientPanelFocusLeaseIfOwned();
+            bool focusExpired = _clientPanelFocusItemId <= 0 || Timing.TotalTime > _clientPanelFocusUntil;
+            if (focusExpired)
+            {
+                if ((UseInPlaceSession && isNearby) || (SessionVariant && isInControlledInventory))
+                {
+                    ClaimClientPanelFocus(UseInPlaceSession ? "in-place-nearby" : "session-in-inventory");
+                }
+            }
+        }
+
+        if (_clientPanelFocusItemId > 0 && _clientPanelFocusItemId != item.ID && Timing.TotalTime <= _clientPanelFocusUntil)
+        {
+            SetPanelVisible(false, $"focus owner={_clientPanelFocusItemId} reason={_clientPanelFocusReason}");
+            return;
+        }
+
+        if (_clientPanelFocusItemId <= 0 || Timing.TotalTime > _clientPanelFocusUntil)
+        {
+            ClaimClientPanelFocus("fallback-claim");
+        }
+
+        if (_clientPanelFocusItemId != item.ID)
+        {
+            SetPanelVisible(false, $"focus mismatch owner={_clientPanelFocusItemId}");
             return;
         }
 
@@ -2854,6 +3244,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         }
 
         SetPanelVisible(true, "eligible");
+        QueuePanelForGuiUpdate();
         UpdateClientPanelVisuals();
     }
 
@@ -2913,6 +3304,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     public override void RemoveComponentSpecific()
     {
 #if CLIENT
+        ReleaseClientPanelFocusIfOwned("component removed");
         if (_panelFrame != null)
         {
             _panelFrame.Visible = false;

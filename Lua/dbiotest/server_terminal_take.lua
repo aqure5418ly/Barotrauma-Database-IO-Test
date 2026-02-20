@@ -25,6 +25,21 @@ pcall(function()
 end)
 local LoggerBridgeMissingPrinted = false
 DBServer.ComponentCache = DBServer.ComponentCache or {}
+DBServer.ComponentSnapshotCache = DBServer.ComponentSnapshotCache or {}
+
+local LuaRowSep = string.char(30)
+local LuaFieldSep = string.char(31)
+local LuaBridgeFieldSessionOpen = "LuaB1SessionOpen"
+local LuaBridgeFieldDatabaseId = "LuaB1DatabaseId"
+local LuaBridgeFieldSerial = "LuaB1RowsSerial"
+local LuaBridgeFieldTotalEntries = "LuaB1TotalEntries"
+local LuaBridgeFieldTotalAmount = "LuaB1TotalAmount"
+local LuaBridgeFieldPayload = "LuaB1RowsPayload"
+local LuaBridgeFieldTakeReqNonce = "LuaTakeRequestNonce"
+local LuaBridgeFieldTakeReqIdentifier = "LuaTakeRequestIdentifier"
+local LuaBridgeFieldTakeReqActorId = "LuaTakeRequestActorId"
+local LuaBridgeFieldTakeResultNonce = "LuaTakeResultNonce"
+local LuaBridgeFieldTakeResultCode = "LuaTakeResultCode"
 
 local function TryWriteFileLog(level, line)
     local text = tostring(line or "")
@@ -671,6 +686,179 @@ local function ResolveTerminalComponent(item)
     return nil
 end
 
+local function ReadComponentField(component, fieldName, fallback)
+    if component == nil then
+        return fallback
+    end
+    local ok, value = pcall(function()
+        return component[fieldName]
+    end)
+    if ok then
+        if value == nil then
+            return fallback
+        end
+        return value
+    end
+    return fallback
+end
+
+local function WriteComponentField(component, fieldName, value)
+    if component == nil then
+        return false
+    end
+    local ok = pcall(function()
+        component[fieldName] = value
+    end)
+    return ok == true
+end
+
+local function SplitBySeparator(text, sep)
+    local list = {}
+    local source = tostring(text or "")
+    if source == "" then
+        return list
+    end
+    local cursor = 1
+    while true do
+        local i, j = string.find(source, sep, cursor, true)
+        if i == nil then
+            table.insert(list, string.sub(source, cursor))
+            break
+        end
+        table.insert(list, string.sub(source, cursor, i - 1))
+        cursor = j + 1
+    end
+    return list
+end
+
+local function ParseLuaRowsPayload(payload)
+    local map = {}
+    local totalEntries = 0
+    local totalAmount = 0
+    local rows = SplitBySeparator(payload or "", LuaRowSep)
+    for _, row in ipairs(rows) do
+        if tostring(row or "") ~= "" then
+            local fields = SplitBySeparator(row, LuaFieldSep)
+            local identifier = tostring(fields[1] or "")
+            local key = NormalizeIdentifier(identifier)
+            if key ~= "" then
+                local amount = math.max(0, math.floor(tonumber(fields[4]) or 0))
+                map[key] = {
+                    key = key,
+                    identifier = identifier,
+                    prefabIdentifier = tostring(fields[2] or identifier),
+                    displayName = tostring(fields[3] or identifier),
+                    amount = amount,
+                    bestQuality = math.floor(tonumber(fields[5]) or 0),
+                    avgCondition = tonumber(fields[6]) or 100.0
+                }
+                totalEntries = totalEntries + 1
+                totalAmount = totalAmount + amount
+            end
+        end
+    end
+
+    return map, totalEntries, totalAmount
+end
+
+local function GetComponentLuaSessionOpen(component)
+    local openValue = ReadComponentField(component, LuaBridgeFieldSessionOpen, false)
+    return openValue == true or tostring(openValue) == "True" or tostring(openValue) == "true" or tostring(openValue) == "1"
+end
+
+local function GetComponentLuaDatabaseId(component)
+    local dbid = tostring(ReadComponentField(component, LuaBridgeFieldDatabaseId, "") or "")
+    if dbid == "" then
+        dbid = tostring(ReadComponentField(component, "DatabaseId", "default") or "default")
+    end
+    if dbid == "" then
+        dbid = "default"
+    end
+    return dbid
+end
+
+local function GetComponentLuaSnapshot(terminal)
+    local component = ResolveTerminalComponent(terminal)
+    if component == nil then
+        return nil, 0, 0, "component_missing"
+    end
+
+    local function CopyEntryMap(source)
+        local copied = {}
+        for key, entry in pairs(source or {}) do
+            copied[key] = {
+                key = tostring(entry.key or key or ""),
+                identifier = tostring(entry.identifier or ""),
+                prefabIdentifier = tostring(entry.prefabIdentifier or entry.identifier or ""),
+                displayName = tostring(entry.displayName or entry.identifier or ""),
+                amount = tonumber(entry.amount) or 0,
+                bestQuality = tonumber(entry.bestQuality) or 0,
+                avgCondition = tonumber(entry.avgCondition) or 100.0
+            }
+        end
+        return copied
+    end
+
+    local terminalId = tostring(GetTerminalId(terminal))
+    local serial = tonumber(ReadComponentField(component, LuaBridgeFieldSerial, 0)) or 0
+    local payload = tostring(ReadComponentField(component, LuaBridgeFieldPayload, "") or "")
+
+    local cache = DBServer.ComponentSnapshotCache[terminalId]
+    if cache ~= nil and tonumber(cache.serial or 0) == serial and tostring(cache.payload or "") == payload then
+        return CopyEntryMap(cache.map or {}), tonumber(cache.totalEntries or 0), tonumber(cache.totalAmount or 0), "cache"
+    end
+
+    local parsed, parsedEntries, parsedAmount = ParseLuaRowsPayload(payload)
+    local totalEntries = tonumber(ReadComponentField(component, LuaBridgeFieldTotalEntries, parsedEntries)) or parsedEntries
+    local totalAmount = tonumber(ReadComponentField(component, LuaBridgeFieldTotalAmount, parsedAmount)) or parsedAmount
+    if totalEntries < 0 then totalEntries = parsedEntries end
+    if totalAmount < 0 then totalAmount = parsedAmount end
+
+    DBServer.ComponentSnapshotCache[terminalId] = {
+        serial = serial,
+        payload = payload,
+        map = CopyEntryMap(parsed),
+        totalEntries = totalEntries,
+        totalAmount = totalAmount
+    }
+    return parsed, totalEntries, totalAmount, "parsed"
+end
+
+local function DispatchComponentLuaTakeRequest(terminal, wantedIdentifier, actor)
+    local component = ResolveTerminalComponent(terminal)
+    if component == nil then
+        return false, "component_missing"
+    end
+
+    local nonce = tonumber(ReadComponentField(component, LuaBridgeFieldTakeReqNonce, 0)) or 0
+    local nextNonce = nonce + 1
+    if nextNonce < 1 then
+        nextNonce = 1
+    end
+
+    local actorId = 0
+    pcall(function()
+        if actor ~= nil and actor.Removed ~= true then
+            actorId = math.floor(tonumber(actor.ID) or 0)
+        end
+    end)
+
+    local okIdentifier = WriteComponentField(component, LuaBridgeFieldTakeReqIdentifier, tostring(wantedIdentifier or ""))
+    local okActor = WriteComponentField(component, LuaBridgeFieldTakeReqActorId, actorId)
+    local okNonce = WriteComponentField(component, LuaBridgeFieldTakeReqNonce, nextNonce)
+    if not (okIdentifier and okActor and okNonce) then
+        return false, "write_failed"
+    end
+
+    local resultNonce = tonumber(ReadComponentField(component, LuaBridgeFieldTakeResultNonce, 0)) or 0
+    local resultCode = tostring(ReadComponentField(component, LuaBridgeFieldTakeResultCode, "") or "")
+    if resultNonce ~= nextNonce then
+        return false, "result_pending"
+    end
+
+    return true, resultCode
+end
+
 local function CallComponentMethod(component, methodName, ...)
     if component == nil then
         return false, nil, "component_nil", "component=nil"
@@ -787,36 +975,16 @@ local function IsSessionTerminal(item)
     end
 
     if normalized == "databaseterminalfixed" or hasFixedTag == true then
-        local terminalEntityId = ToTerminalEntityId(item)
-        local bridgeOk, bridgeOpen, bridgeMode, bridgeErr = BridgeIsTerminalSessionOpen(terminalEntityId)
-        if bridgeOk then
-            return bridgeOpen == true
-        end
-        LogDebugThrottled(
-            "server-fixed-open-bridge-fail-" .. tostring(GetTerminalId(item)),
-            2.0,
-            string.format(
-                "IsSessionTerminal fixed-open bridge failed terminal=%s mode=%s err=%s",
-                tostring(GetTerminalId(item)),
-                tostring(bridgeMode or "?"),
-                tostring(bridgeErr or "")))
-
         local component = ResolveTerminalComponent(item)
         if component ~= nil then
-            local okOpen, openValue, openMode, openErr = CallComponentMethod(component, "IsVirtualSessionOpenForUi")
-            local open = okOpen and openValue == true
-            if not okOpen then
-                LogDebugThrottled(
-                    "server-fixed-open-callfail-" .. tostring(GetTerminalId(item)),
-                    2.0,
-                    string.format(
-                        "IsSessionTerminal fixed-open call failed terminal=%s mode=%s err=%s",
-                        tostring(GetTerminalId(item)),
-                        tostring(openMode or "?"),
-                        tostring(openErr or "")))
-            end
-            return open == true
+            return GetComponentLuaSessionOpen(component) == true
         end
+        LogDebugThrottled(
+            "server-fixed-open-component-missing-" .. tostring(GetTerminalId(item)),
+            2.0,
+            string.format(
+                "IsSessionTerminal fixed-open component missing terminal=%s",
+                tostring(GetTerminalId(item))))
     end
 
     return false
@@ -872,29 +1040,12 @@ local function GetTerminalDatabaseId(terminal)
         return "default"
     end
 
-    local bridgeOk, bridgeDbId, bridgeMode, bridgeErr = BridgeGetTerminalDatabaseId(ToTerminalEntityId(terminal))
-    if bridgeOk and tostring(bridgeDbId or "") ~= "" then
-        return tostring(bridgeDbId or "default")
-    end
-    LogDebugThrottled(
-        "server-getdbid-bridge-fail-" .. tostring(GetTerminalId(terminal)),
-        2.0,
-        string.format(
-            "GetTerminalDatabaseId bridge failed terminal=%s mode=%s err=%s",
-            tostring(GetTerminalId(terminal)),
-            tostring(bridgeMode or "?"),
-            tostring(bridgeErr or "")))
-
     local component = ResolveTerminalComponent(terminal)
     if component == nil then
         return "default"
     end
 
-    local dbid = "default"
-    pcall(function()
-        dbid = tostring(component.DatabaseId or "default")
-    end)
-    return dbid or "default"
+    return tostring(GetComponentLuaDatabaseId(component) or "default")
 end
 
 local function GetTerminalComponent(terminal)
@@ -969,128 +1120,31 @@ local function ForEachVirtualRow(rows, callback)
 end
 
 local function BuildEntryMapFromComponent(terminal)
-    local terminalEntityId = ToTerminalEntityId(terminal)
-    local bridgeRowsOk, bridgeRows, bridgeRowsMode, bridgeRowsErr = BridgeGetTerminalVirtualSnapshot(terminalEntityId, true)
-    if bridgeRowsOk and bridgeRows ~= nil then
-        local map = {}
-        local totalEntries = 0
-        local totalAmount = 0
-
-        local iterOk, rowCount, iterMode = ForEachVirtualRow(bridgeRows, function(row)
-            local identifier = tostring(row.Identifier or "")
-            local key = NormalizeIdentifier(identifier)
-            if key ~= "" then
-                local amount = math.max(0, math.floor(tonumber(row.Amount) or 0))
-                map[key] = {
-                    key = key,
-                    identifier = identifier,
-                    prefabIdentifier = tostring(row.PrefabIdentifier or identifier),
-                    displayName = tostring(row.DisplayName or identifier),
-                    amount = amount,
-                    bestQuality = math.floor(tonumber(row.BestQuality) or 0),
-                    avgCondition = tonumber(row.AverageCondition) or 100.0
-                }
-                totalEntries = totalEntries + 1
-                totalAmount = totalAmount + amount
-            end
-        end)
-
-        if iterOk then
-            LogDebugThrottled(
-                "server-buildmap-bridge-" .. tostring(GetTerminalId(terminal)),
-                1.2,
-                string.format(
-                    "BuildEntryMapFromComponent bridge terminal=%s mode=%s iter=%s rows=%d entries=%d amount=%d",
-                    tostring(GetTerminalId(terminal)),
-                    tostring(bridgeRowsMode or "?"),
-                    tostring(iterMode or "?"),
-                    tonumber(rowCount or 0),
-                    tonumber(totalEntries or 0),
-                    tonumber(totalAmount or 0)))
-            return map, totalEntries, totalAmount
-        end
-    else
-        LogDebugThrottled(
-            "server-buildmap-bridge-fail-" .. tostring(GetTerminalId(terminal)),
-            1.5,
-            string.format(
-                "BuildEntryMapFromComponent bridge call failed terminal=%s mode=%s err=%s",
-                tostring(GetTerminalId(terminal)),
-                tostring(bridgeRowsMode or "?"),
-                tostring(bridgeRowsErr or "")))
-    end
-
-    local component = GetTerminalComponent(terminal)
-    if component == nil then
-        LogDebugThrottled(
-            "server-buildmap-component-missing-" .. tostring(GetTerminalId(terminal)),
-            2.0,
-            string.format(
-                "BuildEntryMapFromComponent component missing terminal=%s",
-                tostring(GetTerminalId(terminal))))
+    if terminal == nil or terminal.Removed then
         return nil
     end
 
-    local okRows, rows, rowsMode, rowsErr = CallComponentMethod(component, "GetVirtualViewSnapshot", true)
-    if not okRows or rows == nil then
+    local map, totalEntries, totalAmount, mode = GetComponentLuaSnapshot(terminal)
+    if map == nil then
         LogDebugThrottled(
-            "server-buildmap-callfail-" .. tostring(GetTerminalId(terminal)),
+            "server-buildmap-luabridge-missing-" .. tostring(GetTerminalId(terminal)),
             1.2,
             string.format(
-                "BuildEntryMapFromComponent snapshot call failed terminal=%s mode=%s err=%s",
+                "BuildEntryMapFromComponent lua bridge fields missing terminal=%s mode=%s",
                 tostring(GetTerminalId(terminal)),
-                tostring(rowsMode or "?"),
-                tostring(rowsErr or "")))
+                tostring(mode or "?")))
         return nil
     end
 
-    local map = {}
-    local totalEntries = 0
-    local totalAmount = 0
-
-    local iterOk, rowCount, iterMode = ForEachVirtualRow(rows, function(row)
-        local identifier = tostring(row.Identifier or "")
-        local key = NormalizeIdentifier(identifier)
-        if key ~= "" then
-            local amount = math.max(0, math.floor(tonumber(row.Amount) or 0))
-            map[key] = {
-                key = key,
-                identifier = identifier,
-                prefabIdentifier = tostring(row.PrefabIdentifier or identifier),
-                displayName = tostring(row.DisplayName or identifier),
-                amount = amount,
-                bestQuality = math.floor(tonumber(row.BestQuality) or 0),
-                avgCondition = tonumber(row.AverageCondition) or 100.0
-            }
-            totalEntries = totalEntries + 1
-            totalAmount = totalAmount + amount
-        end
-    end)
-
-    if not iterOk then
-        local now = Now()
-        if now >= (DBServer.NextSnapshotDiagAt or 0) then
-            DBServer.NextSnapshotDiagAt = now + 0.9
-            Log(string.format(
-                "BuildEntryMapFromComponent FAILED terminal=%s mode=%s rowsMode=%s",
-                tostring(terminal and terminal.ID or "none"),
-                tostring(iterMode or "unknown"),
-                tostring(rowsMode or "?")))
-        end
-        return nil
-    end
-
-    local now = Now()
-    if now >= (DBServer.NextSnapshotDiagAt or 0) then
-        DBServer.NextSnapshotDiagAt = now + 0.9
-        Log(string.format(
-            "BuildEntryMapFromComponent terminal=%s mode=%s rowCount=%d entries=%d amount=%d",
-            tostring(terminal and terminal.ID or "none"),
-            tostring(iterMode or "?"),
-            tonumber(rowCount or 0),
+    LogDebugThrottled(
+        "server-buildmap-luabridge-" .. tostring(GetTerminalId(terminal)),
+        1.2,
+        string.format(
+            "BuildEntryMapFromComponent lua bridge terminal=%s mode=%s entries=%d amount=%d",
+            tostring(GetTerminalId(terminal)),
+            tostring(mode or "?"),
             tonumber(totalEntries or 0),
             tonumber(totalAmount or 0)))
-    end
 
     return map, totalEntries, totalAmount
 end
@@ -1726,47 +1780,22 @@ function DBServer.LocalB1RequestTake(terminalEntityId, wantedIdentifier, charact
         return false, L("dbiotest.ui.take.denied", "You are not allowed to use this terminal.")
     end
 
-    local numericTerminalId = tonumber(terminalEntityId) or ToTerminalEntityId(terminal)
-    local bridgeOk, bridgeReason, bridgeMode, bridgeErr = BridgeTryTakeOneByIdentifier(
-        numericTerminalId,
-        wantedIdentifier,
-        character)
-    if bridgeOk then
-        local reason = tostring(bridgeReason or "")
-        if reason ~= "" then
-            return false, MapVirtualTakeError(reason)
-        end
-        FlagTerminalDirty(terminalEntityId)
+    local dispatched, reason = DispatchComponentLuaTakeRequest(terminal, wantedIdentifier, character)
+    if not dispatched then
         LogDebug(string.format(
-            "LocalB1RequestTake succeeded by bridge mode=%s terminal=%s wanted=%s",
-            tostring(bridgeMode or "?"),
+            "LocalB1RequestTake dispatch failed terminal=%s wanted=%s reason=%s",
             tostring(terminalEntityId or ""),
-            tostring(wantedIdentifier or "")))
-        return true, L("dbiotest.ui.take.success", "Item moved to terminal buffer.")
-    end
-    LogDebug(string.format(
-        "LocalB1RequestTake bridge invoke failed mode=%s err=%s; fallback component API.",
-        tostring(bridgeMode or "?"),
-        tostring(bridgeErr or "")))
-
-    local component = GetTerminalComponent(terminal)
-    if component ~= nil then
-        local okCall, reasonValue = CallComponentMethod(
-            component,
-            "TryTakeOneByIdentifierFromVirtualSession",
-            wantedIdentifier,
-            character)
-        local reason = tostring(reasonValue or "")
-        if okCall then
-            if reason ~= "" then
-                return false, MapVirtualTakeError(reason)
-            end
-            FlagTerminalDirty(terminalEntityId)
-            return true, L("dbiotest.ui.take.success", "Item moved to terminal buffer.")
-        end
+            tostring(wantedIdentifier or ""),
+            tostring(reason or "")))
+        return false, L("dbiotest.ui.take.notready", "Terminal API is not ready.")
     end
 
-    return false, L("dbiotest.ui.take.notready", "Terminal API is not ready.")
+    if tostring(reason or "") ~= "" then
+        return false, MapVirtualTakeError(reason)
+    end
+
+    FlagTerminalDirty(terminalEntityId)
+    return true, L("dbiotest.ui.take.success", "Item moved to terminal buffer.")
 end
 
 local runAsServerAuthority = SERVER == true
@@ -1891,59 +1920,26 @@ Networking.Receive(DBServer.NetTakeRequest, function(message, client)
         return
     end
 
-    local numericTerminalId = tonumber(terminalEntityId) or ToTerminalEntityId(terminal)
-    local bridgeOk, bridgeReason, bridgeMode, bridgeErr = BridgeTryTakeOneByIdentifier(
-        numericTerminalId,
-        wantedIdentifier,
-        character)
-    if bridgeOk then
-        local reason = tostring(bridgeReason or "")
-        if reason ~= "" then
-            LogDebug("NetTakeRequest failed by bridge reason='" .. tostring(reason) .. "'")
-            SendTakeResult(client, false, MapVirtualTakeError(reason))
-            return
-        end
-
-        SendTakeResult(client, true, L("dbiotest.ui.take.success", "Item moved to terminal buffer."))
-        FlagTerminalDirty(terminalEntityId)
+    local dispatched, reason = DispatchComponentLuaTakeRequest(terminal, wantedIdentifier, character)
+    if not dispatched then
         LogDebug(string.format(
-            "NetTakeRequest succeeded by bridge mode=%s and flagged terminal dirty.",
-            tostring(bridgeMode or "?")))
+            "NetTakeRequest dispatch failed terminal=%s wanted=%s reason=%s",
+            tostring(terminalEntityId or ""),
+            tostring(wantedIdentifier or ""),
+            tostring(reason or "")))
+        SendTakeResult(client, false, L("dbiotest.ui.take.notready", "Terminal API is not ready."))
         return
     end
-    LogDebug(string.format(
-        "NetTakeRequest bridge invoke failed mode=%s err=%s; fallback component API.",
-        tostring(bridgeMode or "?"),
-        tostring(bridgeErr or "")))
 
-    local component = GetTerminalComponent(terminal)
-    if component ~= nil then
-        local okCall, reasonValue, callMode, callErr = CallComponentMethod(
-            component,
-            "TryTakeOneByIdentifierFromVirtualSession",
-            wantedIdentifier,
-            character)
-        local reason = tostring(reasonValue or "")
-        if okCall then
-            if reason ~= "" then
-                LogDebug("NetTakeRequest failed by virtual API reason='" .. tostring(reason) .. "'")
-                SendTakeResult(client, false, MapVirtualTakeError(reason))
-                return
-            end
-
-            SendTakeResult(client, true, L("dbiotest.ui.take.success", "Item moved to terminal buffer."))
-            FlagTerminalDirty(terminalEntityId)
-            LogDebug("NetTakeRequest succeeded and flagged terminal dirty.")
-            return
-        end
-        Log("Virtual take API failed: " .. tostring(callErr or reason or ""))
-        LogDebug(string.format(
-            "NetTakeRequest virtual API invoke failed mode=%s err=%s",
-            tostring(callMode or "?"),
-            tostring(callErr or "")))
+    if tostring(reason or "") ~= "" then
+        LogDebug("NetTakeRequest failed by lua bridge reason='" .. tostring(reason) .. "'")
+        SendTakeResult(client, false, MapVirtualTakeError(reason))
+        return
     end
 
-    SendTakeResult(client, false, L("dbiotest.ui.take.notready", "Terminal API is not ready."))
+    SendTakeResult(client, true, L("dbiotest.ui.take.success", "Item moved to terminal buffer."))
+    FlagTerminalDirty(terminalEntityId)
+    LogDebug("NetTakeRequest succeeded and flagged terminal dirty.")
 end)
 LogDebug("Networking.Receive registered: " .. tostring(DBServer.NetTakeRequest))
 
@@ -2095,6 +2091,7 @@ Hook.Add("roundEnd", "DBIOTEST_ServerViewRoundEnd", function()
     DBServer.LocalOutbox = {}
     DBServer.NextPerfLogAt = 0
     DBServer.ComponentCache = {}
+    DBServer.ComponentSnapshotCache = {}
     LogDebug("Hook roundEnd: cleared subscriptions.")
 end)
 LogDebug("Hook.Add registered: DBIOTEST_ServerViewRoundEnd")
@@ -2105,6 +2102,7 @@ Hook.Add("stop", "DBIOTEST_ServerViewStop", function()
     DBServer.LocalOutbox = {}
     DBServer.NextPerfLogAt = 0
     DBServer.ComponentCache = {}
+    DBServer.ComponentSnapshotCache = {}
     LogDebug("Hook stop: cleared subscriptions.")
 end)
 LogDebug("Hook.Add registered: DBIOTEST_ServerViewStop")
