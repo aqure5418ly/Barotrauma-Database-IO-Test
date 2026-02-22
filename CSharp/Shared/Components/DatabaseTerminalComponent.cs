@@ -230,12 +230,9 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private bool _processingLuaTakeRequest;
     private TerminalPanelAction _lastXmlAction = TerminalPanelAction.None;
     private double _lastXmlActionAt;
-    private int _lastXmlRawRequest;
-    private double _nextXmlRawLogAt;
     private double _nextLuaBridgeDiagAt;
     private const double LuaBridgeDiagCooldownSeconds = 1.0;
     private const double XmlActionDebounceSeconds = 0.75;
-    private const double XmlRawLogCooldownSeconds = 0.2;
     private const char LuaRowSeparator = (char)0x1E;
     private const char LuaFieldSeparator = (char)0x1F;
 
@@ -279,16 +276,15 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private double _nextClientPanelActionAllowedTime;
     private const float PanelInteractionRange = 340f;
     private const bool EnablePanelDebugLog = true;
-    private const double PanelDebugLogCooldown = 0.35;
     private const double PanelEvalLogCooldown = 0.25;
     private const double PanelQueueLogCooldown = 2.0;
     private const double PanelEntryRefreshInterval = 0.25;
     private const int PanelEntryButtonCount = 12;
     private const int PanelEntryColumns = 4;
     private const double PanelFocusStickySeconds = 1.25;
+    private static long _panelTraceSeq;
     private bool _panelLastVisible;
     private string _panelLastHiddenReason = "";
-    private double _nextPanelStateLogAllowedTime;
     private double _nextNoCanvasLogAllowedTime;
     private double _nextPanelQueueLogAllowedTime;
     private double _nextPanelQueueWarnLogAllowedTime;
@@ -311,6 +307,16 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             null,
             Type.EmptyTypes,
             null);
+
+    private static long NextPanelTraceSeq()
+    {
+        unchecked
+        {
+            _panelTraceSeq++;
+            if (_panelTraceSeq <= 0) { _panelTraceSeq = 1; }
+            return _panelTraceSeq;
+        }
+    }
 
     private void ClaimClientPanelFocus(string reason)
     {
@@ -596,6 +602,12 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     public void ClientEventRead(IReadMessage msg, float sendingTime)
     {
+        bool prevOpen = _cachedSessionOpen;
+        int prevPage = _cachedPageIndex;
+        int prevTotal = _cachedPageTotal;
+        int prevCount = _cachedItemCount;
+        bool prevLocked = _cachedLocked;
+
         _resolvedDatabaseId = DatabaseStore.Normalize(msg.ReadString());
         _cachedItemCount = msg.ReadInt32();
         _cachedLocked = msg.ReadBoolean();
@@ -608,8 +620,9 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (EnableCsPanelOverlay)
         {
             LogPanelDebug(
-                $"summary update id={item?.ID} db='{_resolvedDatabaseId}' sessionOpen={_cachedSessionOpen} " +
-                $"page={Math.Max(1, _cachedPageIndex)}/{Math.Max(1, _cachedPageTotal)} count={_cachedItemCount} locked={_cachedLocked}");
+                $"summary update id={item?.ID} db='{_resolvedDatabaseId}' " +
+                $"open={prevOpen}->{_cachedSessionOpen} page={Math.Max(1, prevPage)}/{Math.Max(1, prevTotal)}->{Math.Max(1, _cachedPageIndex)}/{Math.Max(1, _cachedPageTotal)} " +
+                $"count={prevCount}->{_cachedItemCount} locked={prevLocked}->{_cachedLocked}");
             UpdateClientPanelVisuals();
         }
 #endif
@@ -1563,16 +1576,13 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (request == 0) { return; }
         XmlActionRequest = 0;
 
-        if (ModFileLog.IsDebugEnabled && (request != _lastXmlRawRequest || Timing.TotalTime >= _nextXmlRawLogAt))
+        if (ModFileLog.IsDebugEnabled)
         {
-            _lastXmlRawRequest = request;
-            _nextXmlRawLogAt = Timing.TotalTime + XmlRawLogCooldownSeconds;
             Character controlled = Character.Controlled;
             int selectedId = controlled?.SelectedItem?.ID ?? -1;
             int selectedSecondaryId = controlled?.SelectedSecondaryItem?.ID ?? -1;
-            ModFileLog.Write(
-                "Panel",
-                $"{Constants.LogPrefix} XML raw request={request} id={item?.ID} db='{_resolvedDatabaseId}' " +
+            LogPanelDebug(
+                $"xml raw request={request} id={item?.ID} db='{_resolvedDatabaseId}' " +
                 $"sessionActive={IsSessionActive()} cachedOpen={_cachedSessionOpen} inPlace={UseInPlaceSession} sessionVariant={SessionVariant} " +
                 $"owner='{_sessionOwner?.Name ?? "none"}' controlled='{controlled?.Name ?? "none"}' selected={selectedId}/{selectedSecondaryId}");
         }
@@ -3142,7 +3152,8 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private void LogPanelDebug(string message)
     {
         if (!EnablePanelDebugLog) { return; }
-        string line = $"{Constants.LogPrefix} [Panel] {message}";
+        long seq = NextPanelTraceSeq();
+        string line = $"{Constants.LogPrefix} [Panel#{seq}] {message}";
         DebugConsole.NewMessage(line, Color.LightSkyBlue);
         ModFileLog.Write("Panel", line);
     }
@@ -3421,6 +3432,9 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     private void SetPanelVisible(bool visible, string reason)
     {
+        bool prevFrameVisible = _panelFrame?.Visible ?? false;
+        bool prevFrameEnabled = _panelFrame?.Enabled ?? false;
+
         if (_panelFrame != null)
         {
             _panelFrame.Visible = visible;
@@ -3429,15 +3443,24 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         bool stateChanged = _panelLastVisible != visible;
         bool hideReasonChanged = !visible && _panelLastHiddenReason != reason;
-        if ((stateChanged || hideReasonChanged) && Timing.TotalTime >= _nextPanelStateLogAllowedTime)
+        bool currentFrameVisible = _panelFrame?.Visible ?? false;
+        bool currentFrameEnabled = _panelFrame?.Enabled ?? false;
+        Character controlled = Character.Controlled;
+        int selectedId = controlled?.SelectedItem?.ID ?? -1;
+        int selectedSecondaryId = controlled?.SelectedSecondaryItem?.ID ?? -1;
+        int focusOwner = _clientPanelFocusItemId;
+        double focusRemaining = Math.Max(0, _clientPanelFocusUntil - Timing.TotalTime);
+
+        if (stateChanged || hideReasonChanged)
         {
             string rectInfo = _panelFrame == null
                 ? "rect=(null)"
                 : $"rect=({_panelFrame.Rect.X},{_panelFrame.Rect.Y},{_panelFrame.Rect.Width},{_panelFrame.Rect.Height})";
             LogPanelDebug(
                 $"panel {(visible ? "show" : "hide")} id={item?.ID} reason={reason} sessionVariant={SessionVariant} " +
-                $"summaryOpen={_cachedSessionOpen} page={Math.Max(1, _cachedPageIndex)}/{Math.Max(1, _cachedPageTotal)} {rectInfo}");
-            _nextPanelStateLogAllowedTime = Timing.TotalTime + PanelDebugLogCooldown;
+                $"summaryOpen={_cachedSessionOpen} page={Math.Max(1, _cachedPageIndex)}/{Math.Max(1, _cachedPageTotal)} " +
+                $"state={prevFrameVisible}/{prevFrameEnabled}->{currentFrameVisible}/{currentFrameEnabled} " +
+                $"selected={selectedId}/{selectedSecondaryId} focus={focusOwner} focusRemain={focusRemaining:0.00} {rectInfo}");
         }
 
         _panelLastVisible = visible;

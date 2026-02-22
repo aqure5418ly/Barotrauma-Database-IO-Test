@@ -11,7 +11,7 @@ namespace DatabaseIOTest
         private const string RoundStartHookId = "DBIOTEST.RoundStart";
         private const string RoundEndHookId = "DBIOTEST.RoundEnd";
         private const string HarmonyId = "DatabaseIOTest.SaveConsistency";
-        private const string BuildStamp = "dev-20260222-b1-fixed-xml-gate";
+        private const string BuildStamp = "dev-20260222-b1-trace-openclose";
         private Harmony _harmony;
 
         public DatabaseIOMod()
