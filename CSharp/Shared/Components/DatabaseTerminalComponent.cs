@@ -3729,14 +3729,17 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         float distanceSq = Vector2.DistanceSquared(controlled.WorldPosition, item.WorldPosition);
         distance = (float)Math.Sqrt(Math.Max(0f, distanceSq));
         isNearby = distanceSq <= PanelInteractionRange * PanelInteractionRange;
+        bool hasFocusOwner = _clientPanelFocusItemId == item.ID;
+        bool hasFocusLease = hasFocusOwner && Timing.TotalTime <= _clientPanelFocusUntil;
         if (UseInPlaceSession)
         {
-            shouldShow = _cachedSessionOpen && (isSelected || isNearby);
+            // Keep fixed terminal panel stable once focused while session remains open.
+            shouldShow = _cachedSessionOpen && (isSelected || isNearby || hasFocusOwner || hasFocusLease);
         }
         else if (SessionVariant)
         {
-            bool hasFocusLease = _clientPanelFocusItemId == item.ID && Timing.TotalTime <= _clientPanelFocusUntil;
-            shouldShow = _cachedSessionOpen && (isSelected || (isInControlledInventory && hasFocusLease));
+            // Handheld session item may not stay selected while container UI is active.
+            shouldShow = _cachedSessionOpen && (isSelected || isInControlledInventory || hasFocusOwner || hasFocusLease);
         }
         else
         {
@@ -3764,6 +3767,10 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                 {
                     ClaimClientPanelFocus("in-place-nearby");
                 }
+                else if (SessionVariant && isInControlledInventory)
+                {
+                    ClaimClientPanelFocus("session-inventory");
+                }
             }
         }
 
@@ -3776,9 +3783,13 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         if (_clientPanelFocusItemId <= 0 || Timing.TotalTime > _clientPanelFocusUntil)
         {
-            if (UseInPlaceSession && isNearby)
+            if (SessionVariant && isInControlledInventory)
             {
-                ClaimClientPanelFocus("in-place-nearby");
+                ClaimClientPanelFocus("session-inventory-fallback");
+            }
+            else if (UseInPlaceSession && (_cachedSessionOpen || isNearby))
+            {
+                ClaimClientPanelFocus("in-place-open-fallback");
             }
             else if (isSelected)
             {
