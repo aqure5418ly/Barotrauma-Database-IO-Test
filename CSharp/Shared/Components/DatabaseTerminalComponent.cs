@@ -278,6 +278,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private const bool EnablePanelDebugLog = true;
     private const double PanelEvalLogCooldown = 0.25;
     private const double PanelQueueLogCooldown = 2.0;
+    private const double PanelExternalMutationLogCooldown = 0.08;
     private const double PanelEntryRefreshInterval = 0.25;
     private const int PanelEntryButtonCount = 12;
     private const int PanelEntryColumns = 4;
@@ -290,6 +291,14 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private double _nextPanelQueueWarnLogAllowedTime;
     private string _lastPanelEvalSignature = "";
     private double _nextPanelEvalLogAllowedTime;
+    private double _nextPanelExternalMutationLogAllowedTime;
+    private bool _panelApplyingInternalState;
+    private bool _panelExpectedStateKnown;
+    private bool _panelExpectedVisible;
+    private bool _panelExpectedEnabled;
+    private bool _panelObservedStateKnown;
+    private bool _panelObservedVisible;
+    private bool _panelObservedEnabled;
     private static int _clientPanelFocusItemId = -1;
     private static double _clientPanelFocusUntil;
     private static string _clientPanelFocusReason = "";
@@ -3220,6 +3229,41 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         return text.Substring(0, maxChars - 1) + "…";
     }
 
+    private void TrackPanelExternalStateChange(string phase)
+    {
+        if (!EnablePanelDebugLog || !ModFileLog.IsDebugEnabled) { return; }
+        if (_panelFrame == null) { return; }
+
+        bool currentVisible = _panelFrame.Visible;
+        bool currentEnabled = _panelFrame.Enabled;
+        if (!_panelObservedStateKnown)
+        {
+            _panelObservedStateKnown = true;
+            _panelObservedVisible = currentVisible;
+            _panelObservedEnabled = currentEnabled;
+            return;
+        }
+
+        bool changed = currentVisible != _panelObservedVisible || currentEnabled != _panelObservedEnabled;
+        if (!changed) { return; }
+
+        bool expectedKnown = _panelExpectedStateKnown;
+        bool drift = expectedKnown &&
+            (currentVisible != _panelExpectedVisible || currentEnabled != _panelExpectedEnabled);
+        if (!_panelApplyingInternalState && Timing.TotalTime >= _nextPanelExternalMutationLogAllowedTime)
+        {
+            string expectedText = expectedKnown ? $"{_panelExpectedVisible}/{_panelExpectedEnabled}" : "unknown";
+            LogPanelDebug(
+                $"panel external state change phase={phase} id={item?.ID} " +
+                $"prev={_panelObservedVisible}/{_panelObservedEnabled} cur={currentVisible}/{currentEnabled} " +
+                $"expected={expectedText} drift={drift} cachedOpen={_cachedSessionOpen} sessionActive={IsSessionActive()}");
+            _nextPanelExternalMutationLogAllowedTime = Timing.TotalTime + PanelExternalMutationLogCooldown;
+        }
+
+        _panelObservedVisible = currentVisible;
+        _panelObservedEnabled = currentEnabled;
+    }
+
     private int GetPanelEntryPageCount()
     {
         if (_panelEntrySnapshot.Count <= 0) { return 1; }
@@ -3437,8 +3481,24 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         if (_panelFrame != null)
         {
-            _panelFrame.Visible = visible;
-            _panelFrame.Enabled = visible;
+            _panelApplyingInternalState = true;
+            try
+            {
+                // Avoid writing identical state every frame: some GUI components
+                // internally treat repeated assignments as visual state changes.
+                if (_panelFrame.Visible != visible)
+                {
+                    _panelFrame.Visible = visible;
+                }
+                if (_panelFrame.Enabled != visible)
+                {
+                    _panelFrame.Enabled = visible;
+                }
+            }
+            finally
+            {
+                _panelApplyingInternalState = false;
+            }
         }
 
         bool stateChanged = _panelLastVisible != visible;
@@ -3463,6 +3523,12 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                 $"selected={selectedId}/{selectedSecondaryId} focus={focusOwner} focusRemain={focusRemaining:0.00} {rectInfo}");
         }
 
+        _panelExpectedStateKnown = true;
+        _panelExpectedVisible = visible;
+        _panelExpectedEnabled = visible;
+        _panelObservedStateKnown = _panelFrame != null;
+        _panelObservedVisible = currentFrameVisible;
+        _panelObservedEnabled = currentFrameEnabled;
         _panelLastVisible = visible;
         if (!visible) { _panelLastHiddenReason = reason; }
     }
@@ -3484,6 +3550,12 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         _panelFrame.RectTransform.AbsoluteOffset = new Point(36, 92);
         _panelFrame.Visible = false;
         _panelFrame.Enabled = false;
+        _panelExpectedStateKnown = true;
+        _panelExpectedVisible = false;
+        _panelExpectedEnabled = false;
+        _panelObservedStateKnown = true;
+        _panelObservedVisible = false;
+        _panelObservedEnabled = false;
         LogPanelDebug(
             $"panel created id={item?.ID} db='{_resolvedDatabaseId}' " +
             $"rect=({_panelFrame.Rect.X},{_panelFrame.Rect.Y},{_panelFrame.Rect.Width},{_panelFrame.Rect.Height}) " +
@@ -3616,6 +3688,8 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     private void UpdateClientPanel()
     {
+        TrackPanelExternalStateChange("pre-eval");
+
         Character controlled = null;
         bool isSelected = false;
         bool isInControlledInventory = false;
@@ -3661,7 +3735,8 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         }
         else if (SessionVariant)
         {
-            shouldShow = _cachedSessionOpen && (isSelected || isInControlledInventory);
+            bool hasFocusLease = _clientPanelFocusItemId == item.ID && Timing.TotalTime <= _clientPanelFocusUntil;
+            shouldShow = _cachedSessionOpen && (isSelected || (isInControlledInventory && hasFocusLease));
         }
         else
         {
@@ -3701,7 +3776,14 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         if (_clientPanelFocusItemId <= 0 || Timing.TotalTime > _clientPanelFocusUntil)
         {
-            ClaimClientPanelFocus("fallback-claim");
+            if (UseInPlaceSession && isNearby)
+            {
+                ClaimClientPanelFocus("in-place-nearby");
+            }
+            else if (isSelected)
+            {
+                ClaimClientPanelFocus("fallback-claim");
+            }
         }
 
         if (_clientPanelFocusItemId != item.ID)
@@ -3723,6 +3805,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         SetPanelVisible(true, "eligible");
         QueuePanelForGuiUpdate();
         UpdateClientPanelVisuals();
+        TrackPanelExternalStateChange("post-update");
     }
 
     private void UpdateClientPanelVisuals()
@@ -3812,6 +3895,9 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             _panelFrame.Visible = false;
             _panelFrame.Enabled = false;
         }
+        _panelApplyingInternalState = false;
+        _panelExpectedStateKnown = false;
+        _panelObservedStateKnown = false;
         _panelFrame = null;
 #endif
 
