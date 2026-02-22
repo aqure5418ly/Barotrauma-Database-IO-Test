@@ -4,5 +4,5 @@
   <Item file="%ModDir%/XML/FabricatorOverrides.xml" />
   <Text file="%ModDir%/XML/Text/English.xml" />
   <Text file="%ModDir%/XML/Text/SimplifiedChinese.xml" />
-  <Other file="%ModDir%/Lua/Autorun/dbiotest_init.lua" />
+  <!-- Lua runtime is archived/disabled while validating C#-only terminal UI path. -->
 </contentpackage>
