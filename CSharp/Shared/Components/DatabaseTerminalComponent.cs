@@ -273,6 +273,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private GUIButton _panelCloseButton;
     private readonly List<GUIButton> _panelEntryButtons = new List<GUIButton>();
     private readonly List<TerminalVirtualEntry> _panelEntrySnapshot = new List<TerminalVirtualEntry>();
+    private CustomInterface _fixedXmlControlPanel;
     private int _panelEntryPageIndex;
     private double _nextPanelEntryRefreshAt;
     private double _nextClientPanelActionAllowedTime;
@@ -396,6 +397,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         long stageStartTicks = perfStartTicks;
 
 #if CLIENT
+        UpdateFixedXmlControlPanelState();
         if (EnableCsPanelOverlay)
         {
             UpdateClientPanel();
@@ -1603,14 +1605,13 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         if (EnableCsPanelOverlay && UseInPlaceSession)
         {
+            // In mixed fixed-terminal mode, XML is used only for "Open/Force".
+            // Keep "Close" on the C# panel path to avoid oscillation from repeated XML writes.
             bool sessionActive = IsSessionActive();
-            bool allowOpenWhenClosed =
+            bool allowXmlOpenWhenClosed =
                 !sessionActive &&
                 (action == TerminalPanelAction.OpenSession || action == TerminalPanelAction.ForceOpenSession);
-            bool allowCloseWhenOpen =
-                sessionActive &&
-                action == TerminalPanelAction.CloseSession;
-            if (!allowOpenWhenClosed && !allowCloseWhenOpen)
+            if (!allowXmlOpenWhenClosed)
             {
                 ModFileLog.Write(
                     "Panel",
@@ -3146,6 +3147,29 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         ModFileLog.Write("Panel", line);
     }
 
+    private void UpdateFixedXmlControlPanelState()
+    {
+        if (!EnableCsPanelOverlay || !UseInPlaceSession || SessionVariant || item == null || item.Removed)
+        {
+            return;
+        }
+
+        _fixedXmlControlPanel ??= item.GetComponent<CustomInterface>();
+        if (_fixedXmlControlPanel == null)
+        {
+            return;
+        }
+
+        bool shouldEnableXmlPanel = !_cachedSessionOpen;
+        if (_fixedXmlControlPanel.IsActive != shouldEnableXmlPanel)
+        {
+            _fixedXmlControlPanel.IsActive = shouldEnableXmlPanel;
+            LogPanelDebug(
+                $"fixed xml panel {(shouldEnableXmlPanel ? "enabled" : "disabled")} id={item?.ID} db='{_resolvedDatabaseId}' " +
+                $"cachedOpen={_cachedSessionOpen} sessionActive={IsSessionActive()}");
+        }
+    }
+
     private void LogPanelEval(
         string phase,
         Character controlled,
@@ -3717,8 +3741,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         if (_panelCloseButton != null)
         {
-            bool blockCsCloseForInPlace = UseInPlaceSession && !SessionVariant;
-            _panelCloseButton.Enabled = _cachedSessionOpen && !blockCsCloseForInPlace;
+            _panelCloseButton.Enabled = _cachedSessionOpen;
         }
 
         if (_panelStatusText != null)
@@ -3734,12 +3757,6 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private void RequestPanelActionClient(TerminalPanelAction action)
     {
         if (action == TerminalPanelAction.None) { return; }
-        if (action == TerminalPanelAction.CloseSession && UseInPlaceSession && !SessionVariant)
-        {
-            LogPanelDebug(
-                $"action blocked: close via cs_panel disabled for fixed terminal id={item?.ID} db='{_resolvedDatabaseId}'");
-            return;
-        }
         if (Timing.TotalTime < _nextClientPanelActionAllowedTime)
         {
             LogPanelDebug($"action blocked by cooldown: {action}");
