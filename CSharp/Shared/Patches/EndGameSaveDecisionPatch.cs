@@ -12,6 +12,7 @@ namespace DatabaseIOTest.Patches
     internal static class EndGameSaveDecisionPatch
     {
         private static readonly List<MethodBase> PatchedTargets = new List<MethodBase>();
+        private static readonly HashSet<string> LoggedReflectionIssues = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private static bool _loggedMissingTarget;
 
         internal static int GetPatchedMethodCount() => PatchedTargets.Count;
@@ -26,6 +27,7 @@ namespace DatabaseIOTest.Patches
             AddMatchingMethods(matches, "Barotrauma.GameSession", "Save", requireBoolParameter: true);
 
             matches = matches.Distinct().ToList();
+            matches.RemoveAll(m => m == null);
 
             if (matches.Count <= 0)
             {
@@ -120,21 +122,78 @@ namespace DatabaseIOTest.Patches
             string methodName,
             bool requireBoolParameter)
         {
-            Type type = AccessTools.TypeByName(typeFullName);
+            Type type;
+            try
+            {
+                type = AccessTools.TypeByName(typeFullName);
+            }
+            catch (Exception ex)
+            {
+                LogReflectionIssueOnce(
+                    $"{typeFullName}:type",
+                    $"Save decision reflection failed resolving type {typeFullName}: {ex.GetType().Name}: {ex.Message}");
+                return;
+            }
+
             if (type == null)
             {
                 return;
             }
 
-            var methods = type
-                .GetMethods(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
-                .Where(m => string.Equals(m.Name, methodName, StringComparison.Ordinal));
-            if (requireBoolParameter)
+            MethodInfo[] methods;
+            try
             {
-                methods = methods.Where(m => m.GetParameters().Any(p => p.ParameterType == typeof(bool)));
+                methods = type.GetMethods(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+            }
+            catch (Exception ex)
+            {
+                LogReflectionIssueOnce(
+                    $"{typeFullName}:methods",
+                    $"Save decision reflection failed enumerating {typeFullName}.{methodName}: {ex.GetType().Name}: {ex.Message}");
+                return;
             }
 
-            matches.AddRange(methods.Cast<MethodBase>());
+            foreach (MethodInfo method in methods)
+            {
+                if (method == null) { continue; }
+
+                try
+                {
+                    if (!string.Equals(method.Name, methodName, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    if (requireBoolParameter)
+                    {
+                        ParameterInfo[] parameters;
+                        try
+                        {
+                            parameters = method.GetParameters();
+                        }
+                        catch (Exception ex)
+                        {
+                            LogReflectionIssueOnce(
+                                $"{typeFullName}:{methodName}:params",
+                                $"Save decision reflection skipped {typeFullName}.{methodName} parameter scan: {ex.GetType().Name}: {ex.Message}");
+                            continue;
+                        }
+
+                        if (!parameters.Any(p => p.ParameterType == typeof(bool)))
+                        {
+                            continue;
+                        }
+                    }
+
+                    matches.Add(method);
+                }
+                catch (Exception ex)
+                {
+                    LogReflectionIssueOnce(
+                        $"{typeFullName}:{methodName}:method",
+                        $"Save decision reflection skipped method in {typeFullName}.{methodName}: {ex.GetType().Name}: {ex.Message}");
+                }
+            }
         }
 
         private static bool? TryResolveBoolArgument(MethodBase method, object[] args, params string[] preferredParameterNames)
@@ -204,6 +263,16 @@ namespace DatabaseIOTest.Patches
             }
 
             _loggedMissingTarget = true;
+            ModFileLog.Write("Core", $"{Constants.LogPrefix} {message}");
+        }
+
+        private static void LogReflectionIssueOnce(string key, string message)
+        {
+            if (!LoggedReflectionIssues.Add(key))
+            {
+                return;
+            }
+
             ModFileLog.Write("Core", $"{Constants.LogPrefix} {message}");
         }
     }

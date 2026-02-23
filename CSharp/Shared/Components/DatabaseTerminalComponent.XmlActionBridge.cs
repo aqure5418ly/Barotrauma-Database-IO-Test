@@ -16,6 +16,75 @@ using Microsoft.Xna.Framework;
 
 public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializable, IClientSerializable
 {
+    private readonly struct XmlActionActorResolution
+    {
+        public XmlActionActorResolution(Character actor, string source, int candidateCount)
+        {
+            Actor = actor;
+            Source = source ?? "none";
+            CandidateCount = Math.Max(0, candidateCount);
+        }
+
+        public Character Actor { get; }
+        public string Source { get; }
+        public int CandidateCount { get; }
+    }
+
+    private static bool IsValidXmlActionActor(Character candidate)
+    {
+        return candidate != null && !candidate.Removed && !candidate.IsDead;
+    }
+
+    private XmlActionActorResolution ResolveXmlActionActor()
+    {
+        if (IsValidXmlActionActor(_sessionOwner))
+        {
+            return new XmlActionActorResolution(_sessionOwner, "session_owner", 1);
+        }
+
+        Character controlled = Character.Controlled;
+        if (IsValidXmlActionActor(controlled))
+        {
+            return new XmlActionActorResolution(controlled, "character_controlled", 1);
+        }
+
+        Character selectedCandidate = null;
+        int selectedCandidateCount = 0;
+        foreach (Character candidate in Character.CharacterList)
+        {
+            if (!IsValidXmlActionActor(candidate)) { continue; }
+            bool selectedThisTerminal = candidate.SelectedItem == item || candidate.SelectedSecondaryItem == item;
+            if (!selectedThisTerminal) { continue; }
+
+            selectedCandidateCount++;
+            if (selectedCandidate == null || candidate.ID < selectedCandidate.ID)
+            {
+                selectedCandidate = candidate;
+            }
+        }
+
+        if (IsValidXmlActionActor(selectedCandidate))
+        {
+            if (selectedCandidateCount > 1 && ModFileLog.IsDebugEnabled)
+            {
+                ModFileLog.WriteDebug(
+                    "Panel",
+                    $"{Constants.LogPrefix} XML actor ambiguity db='{_resolvedDatabaseId}' itemId={item?.ID} " +
+                    $"candidates={selectedCandidateCount} chosen='{selectedCandidate.Name}' chosenId={selectedCandidate.ID} source='selected_item_scan'");
+            }
+
+            return new XmlActionActorResolution(selectedCandidate, "selected_item_scan", selectedCandidateCount);
+        }
+
+        Character inventoryOwner = item?.ParentInventory?.Owner as Character;
+        if (IsValidXmlActionActor(inventoryOwner))
+        {
+            return new XmlActionActorResolution(inventoryOwner, "parent_inventory_owner", 1);
+        }
+
+        return new XmlActionActorResolution(null, "none", selectedCandidateCount);
+    }
+
     private void ConsumeXmlActionRequest()
     {
         int request = XmlActionRequest;
@@ -94,30 +163,24 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             return;
         }
 
-        Character actor = _sessionOwner;
-        if (actor != null && (actor.Removed || actor.IsDead))
+        if (!IsValidXmlActionActor(_sessionOwner) && _sessionOwner != null)
         {
             DebugConsole.NewMessage(
-                $"{Constants.LogPrefix} XML action ignored (invalid session owner): {action} for '{_resolvedDatabaseId}'.",
+                $"{Constants.LogPrefix} XML action owner reset (invalid session owner): {action} for '{_resolvedDatabaseId}'.",
                 Microsoft.Xna.Framework.Color.Orange);
-            ModFileLog.Write("Panel", $"{Constants.LogPrefix} XML action ignored (invalid session owner): {action} db='{_resolvedDatabaseId}' itemId={item?.ID}");
-            return;
+            ModFileLog.Write(
+                "Panel",
+                $"{Constants.LogPrefix} XML action owner reset (invalid session owner): {action} db='{_resolvedDatabaseId}' itemId={item?.ID}");
+            _sessionOwner = null;
         }
 
-        if (actor == null || actor.Removed || actor.IsDead)
-        {
-            actor = Character.Controlled;
-        }
-        if (actor == null || actor.Removed || actor.IsDead)
-        {
-            actor = item?.ParentInventory?.Owner as Character;
-        }
+        XmlActionActorResolution actorResolution = ResolveXmlActionActor();
+        Character actor = actorResolution.Actor;
+
         if (action != TerminalPanelAction.OpenSession &&
             action != TerminalPanelAction.ForceOpenSession &&
             _sessionOwner == null &&
-            actor != null &&
-            !actor.Removed &&
-            !actor.IsDead)
+            IsValidXmlActionActor(actor))
         {
             _sessionOwner = actor;
             ModFileLog.Write(
@@ -129,6 +192,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         ModFileLog.Write(
             "Panel",
             $"{Constants.LogPrefix} XML action consumed: {action} applied={applied} actor='{actor?.Name ?? "none"}' owner='{_sessionOwner?.Name ?? "none"}' " +
+            $"actorSource='{actorResolution.Source}' candidateCount={actorResolution.CandidateCount} " +
             $"db='{_resolvedDatabaseId}' page={Math.Max(1, _cachedPageIndex)}/{Math.Max(1, _cachedPageTotal)} itemId={item?.ID}");
     }
 }

@@ -93,15 +93,113 @@ namespace DatabaseIOTest
             try
             {
                 _harmony = new Harmony(HarmonyId);
-                _harmony.PatchAll(Assembly.GetExecutingAssembly());
+
+                int uiPatchOk = 0;
+                int uiPatchFail = 0;
+                int savePatchOk = 0;
+                int savePatchFail = 0;
+
+                var uiPatchTypes = new[]
+                {
+                    typeof(DatabaseTerminalUiHijackPatch),
+                    typeof(DatabaseTerminalContainerSilencePatch),
+                    typeof(DatabaseTerminalFixedHudPatch)
+                };
+
+                foreach (Type patchType in uiPatchTypes)
+                {
+                    if (TryPatchClass(patchType, "UI"))
+                    {
+                        uiPatchOk++;
+                    }
+                    else
+                    {
+                        uiPatchFail++;
+                    }
+                }
+
+                if (TryPatchClass(typeof(EndGameSaveDecisionPatch), "SaveDecision"))
+                {
+                    savePatchOk++;
+                }
+                else
+                {
+                    savePatchFail++;
+                }
+
                 int patchedCount = EndGameSaveDecisionPatch.GetPatchedMethodCount();
-                Services.DatabaseStore.SetSaveDecisionBindingEnabled(patchedCount > 0);
-                Services.ModFileLog.Write("Core", $"{Constants.LogPrefix} Harmony patches installed. EndGame targets={patchedCount}");
+                bool saveBindingEnabled = patchedCount > 0;
+                Services.DatabaseStore.SetSaveDecisionBindingEnabled(saveBindingEnabled);
+
+                Services.ModFileLog.Write(
+                    "Core",
+                    $"{Constants.LogPrefix} Harmony patches installed. uiPatchOk={uiPatchOk} uiPatchFail={uiPatchFail} " +
+                    $"savePatchOk={savePatchOk} savePatchFail={savePatchFail} EndGame targets={patchedCount}");
             }
             catch (Exception ex)
             {
                 Services.DatabaseStore.SetSaveDecisionBindingEnabled(false);
                 Services.ModFileLog.Write("Core", $"{Constants.LogPrefix} InstallPatches failed: {ex.Message}");
+            }
+        }
+
+        private bool TryPatchClass(Type patchType, string group)
+        {
+            if (_harmony == null || patchType == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                MethodInfo createProcessorMethod = typeof(Harmony).GetMethod(
+                    "CreateClassProcessor",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                    null,
+                    new[] { typeof(Type) },
+                    null);
+
+                if (createProcessorMethod == null)
+                {
+                    Services.ModFileLog.Write(
+                        "Core",
+                        $"{Constants.LogPrefix} Patch group '{group}' failed type='{patchType.FullName}': CreateClassProcessor not found.");
+                    return false;
+                }
+
+                object processor = createProcessorMethod.Invoke(_harmony, new object[] { patchType });
+                if (processor == null)
+                {
+                    Services.ModFileLog.Write(
+                        "Core",
+                        $"{Constants.LogPrefix} Patch group '{group}' failed type='{patchType.FullName}': processor is null.");
+                    return false;
+                }
+
+                MethodInfo patchMethod = processor.GetType().GetMethod(
+                    "Patch",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                    null,
+                    Type.EmptyTypes,
+                    null);
+
+                if (patchMethod == null)
+                {
+                    Services.ModFileLog.Write(
+                        "Core",
+                        $"{Constants.LogPrefix} Patch group '{group}' failed type='{patchType.FullName}': Patch() not found.");
+                    return false;
+                }
+
+                patchMethod.Invoke(processor, null);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Services.ModFileLog.Write(
+                    "Core",
+                    $"{Constants.LogPrefix} Patch group '{group}' failed type='{patchType.FullName}': {ex.GetType().Name}: {ex.Message}");
+                return false;
             }
         }
 
