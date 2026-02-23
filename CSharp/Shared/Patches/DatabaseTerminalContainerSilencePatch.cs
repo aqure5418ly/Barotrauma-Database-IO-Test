@@ -29,11 +29,7 @@ namespace DatabaseIOTest.Patches
                 if (__instance is DatabaseTerminalComponent terminal &&
                     terminal.ShouldHijackFixedTerminalUi())
                 {
-                    if (terminal.ShouldDriveFixedUiFromHook())
-                    {
-                        terminal.DrawFixedTerminalUiFromGuiHook("harmony:ItemComponent.AddToGUIUpdateList");
-                    }
-                    // Always suppress component GUI path for fixed terminal.
+                    // Only suppress native component GUI; Terminal hook drives UI.
                     return false;
                 }
 
@@ -45,10 +41,6 @@ namespace DatabaseIOTest.Patches
                 if (ownerTerminal == null) { return true; }
                 if (!ownerTerminal.ShouldHijackFixedTerminalUi()) { return true; }
 
-                if (ownerTerminal.ShouldDriveFixedUiFromHook())
-                {
-                    ownerTerminal.DrawFixedTerminalUiFromGuiHook("harmony:ItemContainer.AddToGUIUpdateList");
-                }
                 if (!ownerTerminal.ShouldSilenceFixedContainerGui()) { return true; }
 
                 ownerTerminal.TraceFixedContainerSilenced("harmony:ItemContainer.AddToGUIUpdateList");

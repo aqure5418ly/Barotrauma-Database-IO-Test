@@ -15,7 +15,7 @@ public partial class DatabaseTerminalComponent
         Hybrid = 2
     }
 
-    private const FixedUiRenderStrategy ActiveFixedUiRenderStrategy = FixedUiRenderStrategy.UpdateOnly;
+    private const FixedUiRenderStrategy ActiveFixedUiRenderStrategy = FixedUiRenderStrategy.HookOnly;
 
     internal bool ShouldHijackFixedTerminalUi()
     {
