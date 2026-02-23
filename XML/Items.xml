@@ -134,7 +134,7 @@
       databaseId="default"
       maxStorageCount="2048"
       ingestInterval="0.15"
-      requirePower="true"
+      requirePower="false"
       minRequiredVoltage="0.5" />
   </Item>
 
@@ -203,7 +203,7 @@
       terminalPageSize="20"
       sessionVariant="false"
       useInPlaceSession="true"
-      requirePower="true"
+      requirePower="false"
       minRequiredVoltage="0.5"
       openSessionIdentifier="DatabaseTerminalFixed"
       closedTerminalIdentifier="DatabaseTerminalFixed" />
@@ -284,7 +284,7 @@
       lowConditionThreshold="2"
       pollInterval="0.2"
       supplyCooldown="0.3"
-      requirePower="true"
+      requirePower="false"
       minRequiredVoltage="0.5" />
   </Item>
 </Items>

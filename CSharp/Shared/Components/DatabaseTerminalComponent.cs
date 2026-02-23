@@ -408,7 +408,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
 #if CLIENT
         UpdateFixedXmlControlPanelState();
-        if (EnableCsPanelOverlay && !IsFixedTerminal)
+        if (EnableCsPanelOverlay)
         {
             UpdateClientPanel();
         }
@@ -1620,12 +1620,15 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (EnableCsPanelOverlay && UseInPlaceSession)
         {
             // In mixed fixed-terminal mode, XML is used only for "Open/Force".
-            // Keep "Close" on the C# panel path to avoid oscillation from repeated XML writes.
+            // Keep "Close" as XML fallback so sessions can always be exited if panel rendering fails.
             bool sessionActive = IsSessionActive();
             bool allowXmlOpenWhenClosed =
                 !sessionActive &&
                 (action == TerminalPanelAction.OpenSession || action == TerminalPanelAction.ForceOpenSession);
-            if (!allowXmlOpenWhenClosed)
+            bool allowXmlCloseWhenOpen =
+                sessionActive &&
+                action == TerminalPanelAction.CloseSession;
+            if (!allowXmlOpenWhenClosed && !allowXmlCloseWhenOpen)
             {
                 ModFileLog.Write(
                     "Panel",
@@ -3018,10 +3021,8 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     private bool HasRequiredPower()
     {
-        if (!RequirePower) { return true; }
-        var powered = item.GetComponent<Powered>();
-        if (powered == null) { return false; }
-        return powered.Voltage >= Math.Max(0f, MinRequiredVoltage);
+        // Temporary: power gating fully disabled for troubleshooting fixed terminal UI chain.
+        return true;
     }
 
     private static string T(string key, string fallback)
