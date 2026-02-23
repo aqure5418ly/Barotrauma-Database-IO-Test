@@ -38,6 +38,8 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         msg.WriteInt32(data.PageIndex);
         msg.WriteInt32(data.PageTotal);
         msg.WriteInt32(data.RemainingPageItems);
+        // Sync item entry payload so clients can render the UI panel.
+        msg.WriteString(LuaB1RowsPayload ?? "");
     }
 
     public void ClientEventRead(IReadMessage msg, float sendingTime)
@@ -55,6 +57,8 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         _cachedPageIndex = msg.ReadInt32();
         _cachedPageTotal = msg.ReadInt32();
         _cachedRemainingPageItems = msg.ReadInt32();
+        // Receive the item entry payload from server for client-side UI rendering.
+        LuaB1RowsPayload = msg.ReadString() ?? "";
         UpdateDescriptionLocal();
 #if CLIENT
         if (EnableCsPanelOverlay)
