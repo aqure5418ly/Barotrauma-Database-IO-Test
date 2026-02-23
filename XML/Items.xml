@@ -178,9 +178,9 @@
         <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
       </SubContainer>
     </ItemContainer>
-    <!-- Terminal serves as GUI pipeline hook for DatabaseTerminalUiHijackPatch.
-         The game calls Terminal.AddToGUIUpdateList() during the correct GUI phase,
-         which the Harmony patch intercepts to draw our custom CS panel instead. -->
+    <!-- REQUIRED FOR FIXED TERMINAL HOOKONLY MODE: do not remove this Terminal component.
+         DatabaseTerminalUiHijackPatch relies on Terminal.AddToGUIUpdateList() as the
+         single fixed UI render entrypoint. Removing it will make fixed terminal UI disappear. -->
     <Terminal canbeselected="true" msg="ItemMsgInteractSelect" AllowInGameEditing="false">
       <GuiFrame relativesize="0.6,0.8" anchor="Center" style="ItemUI" />
     </Terminal>

@@ -33,6 +33,9 @@ namespace DatabaseIOTest.Patches
                 var terminal = item.GetComponent<DatabaseTerminalComponent>();
                 if (terminal == null || !terminal.ShouldHijackFixedTerminalUi()) { return true; }
 
+                // HookOnly fixed UI requires the XML Terminal component on DatabaseTerminalFixed.
+                // This patch is triggered by Terminal.AddToGUIUpdateList, so removing that XML node
+                // will remove the render entrypoint for fixed terminal UI.
                 if (!terminal.ShouldDriveFixedUiFromHook()) { return true; }
 
                 terminal.DrawFixedTerminalUiFromGuiHook("harmony:Terminal.AddToGUIUpdateList");

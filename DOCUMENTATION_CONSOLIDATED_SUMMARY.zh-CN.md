@@ -568,3 +568,20 @@
 - 技术路线最优先应是：**M1/M2（正确性） -> M3/M4（同步与视图） -> M5/M6（并发与生态）**。
 - Track-B（虚拟终端）是中长期高收益方向，但前提是服务端数据权威和协议层先稳定。
 
+
+---
+
+## 16. Fixed Terminal HookOnly Notes (2026-02-23)
+
+- `XML/Items.xml` -> `DatabaseTerminalFixed` must keep `<Terminal canbeselected="true">`.
+- This `Terminal` component is the required hook entry for `Terminal.AddToGUIUpdateList`.
+- `DatabaseTerminalUiHijackPatch` depends on that hook as the single fixed terminal UI driver in HookOnly mode.
+- If this node is removed, fixed terminal CS panel UI will not render.
+
+### 16.1 Deferred Debt (Power Gate)
+
+- Scope of this refactor restored real power check only in `DatabaseTerminalComponent.HasRequiredPower()`.
+- The following two components still keep short-circuit power checks (`return true`) and are deferred:
+- `CSharp/Shared/Components/DatabaseInterfaceComponent.cs:162`
+- `CSharp/Shared/Components/DatabaseAutoRestockerComponent.cs:772`
+- Follow-up task: restore real power gate in those two components after terminal UI chain stabilization.
