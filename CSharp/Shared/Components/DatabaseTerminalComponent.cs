@@ -237,6 +237,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private const char LuaFieldSeparator = (char)0x1F;
 
     private bool IsServerAuthority => GameMain.NetworkMember == null || GameMain.NetworkMember.IsServer;
+    internal bool IsFixedTerminal => UseInPlaceSession && !SessionVariant;
     private const double ToggleCooldownSeconds = 0.6;
     private const double MinSessionDurationBeforeClose = 0.9;
     private const double PanelActionCooldownSeconds = 0.4;
@@ -265,6 +266,9 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private GUITextBlock _panelTitle;
     private GUITextBlock _panelPageInfo;
     private GUITextBlock _panelStatusText;
+    private GUITextBlock _panelBufferInfo;
+    private GUIFrame _panelBufferFrame;
+    private GUICustomComponent _panelBufferDrawer;
     private GUIButton _panelPrevButton;
     private GUIButton _panelNextButton;
     private GUIButton _panelCloseButton;
@@ -404,7 +408,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
 #if CLIENT
         UpdateFixedXmlControlPanelState();
-        if (EnableCsPanelOverlay)
+        if (EnableCsPanelOverlay && !IsFixedTerminal)
         {
             UpdateClientPanel();
         }
@@ -3160,7 +3164,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     private void UpdateFixedXmlControlPanelState()
     {
-        if (!EnableCsPanelOverlay || !UseInPlaceSession || SessionVariant || item == null || item.Removed)
+        if (!EnableCsPanelOverlay || !IsFixedTerminal || item == null || item.Removed)
         {
             return;
         }
@@ -3435,7 +3439,8 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         bool prevFrameVisible = _panelFrame?.Visible ?? false;
         bool prevFrameEnabled = _panelFrame?.Enabled ?? false;
 
-        if (_panelFrame != null)
+        if (_panelFrame != null &&
+            (_panelFrame.Visible != visible || _panelFrame.Enabled != visible))
         {
             _panelFrame.Visible = visible;
             _panelFrame.Enabled = visible;
@@ -3480,7 +3485,8 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             return;
         }
 
-        _panelFrame = new GUIFrame(new RectTransform(new Vector2(0.30f, 0.22f), GUI.Canvas, Anchor.TopLeft));
+        Vector2 panelSize = IsFixedTerminal ? new Vector2(0.36f, 0.34f) : new Vector2(0.30f, 0.22f);
+        _panelFrame = new GUIFrame(new RectTransform(panelSize, GUI.Canvas, Anchor.TopLeft));
         _panelFrame.RectTransform.AbsoluteOffset = new Point(36, 92);
         _panelFrame.Visible = false;
         _panelFrame.Enabled = false;
@@ -3491,19 +3497,19 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         LogPanelDebug(
             $"panel draw queue methods id={item?.ID} withOrder={(AddToGuiUpdateListMethodWithOrder != null)} noArgs={(AddToGuiUpdateListMethodNoArgs != null)}");
 
-        var content = new GUILayoutGroup(new RectTransform(new Vector2(0.94f, 0.90f), _panelFrame.RectTransform, Anchor.Center));
+        var content = new GUILayoutGroup(new RectTransform(new Vector2(0.94f, 0.92f), _panelFrame.RectTransform, Anchor.Center));
 
         _panelTitle = new GUITextBlock(
-            new RectTransform(new Vector2(1f, 0.17f), content.RectTransform),
+            new RectTransform(new Vector2(1f, IsFixedTerminal ? 0.12f : 0.17f), content.RectTransform),
             T("dbiotest.panel.title", "Database Terminal"),
             textAlignment: Alignment.Center);
 
         _panelPageInfo = new GUITextBlock(
-            new RectTransform(new Vector2(1f, 0.10f), content.RectTransform),
+            new RectTransform(new Vector2(1f, IsFixedTerminal ? 0.08f : 0.10f), content.RectTransform),
             "",
             textAlignment: Alignment.Center);
 
-        var row = new GUILayoutGroup(new RectTransform(new Vector2(1f, 0.18f), content.RectTransform), isHorizontal: true);
+        var row = new GUILayoutGroup(new RectTransform(new Vector2(1f, IsFixedTerminal ? 0.12f : 0.18f), content.RectTransform), isHorizontal: true);
 
         _panelPrevButton = new GUIButton(new RectTransform(new Vector2(0.33f, 1f), row.RectTransform), T("dbiotest.panel.prev", "Prev"));
         _panelPrevButton.OnClicked = (_, __) =>
@@ -3538,7 +3544,8 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         };
 
         int rowCount = Math.Max(1, PanelEntryButtonCount / Math.Max(1, PanelEntryColumns));
-        var entryGrid = new GUILayoutGroup(new RectTransform(new Vector2(1f, 0.42f), content.RectTransform), isHorizontal: false);
+        float entryGridHeight = IsFixedTerminal ? 0.28f : 0.42f;
+        var entryGrid = new GUILayoutGroup(new RectTransform(new Vector2(1f, entryGridHeight), content.RectTransform), isHorizontal: false);
         _panelEntryButtons.Clear();
         for (int r = 0; r < rowCount; r++)
         {
@@ -3562,8 +3569,35 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             }
         }
 
+        _panelBufferInfo = null;
+        _panelBufferFrame = null;
+        _panelBufferDrawer = null;
+        if (IsFixedTerminal)
+        {
+            _panelBufferInfo = new GUITextBlock(
+                new RectTransform(new Vector2(1f, 0.08f), content.RectTransform),
+                T("dbiotest.panel.bufferhint", "Buffer"),
+                textAlignment: Alignment.Left);
+
+            _panelBufferFrame = new GUIFrame(
+                new RectTransform(new Vector2(1f, 0.20f), content.RectTransform),
+                style: "InnerFrameDark");
+            _panelBufferFrame.CanBeFocused = false;
+            _panelBufferDrawer = new GUICustomComponent(
+                new RectTransform(Vector2.One, _panelBufferFrame.RectTransform),
+                (sb, _) =>
+                {
+                    var inventory = GetTerminalInventory();
+                    if (inventory != null)
+                    {
+                        inventory.Draw(sb, false);
+                    }
+                },
+                null);
+        }
+
         _panelStatusText = new GUITextBlock(
-            new RectTransform(new Vector2(1f, 0.13f), content.RectTransform),
+            new RectTransform(new Vector2(1f, IsFixedTerminal ? 0.10f : 0.13f), content.RectTransform),
             "",
             textAlignment: Alignment.Left);
 
@@ -3774,7 +3808,30 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                 : T("dbiotest.panel.closedhint", "Session closed. Use Open button on terminal.");
         }
 
+        UpdatePanelBufferVisuals();
         ApplyPanelEntriesToButtons();
+    }
+
+    private void UpdatePanelBufferVisuals()
+    {
+        if (!IsFixedTerminal || _panelBufferFrame == null) { return; }
+
+        var inventory = GetTerminalInventory();
+        if (_panelBufferInfo != null)
+        {
+            _panelBufferInfo.Text = inventory == null
+                ? T("dbiotest.panel.bufferunavailable", "Buffer unavailable")
+                : T("dbiotest.panel.bufferhint", "Buffer");
+        }
+
+        if (inventory == null) { return; }
+
+        inventory.RectTransform = _panelBufferFrame.RectTransform;
+        var cam = GameMain.GameScreen?.Cam;
+        if (cam != null)
+        {
+            inventory.Update((float)Timing.Step, cam);
+        }
     }
 
     private void RequestPanelActionClient(TerminalPanelAction action)
@@ -3812,6 +3869,9 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             _panelFrame.Visible = false;
             _panelFrame.Enabled = false;
         }
+        _panelBufferDrawer = null;
+        _panelBufferFrame = null;
+        _panelBufferInfo = null;
         _panelFrame = null;
 #endif
 
