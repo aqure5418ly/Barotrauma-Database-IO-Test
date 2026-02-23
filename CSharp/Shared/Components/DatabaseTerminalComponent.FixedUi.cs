@@ -4,6 +4,19 @@ using DatabaseIOTest.Services;
 
 public partial class DatabaseTerminalComponent
 {
+    // Keep both paths available for fast A/B tests:
+    // UpdateOnly: Update() drives fixed UI, hooks only silence native container GUI.
+    // HookOnly: hooks drive fixed UI (legacy path, kept for rollback).
+    // Hybrid: update + hook drive together (debug only, not recommended for normal play).
+    private enum FixedUiRenderStrategy : byte
+    {
+        UpdateOnly = 0,
+        HookOnly = 1,
+        Hybrid = 2
+    }
+
+    private const FixedUiRenderStrategy ActiveFixedUiRenderStrategy = FixedUiRenderStrategy.UpdateOnly;
+
     internal bool ShouldHijackFixedTerminalUi()
     {
 #if CLIENT
@@ -25,10 +38,32 @@ public partial class DatabaseTerminalComponent
 #endif
     }
 
-    internal bool DrawFixedTerminalUiFromGuiHook(string source)
+    internal bool ShouldDriveFixedUiFromUpdate()
     {
 #if CLIENT
         if (!ShouldHijackFixedTerminalUi()) { return false; }
+        return ActiveFixedUiRenderStrategy == FixedUiRenderStrategy.UpdateOnly ||
+               ActiveFixedUiRenderStrategy == FixedUiRenderStrategy.Hybrid;
+#else
+        return false;
+#endif
+    }
+
+    internal bool ShouldDriveFixedUiFromHook()
+    {
+#if CLIENT
+        if (!ShouldHijackFixedTerminalUi()) { return false; }
+        return ActiveFixedUiRenderStrategy == FixedUiRenderStrategy.HookOnly ||
+               ActiveFixedUiRenderStrategy == FixedUiRenderStrategy.Hybrid;
+#else
+        return false;
+#endif
+    }
+
+    internal bool DrawFixedTerminalUiFromGuiHook(string source)
+    {
+#if CLIENT
+        if (!ShouldDriveFixedUiFromHook()) { return false; }
 
         if (ModFileLog.IsDebugEnabled && Timing.TotalTime >= _nextFixedUiHookLogAt)
         {

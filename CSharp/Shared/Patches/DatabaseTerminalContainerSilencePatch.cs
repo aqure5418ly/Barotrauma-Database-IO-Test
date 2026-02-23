@@ -29,7 +29,11 @@ namespace DatabaseIOTest.Patches
                 if (__instance is DatabaseTerminalComponent terminal &&
                     terminal.ShouldHijackFixedTerminalUi())
                 {
-                    terminal.DrawFixedTerminalUiFromGuiHook("harmony:ItemComponent.AddToGUIUpdateList");
+                    if (terminal.ShouldDriveFixedUiFromHook())
+                    {
+                        terminal.DrawFixedTerminalUiFromGuiHook("harmony:ItemComponent.AddToGUIUpdateList");
+                    }
+                    // Always suppress component GUI path for fixed terminal.
                     return false;
                 }
 
@@ -41,7 +45,10 @@ namespace DatabaseIOTest.Patches
                 if (ownerTerminal == null) { return true; }
                 if (!ownerTerminal.ShouldHijackFixedTerminalUi()) { return true; }
 
-                ownerTerminal.DrawFixedTerminalUiFromGuiHook("harmony:ItemContainer.AddToGUIUpdateList");
+                if (ownerTerminal.ShouldDriveFixedUiFromHook())
+                {
+                    ownerTerminal.DrawFixedTerminalUiFromGuiHook("harmony:ItemContainer.AddToGUIUpdateList");
+                }
                 if (!ownerTerminal.ShouldSilenceFixedContainerGui()) { return true; }
 
                 ownerTerminal.TraceFixedContainerSilenced("harmony:ItemContainer.AddToGUIUpdateList");

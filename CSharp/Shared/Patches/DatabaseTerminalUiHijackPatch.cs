@@ -33,6 +33,8 @@ namespace DatabaseIOTest.Patches
                 var terminal = item.GetComponent<DatabaseTerminalComponent>();
                 if (terminal == null || !terminal.ShouldHijackFixedTerminalUi()) { return true; }
 
+                if (!terminal.ShouldDriveFixedUiFromHook()) { return true; }
+
                 terminal.DrawFixedTerminalUiFromGuiHook("harmony:Terminal.AddToGUIUpdateList");
                 return false;
             }

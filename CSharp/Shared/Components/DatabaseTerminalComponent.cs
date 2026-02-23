@@ -410,7 +410,10 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         UpdateFixedXmlControlPanelState();
         if (EnableCsPanelOverlay)
         {
-            UpdateClientPanel();
+            if (!IsFixedTerminal || ShouldDriveFixedUiFromUpdate())
+            {
+                UpdateClientPanel();
+            }
         }
 #endif
 
