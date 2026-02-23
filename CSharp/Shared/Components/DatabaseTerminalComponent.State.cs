@@ -279,8 +279,10 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private double _nextPanelEntryRefreshAt;
     private double _nextClientPanelActionAllowedTime;
     private const float PanelInteractionRange = 340f;
-    private const bool EnablePanelDebugLog = true;
-    private const double PanelEvalLogCooldown = 0.25;
+    // Panel trace logs were used to debug fixed-terminal flicker.
+    // Keep them disabled by default to avoid high-frequency log noise in normal runs.
+    private const bool EnablePanelDebugLog = false;
+    private const double PanelEvalLogCooldown = 1.0;
     private const double PanelQueueLogCooldown = 2.0;
     private const double PanelEntryRefreshInterval = 0.25;
     private const int PanelEntryButtonCount = 12;

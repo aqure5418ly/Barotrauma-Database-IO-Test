@@ -28,7 +28,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                 Timing.TotalTime >= _nextVirtualViewDiagAt)
             {
                 _nextVirtualViewDiagAt = Timing.TotalTime + VirtualViewDiagCooldownSeconds;
-                ModFileLog.Write(
+                ModFileLog.WriteDebug(
                     "Terminal",
                     $"{Constants.LogPrefix} VirtualViewSnapshot empty id={item?.ID} db='{_resolvedDatabaseId}' " +
                     $"sessionActive={sessionActive} cachedOpen={_cachedSessionOpen} " +
@@ -75,7 +75,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (ModFileLog.IsDebugEnabled && Timing.TotalTime >= _nextVirtualViewDiagAt)
         {
             _nextVirtualViewDiagAt = Timing.TotalTime + VirtualViewDiagCooldownSeconds;
-            ModFileLog.Write(
+            ModFileLog.WriteDebug(
                 "Terminal",
                 $"{Constants.LogPrefix} VirtualViewSnapshot id={item?.ID} db='{_resolvedDatabaseId}' " +
                 $"snapshotEntries={snapshot.Count} sessionEntries={_sessionEntries.Count} " +
@@ -92,7 +92,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             Timing.TotalTime >= _nextVirtualViewDiagAt)
         {
             _nextVirtualViewDiagAt = Timing.TotalTime + VirtualViewDiagCooldownSeconds;
-            ModFileLog.Write(
+            ModFileLog.WriteDebug(
                 "Terminal",
                 $"{Constants.LogPrefix} VirtualUiOpenState id={item?.ID} db='{_resolvedDatabaseId}' " +
                 $"open={open} sessionActive={IsSessionActive()} cachedOpen={_cachedSessionOpen} " +

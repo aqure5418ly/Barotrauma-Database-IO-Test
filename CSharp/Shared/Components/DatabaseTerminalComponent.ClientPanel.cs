@@ -52,11 +52,11 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     }
     private void LogPanelDebug(string message)
     {
-        if (!EnablePanelDebugLog) { return; }
+        if (!EnablePanelDebugLog || !ModFileLog.IsDebugEnabled) { return; }
         long seq = NextPanelTraceSeq();
         string line = $"{Constants.LogPrefix} [Panel#{seq}] {message}";
         DebugConsole.NewMessage(line, Color.LightSkyBlue);
-        ModFileLog.Write("Panel", line);
+        ModFileLog.WriteDebug("Panel", line);
     }
 
     private void UpdateFixedXmlControlPanelState()

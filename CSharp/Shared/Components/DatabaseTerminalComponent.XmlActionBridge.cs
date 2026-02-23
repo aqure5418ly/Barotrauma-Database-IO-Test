@@ -22,6 +22,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (request == 0) { return; }
         XmlActionRequest = 0;
 
+#if CLIENT
         if (ModFileLog.IsDebugEnabled)
         {
             Character controlled = Character.Controlled;
@@ -32,6 +33,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                 $"sessionActive={IsSessionActive()} cachedOpen={_cachedSessionOpen} inPlace={UseInPlaceSession} sessionVariant={SessionVariant} " +
                 $"owner='{_sessionOwner?.Name ?? "none"}' controlled='{controlled?.Name ?? "none"}' selected={selectedId}/{selectedSecondaryId}");
         }
+#endif
 
         TerminalPanelAction action = request switch
         {
