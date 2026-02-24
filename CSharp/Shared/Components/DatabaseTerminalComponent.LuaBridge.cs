@@ -134,6 +134,27 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         return "";
     }
 
+    public string TryTakeByIdentifierCountFromVirtualSession(string identifier, int count, Character actor)
+    {
+        int remaining = Math.Clamp(count, 1, byte.MaxValue);
+        string lastFailure = "not_found";
+        int taken = 0;
+        while (remaining > 0)
+        {
+            string result = TryTakeOneByIdentifierFromVirtualSession(identifier, actor);
+            if (!string.IsNullOrEmpty(result))
+            {
+                lastFailure = result;
+                break;
+            }
+
+            taken++;
+            remaining--;
+        }
+
+        return taken > 0 ? "" : lastFailure;
+    }
+
     private static Character FindCharacterByEntityId(int entityId)
     {
         if (entityId <= 0) { return null; }

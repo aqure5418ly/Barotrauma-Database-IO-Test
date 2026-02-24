@@ -79,18 +79,22 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (action == TerminalPanelAction.TakeByIdentifier)
         {
             msg.WriteString(_pendingClientTakeIdentifier ?? "");
+            msg.WriteByte((byte)Math.Clamp(_pendingClientTakeCount, 1, byte.MaxValue));
         }
         _pendingClientAction = (byte)TerminalPanelAction.None;
         _pendingClientTakeIdentifier = "";
+        _pendingClientTakeCount = 1;
     }
 
     public void ServerEventRead(IReadMessage msg, Client c)
     {
         var action = (TerminalPanelAction)msg.ReadByte();
         string takeIdentifier = "";
+        int takeCount = 1;
         if (action == TerminalPanelAction.TakeByIdentifier)
         {
             takeIdentifier = (msg.ReadString() ?? "").Trim();
+            takeCount = Math.Max(1, msg.ReadByte());
         }
         if (action == TerminalPanelAction.None) { return; }
         if (!SessionVariant && !_inPlaceSessionActive) { return; }
@@ -103,13 +107,13 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         if (action == TerminalPanelAction.TakeByIdentifier)
         {
-            string result = TryTakeOneByIdentifierFromVirtualSession(takeIdentifier, actor);
+            string result = TryTakeByIdentifierCountFromVirtualSession(takeIdentifier, takeCount, actor);
             if (!string.IsNullOrEmpty(result))
             {
                 ModFileLog.Write(
                     "Panel",
                     $"{Constants.LogPrefix} take request denied id={item?.ID} db='{_resolvedDatabaseId}' actor='{actor?.Name ?? "none"}' " +
-                    $"identifier='{takeIdentifier}' reason='{result}'");
+                    $"identifier='{takeIdentifier}' count={takeCount} reason='{result}'");
             }
             return;
         }

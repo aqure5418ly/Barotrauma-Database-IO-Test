@@ -12,6 +12,7 @@ using DatabaseIOTest.Models;
 using DatabaseIOTest.Services;
 #if CLIENT
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Input;
 #endif
 
 public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializable, IClientSerializable
@@ -112,25 +113,26 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         LogPanelDebug($"eval {signature}");
     }
 
-    private static string TrimEntryLabel(string value, int maxChars)
+    private enum LocalSortMode : int
     {
-        if (string.IsNullOrWhiteSpace(value)) { return ""; }
-        string text = value.Trim();
-        if (text.Length <= maxChars) { return text; }
-        if (maxChars <= 1) { return text.Substring(0, 1); }
-        return text.Substring(0, maxChars - 1) + "…";
+        Name = 0,
+        Amount = 1,
+        Quality = 2
     }
 
-    private int GetPanelEntryPageCount()
+    private const int IconGridColumns = 8;
+    private const int LeftClickTakeGroupCap = 8;
+    private const float IconGridRowRelativeHeight = 0.18f;
+    private static readonly (string key, string fallback, int categoryFlag)[] PanelCategories = new[]
     {
-        if (_panelEntrySnapshot.Count <= 0) { return 1; }
-        return Math.Max(1, (int)Math.Ceiling((double)_panelEntrySnapshot.Count / Math.Max(1, PanelEntryButtonCount)));
-    }
-
-    private int GetPanelEntryPageStartIndex()
-    {
-        return Math.Max(0, _panelEntryPageIndex) * Math.Max(1, PanelEntryButtonCount);
-    }
+        ("dbiotest.category.all", "All", -1),
+        ("dbiotest.category.material", "Materials", (int)MapEntityCategory.Material),
+        ("dbiotest.category.medical", "Medical", (int)MapEntityCategory.Medical),
+        ("dbiotest.category.weapon", "Weapons", (int)MapEntityCategory.Weapon),
+        ("dbiotest.category.electrical", "Electrical", (int)MapEntityCategory.Electrical),
+        ("dbiotest.category.equipment", "Equipment", (int)MapEntityCategory.Equipment),
+        ("dbiotest.category.misc", "Misc", (int)MapEntityCategory.Misc)
+    };
 
     private List<TerminalVirtualEntry> ParsePanelEntriesFromLuaPayload()
     {
@@ -188,6 +190,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                 Identifier = id,
                 PrefabIdentifier = string.IsNullOrWhiteSpace(prefabId) ? id : prefabId,
                 DisplayName = displayName,
+                CategoryInt = ResolveCategoryForIdentifier(string.IsNullOrWhiteSpace(prefabId) ? id : prefabId),
                 Amount = Math.Max(0, amount),
                 BestQuality = Math.Max(0, quality),
                 AverageCondition = Math.Max(0f, condition)
@@ -197,12 +200,21 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         return rows;
     }
 
-    private void RefreshPanelEntrySnapshot(bool force = false)
+    private int ResolveCategoryForIdentifier(string identifier)
     {
-        if (!force && Timing.TotalTime < _nextPanelEntryRefreshAt) { return; }
+        string id = (identifier ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(id)) { return 0; }
+
+        var prefab = ItemPrefab.FindByIdentifier(id.ToIdentifier()) as ItemPrefab;
+        if (prefab == null) { return 0; }
+        return (int)prefab.Category;
+    }
+
+    private bool RefreshPanelEntrySnapshot(bool force = false)
+    {
+        if (!force && Timing.TotalTime < _nextPanelEntryRefreshAt) { return false; }
         _nextPanelEntryRefreshAt = Timing.TotalTime + PanelEntryRefreshInterval;
 
-        _panelEntrySnapshot.Clear();
         List<TerminalVirtualEntry> source;
         if (IsServerAuthority)
         {
@@ -213,110 +225,375 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             source = ParsePanelEntriesFromLuaPayload();
         }
 
-        if (source != null && source.Count > 0)
+        var nextSnapshot = new List<TerminalVirtualEntry>();
+        if (source != null)
         {
-            _panelEntrySnapshot.AddRange(source
-                .Where(entry => entry != null && !string.IsNullOrWhiteSpace(entry.Identifier))
-                .OrderBy(entry => entry.DisplayName ?? entry.Identifier ?? "", StringComparer.OrdinalIgnoreCase));
+            foreach (var entry in source)
+            {
+                if (entry == null) { continue; }
+                string identifier = (entry.Identifier ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(identifier)) { continue; }
+                string prefabIdentifier = string.IsNullOrWhiteSpace(entry.PrefabIdentifier) ? identifier : entry.PrefabIdentifier.Trim();
+                string localizedDisplay = ResolveDisplayNameForIdentifier(identifier);
+                string displayName = string.IsNullOrWhiteSpace(localizedDisplay)
+                    ? (string.IsNullOrWhiteSpace(entry.DisplayName) ? identifier : entry.DisplayName.Trim())
+                    : localizedDisplay;
+
+                nextSnapshot.Add(new TerminalVirtualEntry
+                {
+                    Identifier = identifier,
+                    PrefabIdentifier = prefabIdentifier,
+                    DisplayName = displayName,
+                    CategoryInt = ResolveCategoryForIdentifier(prefabIdentifier),
+                    Amount = Math.Max(0, entry.Amount),
+                    BestQuality = Math.Max(0, entry.BestQuality),
+                    AverageCondition = Math.Max(0f, entry.AverageCondition)
+                });
+            }
         }
 
-        int pageCount = GetPanelEntryPageCount();
-        if (_panelEntryPageIndex >= pageCount)
+        nextSnapshot = nextSnapshot
+            .OrderBy(entry => entry.DisplayName ?? entry.Identifier ?? "", StringComparer.OrdinalIgnoreCase)
+            .ThenBy(entry => entry.Identifier ?? "", StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        bool changed = !ArePanelEntryListsEqual(_panelEntrySnapshot, nextSnapshot);
+        if (!changed) { return false; }
+
+        _panelEntrySnapshot.Clear();
+        _panelEntrySnapshot.AddRange(nextSnapshot);
+        return true;
+    }
+
+    private static bool ArePanelEntryListsEqual(
+        IReadOnlyList<TerminalVirtualEntry> current,
+        IReadOnlyList<TerminalVirtualEntry> next)
+    {
+        if (ReferenceEquals(current, next)) { return true; }
+        if (current == null || next == null) { return false; }
+        if (current.Count != next.Count) { return false; }
+
+        for (int i = 0; i < current.Count; i++)
         {
-            _panelEntryPageIndex = Math.Max(0, pageCount - 1);
+            var a = current[i];
+            var b = next[i];
+            if (a == null && b == null) { continue; }
+            if (a == null || b == null) { return false; }
+            if (!string.Equals(a.Identifier ?? "", b.Identifier ?? "", StringComparison.OrdinalIgnoreCase)) { return false; }
+            if (!string.Equals(a.PrefabIdentifier ?? "", b.PrefabIdentifier ?? "", StringComparison.OrdinalIgnoreCase)) { return false; }
+            if (!string.Equals(a.DisplayName ?? "", b.DisplayName ?? "", StringComparison.Ordinal)) { return false; }
+            if (a.CategoryInt != b.CategoryInt) { return false; }
+            if (a.Amount != b.Amount) { return false; }
+            if (a.BestQuality != b.BestQuality) { return false; }
+            if (Math.Abs(a.AverageCondition - b.AverageCondition) > 0.001f) { return false; }
+        }
+
+        return true;
+    }
+
+    private static bool MatchCategory(TerminalVirtualEntry entry, int categoryFlag)
+    {
+        if (entry == null) { return false; }
+        if (categoryFlag < 0) { return true; }
+        return entry.CategoryInt == categoryFlag;
+    }
+
+    private static bool MatchSearch(TerminalVirtualEntry entry, string searchText)
+    {
+        if (entry == null) { return false; }
+        if (string.IsNullOrWhiteSpace(searchText)) { return true; }
+        string keyword = searchText.Trim();
+        if (keyword.Length <= 0) { return true; }
+
+        string haystack = $"{entry.DisplayName} {entry.Identifier}".ToLowerInvariant();
+        return haystack.Contains(keyword.ToLowerInvariant());
+    }
+
+    private int ComparePanelEntries(TerminalVirtualEntry left, TerminalVirtualEntry right)
+    {
+        left ??= new TerminalVirtualEntry();
+        right ??= new TerminalVirtualEntry();
+
+        int cmp;
+        switch ((LocalSortMode)_localSortMode)
+        {
+            case LocalSortMode.Amount:
+                cmp = left.Amount.CompareTo(right.Amount);
+                break;
+            case LocalSortMode.Quality:
+                cmp = left.BestQuality.CompareTo(right.BestQuality);
+                break;
+            default:
+                cmp = StringComparer.OrdinalIgnoreCase.Compare(
+                    left.DisplayName ?? left.Identifier ?? "",
+                    right.DisplayName ?? right.Identifier ?? "");
+                break;
+        }
+
+        if (cmp == 0)
+        {
+            cmp = StringComparer.OrdinalIgnoreCase.Compare(left.Identifier ?? "", right.Identifier ?? "");
+        }
+        if (_localSortDescending) { cmp = -cmp; }
+        return cmp;
+    }
+
+    private string GetSortButtonLabel()
+    {
+        string key;
+        string fallback;
+        switch ((LocalSortMode)_localSortMode)
+        {
+            case LocalSortMode.Amount:
+                key = _localSortDescending ? "dbiotest.ui.sort.countdesc" : "dbiotest.ui.sort.countasc";
+                fallback = _localSortDescending ? "Count High-Low" : "Count Low-High";
+                break;
+            case LocalSortMode.Quality:
+                key = _localSortDescending ? "dbiotest.ui.sort.qualitydesc" : "dbiotest.ui.sort.qualityasc";
+                fallback = _localSortDescending ? "Quality High-Low" : "Quality Low-High";
+                break;
+            default:
+                key = _localSortDescending ? "dbiotest.ui.sort.namedesc" : "dbiotest.ui.sort.nameasc";
+                fallback = _localSortDescending ? "Name Z-A" : "Name A-Z";
+                break;
+        }
+
+        return T(key, fallback);
+    }
+
+    private void CycleLocalSortMode()
+    {
+        switch ((LocalSortMode)_localSortMode)
+        {
+            case LocalSortMode.Name:
+                if (!_localSortDescending)
+                {
+                    _localSortDescending = true;
+                }
+                else
+                {
+                    _localSortMode = (int)LocalSortMode.Amount;
+                    _localSortDescending = false;
+                }
+                break;
+            case LocalSortMode.Amount:
+                if (!_localSortDescending)
+                {
+                    _localSortDescending = true;
+                }
+                else
+                {
+                    _localSortMode = (int)LocalSortMode.Quality;
+                    _localSortDescending = false;
+                }
+                break;
+            default:
+                if (!_localSortDescending)
+                {
+                    _localSortDescending = true;
+                }
+                else
+                {
+                    _localSortMode = (int)LocalSortMode.Name;
+                    _localSortDescending = false;
+                }
+                break;
         }
     }
 
-    private bool TryApplyEntryIconToButton(GUIButton button, string identifier)
+    private static bool IsSingleTakeModifierPressed()
     {
-        if (button == null || string.IsNullOrWhiteSpace(identifier)) { return false; }
+        var state = Keyboard.GetState();
+        return state.IsKeyDown(Keys.LeftShift) || state.IsKeyDown(Keys.RightShift);
+    }
 
-        var prefab = ItemPrefab.FindByIdentifier(identifier.ToIdentifier()) as ItemPrefab;
-        Sprite icon = prefab?.InventoryIcon ?? prefab?.Sprite;
-        if (icon == null) { return false; }
+    private static int ResolveTakeStackSize(string identifier)
+    {
+        string id = (identifier ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(id)) { return 1; }
+        var prefab = ItemPrefab.FindByIdentifier(id.ToIdentifier()) as ItemPrefab;
+        int maxStack = prefab?.MaxStackSize ?? 1;
+        if (maxStack <= 1) { return 1; }
+        return Math.Max(1, Math.Min(maxStack, LeftClickTakeGroupCap));
+    }
 
-        var buttonType = button.GetType();
-        string[] propertyCandidates = { "Sprite", "Icon", "Image", "OverrideSprite" };
-        for (int i = 0; i < propertyCandidates.Length; i++)
+    private static Sprite ResolveEntryIcon(string identifier)
+    {
+        string id = (identifier ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(id)) { return null; }
+        var prefab = ItemPrefab.FindByIdentifier(id.ToIdentifier()) as ItemPrefab;
+        return prefab?.InventoryIcon ?? prefab?.Sprite;
+    }
+
+    private string BuildItemTooltip(TerminalVirtualEntry entry, bool hasSecondaryClick)
+    {
+        if (entry == null) { return ""; }
+        string displayName = entry.DisplayName ?? entry.Identifier ?? "";
+        int amount = Math.Max(0, entry.Amount);
+        int quality = Math.Max(0, entry.BestQuality);
+        float condition = Math.Max(0f, entry.AverageCondition);
+        string secondaryHint = hasSecondaryClick
+            ? T("dbiotest.panel.takehint.secondary", "Right click: take 1")
+            : T("dbiotest.panel.takehint.shift", "Shift+Left: take 1");
+
+        return $"{displayName}\n" +
+               $"{T("dbiotest.terminal.amount", "Amount")}: {amount}\n" +
+               $"{T("dbiotest.terminal.quality", "Quality")}: {quality} | {T("dbiotest.terminal.condition", "Condition")}: {condition:0.#}%\n" +
+               $"{T("dbiotest.panel.takehint.primary", "Left click: take a stack")} ({LeftClickTakeGroupCap} cap)\n" +
+               $"{secondaryHint}";
+    }
+
+    private bool TryBindSecondaryClick(GUIButton button, Func<GUIButton, object, bool> handler)
+    {
+        if (button == null || handler == null) { return false; }
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        string[] memberNames = { "OnSecondaryClicked", "SecondaryClicked", "OnSecondaryClick" };
+        Type buttonType = button.GetType();
+
+        for (int i = 0; i < memberNames.Length; i++)
         {
-            string name = propertyCandidates[i];
+            string name = memberNames[i];
             try
             {
-                var prop = buttonType.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                if (prop == null || !prop.CanWrite) { continue; }
-                if (!prop.PropertyType.IsAssignableFrom(icon.GetType())) { continue; }
-                prop.SetValue(button, icon);
-                return true;
+                var property = buttonType.GetProperty(name, flags);
+                if (property != null && property.CanWrite)
+                {
+                    Delegate callback = Delegate.CreateDelegate(property.PropertyType, handler.Target, handler.Method, false);
+                    if (callback != null)
+                    {
+                        property.SetValue(button, callback);
+                        return true;
+                    }
+                }
             }
             catch
             {
-                // Best-effort only.
+                // Continue fallback probing.
+            }
+
+            try
+            {
+                var field = buttonType.GetField(name, flags);
+                if (field != null)
+                {
+                    Delegate callback = Delegate.CreateDelegate(field.FieldType, handler.Target, handler.Method, false);
+                    if (callback != null)
+                    {
+                        field.SetValue(button, callback);
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+                // Continue fallback probing.
             }
         }
 
         return false;
     }
 
-    private void ApplyPanelEntriesToButtons()
+    private void CreateIconCell(GUILayoutGroup row, TerminalVirtualEntry entry)
     {
-        if (_panelEntryButtons.Count <= 0) { return; }
+        if (row == null || entry == null) { return; }
 
-        int start = GetPanelEntryPageStartIndex();
-        int available = _panelEntrySnapshot.Count;
-        for (int i = 0; i < _panelEntryButtons.Count; i++)
+        var button = new GUIButton(
+            new RectTransform(new Vector2(1f / IconGridColumns, 1f), row.RectTransform),
+            "",
+            style: "GUIButtonSmall");
+
+        Sprite icon = ResolveEntryIcon(entry.PrefabIdentifier ?? entry.Identifier ?? "");
+        if (icon != null)
         {
-            var button = _panelEntryButtons[i];
-            if (button == null) { continue; }
+            var iconImage = new GUIImage(
+                new RectTransform(new Vector2(0.82f, 0.82f), button.RectTransform, Anchor.Center),
+                icon,
+                scaleToFit: true);
+            iconImage.CanBeFocused = false;
+        }
 
-            int idx = start + i;
-            if (idx >= 0 && idx < available)
-            {
-                var entry = _panelEntrySnapshot[idx];
-                string shortName = TrimEntryLabel(entry?.DisplayName ?? entry?.Identifier ?? "", 9);
-                int amount = Math.Max(0, entry?.Amount ?? 0);
-                string amountText = $"x{amount}";
-                bool iconApplied = TryApplyEntryIconToButton(button, entry?.PrefabIdentifier ?? entry?.Identifier ?? "");
+        var amountLabel = new GUITextBlock(
+            new RectTransform(new Vector2(0.9f, 0.32f), button.RectTransform, Anchor.BottomRight),
+            $"x{Math.Max(0, entry.Amount)}",
+            font: GUIStyle.SmallFont,
+            textAlignment: Alignment.BottomRight);
+        amountLabel.TextColor = Color.White;
+        amountLabel.CanBeFocused = false;
 
-                button.Visible = true;
-                button.Enabled = _cachedSessionOpen && amount > 0;
-                button.Text = iconApplied ? amountText : $"{shortName} {amountText}";
-                button.ToolTip =
-                    $"{entry?.DisplayName ?? entry?.Identifier ?? ""}\n" +
-                    $"{T("dbiotest.terminal.amount", "Amount")}: {amount}\n" +
-                    $"{T("dbiotest.terminal.leftclicktake", "Left click to move 1 item to buffer.")}";
-            }
-            else
+        bool hasSecondaryClick = TryBindSecondaryClick(
+            button,
+            (_, __) =>
             {
-                button.Visible = true;
-                button.Enabled = false;
-                button.Text = "";
-                button.ToolTip = "";
+                RequestPanelTakeByIdentifierClient(entry.Identifier, 1);
+                return true;
+            });
+
+        button.ToolTip = BuildItemTooltip(entry, hasSecondaryClick);
+        button.Enabled = _cachedSessionOpen && Math.Max(0, entry.Amount) > 0;
+        button.OnClicked = (_, __) =>
+        {
+            int count = IsSingleTakeModifierPressed() ? 1 : ResolveTakeStackSize(entry.Identifier);
+            RequestPanelTakeByIdentifierClient(entry.Identifier, count);
+            return true;
+        };
+    }
+
+    private List<TerminalVirtualEntry> BuildFilteredEntries()
+    {
+        var filtered = _panelEntrySnapshot
+            .Where(entry => MatchCategory(entry, _selectedCategoryFlag))
+            .Where(entry => MatchSearch(entry, _currentSearchText))
+            .ToList();
+        filtered.Sort(ComparePanelEntries);
+        return filtered;
+    }
+
+    private void RefreshIconGrid(bool force = false)
+    {
+        if (_panelIconGridList?.Content == null) { return; }
+
+        var filtered = BuildFilteredEntries();
+        string signature = $"{_cachedSessionOpen}|{_localSortMode}|{_localSortDescending}|{_selectedCategoryFlag}|{(_currentSearchText ?? "").Trim()}|{filtered.Count}";
+        if (!force && signature == _lastIconGridRenderSignature) { return; }
+        _lastIconGridRenderSignature = signature;
+
+        _panelIconGridList.Content.ClearChildren();
+
+        if (filtered.Count <= 0)
+        {
+            new GUITextBlock(
+                new RectTransform(new Vector2(1f, 0.12f), _panelIconGridList.Content.RectTransform),
+                T("dbiotest.ui.empty", "No items in this session."),
+                textAlignment: Alignment.Center);
+            return;
+        }
+
+        int rowCount = (int)Math.Ceiling(filtered.Count / (double)IconGridColumns);
+        for (int r = 0; r < rowCount; r++)
+        {
+            var row = new GUILayoutGroup(
+                new RectTransform(new Vector2(1f, IconGridRowRelativeHeight), _panelIconGridList.Content.RectTransform),
+                isHorizontal: true)
+            {
+                AbsoluteSpacing = 2
+            };
+
+            for (int c = 0; c < IconGridColumns; c++)
+            {
+                int idx = r * IconGridColumns + c;
+                if (idx >= filtered.Count) { break; }
+                CreateIconCell(row, filtered[idx]);
             }
         }
     }
 
-    private void HandlePanelEntryButtonClicked(int localIndex)
-    {
-        if (localIndex < 0 || localIndex >= _panelEntryButtons.Count) { return; }
-        if (!_cachedSessionOpen) { return; }
-
-        int idx = GetPanelEntryPageStartIndex() + localIndex;
-        if (idx < 0 || idx >= _panelEntrySnapshot.Count) { return; }
-        var entry = _panelEntrySnapshot[idx];
-        string identifier = entry?.Identifier ?? "";
-        if (string.IsNullOrWhiteSpace(identifier)) { return; }
-        LogPanelDebug(
-            $"entry click slot={localIndex} idx={idx} identifier='{identifier}' amount={Math.Max(0, entry?.Amount ?? 0)}");
-
-        RequestPanelTakeByIdentifierClient(identifier);
-    }
-
-    private void RequestPanelTakeByIdentifierClient(string identifier)
+    private void RequestPanelTakeByIdentifierClient(string identifier, int count)
     {
         if (string.IsNullOrWhiteSpace(identifier)) { return; }
+        int takeCount = Math.Max(1, count);
         if (Timing.TotalTime < _nextClientPanelActionAllowedTime)
         {
-            LogPanelDebug($"take blocked by cooldown identifier='{identifier}'");
+            LogPanelDebug($"take blocked by cooldown identifier='{identifier}' count={takeCount}");
             return;
         }
         _nextClientPanelActionAllowedTime = Timing.TotalTime + PanelActionCooldownSeconds;
@@ -324,22 +601,25 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (IsServerAuthority)
         {
             Character actor = Character.Controlled ?? _sessionOwner;
-            string result = TryTakeOneByIdentifierFromVirtualSession(identifier, actor);
+            string result = TryTakeByIdentifierCountFromVirtualSession(identifier, takeCount, actor);
             if (string.IsNullOrEmpty(result))
             {
-                LogPanelDebug($"take local success identifier='{identifier}'");
+                LogPanelDebug($"take local success identifier='{identifier}' count={takeCount}");
             }
             else
             {
-                LogPanelDebug($"take local failed identifier='{identifier}' reason='{result}'");
+                LogPanelDebug($"take local failed identifier='{identifier}' count={takeCount} reason='{result}'");
             }
             RefreshPanelEntrySnapshot(force: true);
+            RefreshIconGrid(force: true);
+            UpdateClientPanelVisuals();
             return;
         }
 
         _pendingClientTakeIdentifier = identifier;
+        _pendingClientTakeCount = takeCount;
         _pendingClientAction = (byte)TerminalPanelAction.TakeByIdentifier;
-        LogPanelDebug($"take sent to server identifier='{identifier}'");
+        LogPanelDebug($"take sent to server identifier='{identifier}' count={takeCount}");
         item.CreateClientEvent(this);
     }
 
@@ -394,9 +674,12 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             return;
         }
 
-        Vector2 panelSize = IsFixedTerminal ? new Vector2(0.36f, 0.34f) : new Vector2(0.30f, 0.22f);
-        _panelFrame = new GUIFrame(new RectTransform(panelSize, GUI.Canvas, Anchor.TopLeft));
-        _panelFrame.RectTransform.AbsoluteOffset = new Point(36, 92);
+        _panelFrame = new GUIFrame(
+            new RectTransform(new Vector2(0.6f, 0.78f), GUI.Canvas, Anchor.Center)
+            {
+                RelativeOffset = new Vector2(0f, -0.03f)
+            },
+            style: "ItemUI");
         _panelFrame.Visible = false;
         _panelFrame.Enabled = false;
         LogPanelDebug(
@@ -406,77 +689,107 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         LogPanelDebug(
             $"panel draw queue methods id={item?.ID} withOrder={(AddToGuiUpdateListMethodWithOrder != null)} noArgs={(AddToGuiUpdateListMethodNoArgs != null)}");
 
-        var content = new GUILayoutGroup(new RectTransform(new Vector2(0.94f, 0.92f), _panelFrame.RectTransform, Anchor.Center));
+        _panelMainLayout = new GUILayoutGroup(
+            new RectTransform(new Vector2(0.95f, 0.95f), _panelFrame.RectTransform, Anchor.Center),
+            isHorizontal: false)
+        {
+            AbsoluteSpacing = 6
+        };
+
+        var topBar = new GUILayoutGroup(
+            new RectTransform(new Vector2(1f, 0.08f), _panelMainLayout.RectTransform),
+            isHorizontal: true)
+        {
+            AbsoluteSpacing = 6
+        };
 
         _panelTitle = new GUITextBlock(
-            new RectTransform(new Vector2(1f, IsFixedTerminal ? 0.12f : 0.17f), content.RectTransform),
+            new RectTransform(new Vector2(0.82f, 1f), topBar.RectTransform),
             T("dbiotest.panel.title", "Database Terminal"),
-            textAlignment: Alignment.Center);
+            font: GUIStyle.SubHeadingFont,
+            textAlignment: Alignment.CenterLeft);
 
-        _panelPageInfo = new GUITextBlock(
-            new RectTransform(new Vector2(1f, IsFixedTerminal ? 0.08f : 0.10f), content.RectTransform),
-            "",
-            textAlignment: Alignment.Center);
-
-        var row = new GUILayoutGroup(new RectTransform(new Vector2(1f, IsFixedTerminal ? 0.12f : 0.18f), content.RectTransform), isHorizontal: true);
-
-        _panelPrevButton = new GUIButton(new RectTransform(new Vector2(0.33f, 1f), row.RectTransform), T("dbiotest.panel.prev", "Prev"));
-        _panelPrevButton.OnClicked = (_, __) =>
-        {
-            if (_panelEntryPageIndex > 0)
-            {
-                _panelEntryPageIndex--;
-                RefreshPanelEntrySnapshot(force: true);
-                UpdateClientPanelVisuals();
-            }
-            return true;
-        };
-
-        _panelNextButton = new GUIButton(new RectTransform(new Vector2(0.33f, 1f), row.RectTransform), T("dbiotest.panel.next", "Next"));
-        _panelNextButton.OnClicked = (_, __) =>
-        {
-            int pageCount = GetPanelEntryPageCount();
-            if (_panelEntryPageIndex + 1 < pageCount)
-            {
-                _panelEntryPageIndex++;
-                RefreshPanelEntrySnapshot(force: true);
-                UpdateClientPanelVisuals();
-            }
-            return true;
-        };
-
-        _panelCloseButton = new GUIButton(new RectTransform(new Vector2(0.34f, 1f), row.RectTransform), T("dbiotest.panel.close", "Close"));
+        _panelCloseButton = new GUIButton(new RectTransform(new Vector2(0.18f, 1f), topBar.RectTransform), T("dbiotest.panel.close", "Close"));
         _panelCloseButton.OnClicked = (_, __) =>
         {
             RequestPanelActionClient(TerminalPanelAction.CloseSession);
             return true;
         };
 
-        int rowCount = Math.Max(1, PanelEntryButtonCount / Math.Max(1, PanelEntryColumns));
-        float entryGridHeight = IsFixedTerminal ? 0.28f : 0.42f;
-        var entryGrid = new GUILayoutGroup(new RectTransform(new Vector2(1f, entryGridHeight), content.RectTransform), isHorizontal: false);
-        _panelEntryButtons.Clear();
-        for (int r = 0; r < rowCount; r++)
+        _panelToolbarLayout = new GUILayoutGroup(
+            new RectTransform(new Vector2(1f, 0.08f), _panelMainLayout.RectTransform),
+            isHorizontal: true)
         {
-            var rowGroup = new GUILayoutGroup(
-                new RectTransform(new Vector2(1f, 1f / rowCount), entryGrid.RectTransform),
-                isHorizontal: true);
-            for (int c = 0; c < PanelEntryColumns; c++)
+            AbsoluteSpacing = 6
+        };
+
+        _panelSearchBox = new GUITextBox(
+            new RectTransform(new Vector2(0.72f, 0.9f), _panelToolbarLayout.RectTransform),
+            _currentSearchText ?? "",
+            createClearButton: true);
+        _panelSearchBox.ToolTip = T("dbiotest.ui.search.tooltip", "Search by item name or identifier.");
+        _panelSearchBox.OnTextChanged += (_, text) =>
+        {
+            _currentSearchText = text ?? "";
+            RefreshIconGrid(force: true);
+            UpdateClientPanelVisuals();
+            return true;
+        };
+
+        _panelSortButton = new GUIButton(
+            new RectTransform(new Vector2(0.28f, 0.9f), _panelToolbarLayout.RectTransform),
+            GetSortButtonLabel(),
+            style: "GUIButtonSmall");
+        _panelSortButton.OnClicked = (_, __) =>
+        {
+            CycleLocalSortMode();
+            RefreshIconGrid(force: true);
+            UpdateClientPanelVisuals();
+            return true;
+        };
+
+        _panelSummaryInfo = new GUITextBlock(
+            new RectTransform(new Vector2(1f, 0.06f), _panelMainLayout.RectTransform),
+            "",
+            textAlignment: Alignment.CenterLeft);
+
+        _panelContentLayout = new GUILayoutGroup(
+            new RectTransform(new Vector2(1f, 0.58f), _panelMainLayout.RectTransform),
+            isHorizontal: true)
+        {
+            AbsoluteSpacing = 6
+        };
+
+        _panelCategoryLayout = new GUILayoutGroup(
+            new RectTransform(new Vector2(0.16f, 1f), _panelContentLayout.RectTransform),
+            isHorizontal: false)
+        {
+            AbsoluteSpacing = 3
+        };
+        _panelCategoryButtons.Clear();
+        for (int i = 0; i < PanelCategories.Length; i++)
+        {
+            int categoryFlag = PanelCategories[i].categoryFlag;
+            string categoryLabel = T(PanelCategories[i].key, PanelCategories[i].fallback);
+            var categoryButton = new GUIButton(
+                new RectTransform(new Vector2(1f, 1f / PanelCategories.Length), _panelCategoryLayout.RectTransform),
+                categoryLabel,
+                style: "GUIButtonSmall");
+            categoryButton.OnClicked = (_, __) =>
             {
-                int slot = r * PanelEntryColumns + c;
-                var entryButton = new GUIButton(
-                    new RectTransform(new Vector2(1f / PanelEntryColumns, 1f), rowGroup.RectTransform),
-                    "");
-                entryButton.OnClicked = (_, __) =>
-                {
-                    HandlePanelEntryButtonClicked(slot);
-                    return true;
-                };
-                entryButton.Visible = true;
-                entryButton.Enabled = false;
-                _panelEntryButtons.Add(entryButton);
-            }
+                _selectedCategoryFlag = categoryFlag;
+                RefreshIconGrid(force: true);
+                UpdateClientPanelVisuals();
+                return true;
+            };
+            _panelCategoryButtons.Add(categoryButton);
         }
+
+        _panelIconGridList = new GUIListBox(
+            new RectTransform(new Vector2(0.84f, 1f), _panelContentLayout.RectTransform))
+        {
+            Spacing = 2
+        };
 
         _panelBufferInfo = null;
         _panelBufferFrame = null;
@@ -484,12 +797,12 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (IsFixedTerminal)
         {
             _panelBufferInfo = new GUITextBlock(
-                new RectTransform(new Vector2(1f, 0.08f), content.RectTransform),
+                new RectTransform(new Vector2(1f, 0.04f), _panelMainLayout.RectTransform),
                 T("dbiotest.panel.bufferhint", "Buffer"),
                 textAlignment: Alignment.Left);
 
             _panelBufferFrame = new GUIFrame(
-                new RectTransform(new Vector2(1f, 0.20f), content.RectTransform),
+                new RectTransform(new Vector2(1f, 0.12f), _panelMainLayout.RectTransform),
                 style: "InnerFrameDark");
             _panelBufferFrame.CanBeFocused = false;
             _panelBufferDrawer = new GUICustomComponent(
@@ -506,7 +819,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         }
 
         _panelStatusText = new GUITextBlock(
-            new RectTransform(new Vector2(1f, IsFixedTerminal ? 0.10f : 0.13f), content.RectTransform),
+            new RectTransform(new Vector2(1f, IsFixedTerminal ? 0.08f : 0.12f), _panelMainLayout.RectTransform),
             "",
             textAlignment: Alignment.Left);
 
@@ -671,11 +984,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private void UpdateClientPanelVisuals()
     {
         if (_panelFrame == null) { return; }
-        RefreshPanelEntrySnapshot();
-
-        int pageCount = GetPanelEntryPageCount();
-        int safePage = Math.Max(0, Math.Min(_panelEntryPageIndex, Math.Max(0, pageCount - 1)));
-        _panelEntryPageIndex = safePage;
+        bool snapshotChanged = RefreshPanelEntrySnapshot();
         int totalAmount = 0;
         for (int i = 0; i < _panelEntrySnapshot.Count; i++)
         {
@@ -687,22 +996,23 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             _panelTitle.Text = $"{T("dbiotest.panel.title", "Database Terminal")} [{_resolvedDatabaseId}]";
         }
 
-        if (_panelPageInfo != null)
+        if (_panelSummaryInfo != null)
         {
-            _panelPageInfo.Text =
-                $"{T("dbiotest.terminal.page", "Page")}: {safePage + 1}/{Math.Max(1, pageCount)} | " +
+            _panelSummaryInfo.Text =
                 $"{T("dbiotest.terminal.entries", "Entries")}: {_panelEntrySnapshot.Count} | " +
                 $"{T("dbiotest.terminal.amount", "Amount")}: {totalAmount}";
         }
 
-        if (_panelPrevButton != null)
+        if (_panelSortButton != null)
         {
-            _panelPrevButton.Enabled = _cachedSessionOpen && safePage > 0;
+            _panelSortButton.Text = GetSortButtonLabel();
+            _panelSortButton.Enabled = true;
         }
 
-        if (_panelNextButton != null)
+        if (_panelSearchBox != null &&
+            !string.Equals(_panelSearchBox.Text ?? "", _currentSearchText ?? "", StringComparison.Ordinal))
         {
-            _panelNextButton.Enabled = _cachedSessionOpen && (safePage + 1) < pageCount;
+            _panelSearchBox.Text = _currentSearchText ?? "";
         }
 
         if (_panelCloseButton != null)
@@ -713,12 +1023,15 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (_panelStatusText != null)
         {
             _panelStatusText.Text = _cachedSessionOpen
-                ? T("dbiotest.panel.takehint", "Click an icon to move 1 item to buffer.")
+                ? T("dbiotest.panel.takehint", "Left click takes a stack. Right click (or Shift+Left) takes 1.")
                 : T("dbiotest.panel.closedhint", "Session closed. Use Open button on terminal.");
         }
 
         UpdatePanelBufferVisuals();
-        ApplyPanelEntriesToButtons();
+        if (snapshotChanged)
+        {
+            RefreshIconGrid(force: true);
+        }
     }
 
     private void UpdatePanelBufferVisuals()

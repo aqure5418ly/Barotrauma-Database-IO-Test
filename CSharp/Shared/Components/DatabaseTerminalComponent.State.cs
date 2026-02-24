@@ -74,6 +74,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         public string Identifier { get; set; } = "";
         public string PrefabIdentifier { get; set; } = "";
         public string DisplayName { get; set; } = "";
+        public int CategoryInt { get; set; }
         public int Amount { get; set; }
         public int BestQuality { get; set; }
         public float AverageCondition { get; set; } = 100f;
@@ -263,21 +264,31 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
 #if CLIENT
     private GUIFrame _panelFrame;
+    private GUILayoutGroup _panelMainLayout;
+    private GUILayoutGroup _panelToolbarLayout;
+    private GUILayoutGroup _panelContentLayout;
+    private GUILayoutGroup _panelCategoryLayout;
+    private GUIListBox _panelIconGridList;
     private GUITextBlock _panelTitle;
-    private GUITextBlock _panelPageInfo;
+    private GUITextBlock _panelSummaryInfo;
     private GUITextBlock _panelStatusText;
     private GUITextBlock _panelBufferInfo;
     private GUIFrame _panelBufferFrame;
     private GUICustomComponent _panelBufferDrawer;
-    private GUIButton _panelPrevButton;
-    private GUIButton _panelNextButton;
     private GUIButton _panelCloseButton;
-    private readonly List<GUIButton> _panelEntryButtons = new List<GUIButton>();
+    private GUITextBox _panelSearchBox;
+    private GUIButton _panelSortButton;
+    private readonly List<GUIButton> _panelCategoryButtons = new List<GUIButton>();
     private readonly List<TerminalVirtualEntry> _panelEntrySnapshot = new List<TerminalVirtualEntry>();
     private CustomInterface _fixedXmlControlPanel;
-    private int _panelEntryPageIndex;
     private double _nextPanelEntryRefreshAt;
     private double _nextClientPanelActionAllowedTime;
+    private string _currentSearchText = "";
+    private int _selectedCategoryFlag = -1;
+    private int _localSortMode;
+    private bool _localSortDescending;
+    private int _pendingClientTakeCount = 1;
+    private string _lastIconGridRenderSignature = "";
     private const float PanelInteractionRange = 340f;
     // Panel trace logs were used to debug fixed-terminal flicker.
     // Keep them disabled by default to avoid high-frequency log noise in normal runs.
@@ -285,8 +296,6 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private const double PanelEvalLogCooldown = 1.0;
     private const double PanelQueueLogCooldown = 2.0;
     private const double PanelEntryRefreshInterval = 0.25;
-    private const int PanelEntryButtonCount = 12;
-    private const int PanelEntryColumns = 4;
     private const double PanelFocusStickySeconds = 1.25;
     private static long _panelTraceSeq;
     private bool _panelLastVisible;

@@ -21,9 +21,13 @@
   <dbiotest.terminal.openhint>Session active. Use panel buttons to switch pages or close session.</dbiotest.terminal.openhint>
   <dbiotest.terminal.dbid>Database ID</dbiotest.terminal.dbid>
   <dbiotest.terminal.count>Stored Item Count</dbiotest.terminal.count>
+  <dbiotest.terminal.entries>Entries</dbiotest.terminal.entries>
   <dbiotest.terminal.page>Page</dbiotest.terminal.page>
   <dbiotest.terminal.remainingpages>Pending Page Items</dbiotest.terminal.remainingpages>
   <dbiotest.terminal.search>Search</dbiotest.terminal.search>
+  <dbiotest.terminal.amount>Amount</dbiotest.terminal.amount>
+  <dbiotest.terminal.quality>Quality</dbiotest.terminal.quality>
+  <dbiotest.terminal.condition>Condition</dbiotest.terminal.condition>
   <dbiotest.terminal.locked>Locked by another terminal session.</dbiotest.terminal.locked>
   <dbiotest.terminal.closed>Session closed.</dbiotest.terminal.closed>
   <dbiotest.btn.open>Open</dbiotest.btn.open>
@@ -39,10 +43,17 @@
   <dbiotest.power.status>Power</dbiotest.power.status>
   <dbiotest.power.online>Online</dbiotest.power.online>
   <dbiotest.power.offline>Offline</dbiotest.power.offline>
-  <dbiotest.panel.title>Database Page Controls</dbiotest.panel.title>
+  <dbiotest.panel.title>Database Terminal</dbiotest.panel.title>
   <dbiotest.panel.prev>Prev</dbiotest.panel.prev>
   <dbiotest.panel.next>Next</dbiotest.panel.next>
   <dbiotest.panel.close>Close</dbiotest.panel.close>
+  <dbiotest.panel.takehint>Left click takes a stack. Right click (or Shift+Left) takes 1.</dbiotest.panel.takehint>
+  <dbiotest.panel.takehint.primary>Left click: take a stack</dbiotest.panel.takehint.primary>
+  <dbiotest.panel.takehint.secondary>Right click: take 1</dbiotest.panel.takehint.secondary>
+  <dbiotest.panel.takehint.shift>Shift+Left: take 1</dbiotest.panel.takehint.shift>
+  <dbiotest.panel.closedhint>Session closed. Use Open button on terminal.</dbiotest.panel.closedhint>
+  <dbiotest.panel.bufferhint>Buffer</dbiotest.panel.bufferhint>
+  <dbiotest.panel.bufferunavailable>Buffer unavailable</dbiotest.panel.bufferunavailable>
   <dbiotest.anchor.hint>Persistent in-save storage anchor for database data.</dbiotest.anchor.hint>
   <dbiotest.anchor.dbid>Database ID</dbiotest.anchor.dbid>
   <dbiotest.anchor.count>Persisted Item Count</dbiotest.anchor.count>
@@ -68,6 +79,15 @@
   <dbiotest.ui.sort.namedesc>Name Z-A</dbiotest.ui.sort.namedesc>
   <dbiotest.ui.sort.countdesc>Count High-Low</dbiotest.ui.sort.countdesc>
   <dbiotest.ui.sort.countasc>Count Low-High</dbiotest.ui.sort.countasc>
+  <dbiotest.ui.sort.qualitydesc>Quality High-Low</dbiotest.ui.sort.qualitydesc>
+  <dbiotest.ui.sort.qualityasc>Quality Low-High</dbiotest.ui.sort.qualityasc>
+  <dbiotest.category.all>All</dbiotest.category.all>
+  <dbiotest.category.material>Materials</dbiotest.category.material>
+  <dbiotest.category.medical>Medical</dbiotest.category.medical>
+  <dbiotest.category.weapon>Weapons</dbiotest.category.weapon>
+  <dbiotest.category.electrical>Electrical</dbiotest.category.electrical>
+  <dbiotest.category.equipment>Equipment</dbiotest.category.equipment>
+  <dbiotest.category.misc>Misc</dbiotest.category.misc>
 
   <dbiotest.ui.take.success>Item moved to terminal buffer.</dbiotest.ui.take.success>
   <dbiotest.ui.take.failed>Failed to transfer item.</dbiotest.ui.take.failed>
