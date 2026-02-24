@@ -547,16 +547,42 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         return filtered;
     }
 
-    private float GetIconGridRowRelativeHeight()
+    private float GetIconGridRowRelativeHeight(int rowCount)
     {
-        if (_panelIconGridList == null) { return 0.26f; }
+        if (_panelIconGridList == null) { return 0.28f; }
 
         float width = Math.Max(1f, _panelIconGridList.Rect.Width);
         float height = Math.Max(1f, _panelIconGridList.Rect.Height);
         float aspect = width / height;
-        float rowHeight = aspect / Math.Max(1, IconGridColumns);
-        // Keep rows close to square while avoiding extreme sizes.
-        return Math.Max(0.16f, Math.Min(0.38f, rowHeight));
+        float squareHeight = aspect / Math.Max(1, IconGridColumns);
+
+        // When there are only a few rows, deliberately allocate more height so cells don't look like thin bars.
+        float sparseBoostHeight = rowCount <= 0 ? squareHeight : (0.90f / Math.Max(1, rowCount));
+        float targetHeight = rowCount <= 3
+            ? Math.Max(squareHeight, sparseBoostHeight)
+            : squareHeight;
+
+        // Clamp to keep behavior stable across HUD scales and aspect ratios.
+        return Math.Max(0.20f, Math.Min(0.40f, targetHeight));
+    }
+
+    private static int ComputeIconGridEntriesSignature(IReadOnlyList<TerminalVirtualEntry> entries)
+    {
+        if (entries == null || entries.Count <= 0) { return 0; }
+        unchecked
+        {
+            int hash = 17;
+            for (int i = 0; i < entries.Count; i++)
+            {
+                var entry = entries[i];
+                if (entry == null) { continue; }
+                hash = (hash * 31) + StringComparer.OrdinalIgnoreCase.GetHashCode(entry.Identifier ?? "");
+                hash = (hash * 31) + Math.Max(0, entry.Amount);
+                hash = (hash * 31) + Math.Max(0, entry.BestQuality);
+                hash = (hash * 31) + (int)MathF.Round(Math.Max(0f, entry.AverageCondition));
+            }
+            return hash;
+        }
     }
 
     private void RefreshIconGrid(bool force = false)
@@ -564,7 +590,14 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (_panelIconGridList?.Content == null) { return; }
 
         var filtered = BuildFilteredEntries();
-        string signature = $"{_cachedSessionOpen}|{_localSortMode}|{_localSortDescending}|{_selectedCategoryFlag}|{(_currentSearchText ?? "").Trim()}|{filtered.Count}";
+        int rowCount = Math.Max(1, (int)Math.Ceiling(filtered.Count / (double)IconGridColumns));
+        float rowHeight = GetIconGridRowRelativeHeight(rowCount);
+        int entrySignature = ComputeIconGridEntriesSignature(filtered);
+        int gridWidth = _panelIconGridList.Rect.Width;
+        int gridHeight = _panelIconGridList.Rect.Height;
+        string signature =
+            $"{_cachedSessionOpen}|{_localSortMode}|{_localSortDescending}|{_selectedCategoryFlag}|{(_currentSearchText ?? "").Trim()}|" +
+            $"{filtered.Count}|{rowCount}|{rowHeight:0.###}|{gridWidth}x{gridHeight}|{entrySignature}";
         if (!force && signature == _lastIconGridRenderSignature) { return; }
         _lastIconGridRenderSignature = signature;
 
@@ -579,8 +612,6 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             return;
         }
 
-        int rowCount = (int)Math.Ceiling(filtered.Count / (double)IconGridColumns);
-        float rowHeight = GetIconGridRowRelativeHeight();
         for (int r = 0; r < rowCount; r++)
         {
             var row = new GUILayoutGroup(
