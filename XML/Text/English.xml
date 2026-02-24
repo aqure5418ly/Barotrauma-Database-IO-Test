@@ -81,6 +81,10 @@
   <dbiotest.ui.sort.countasc>Count Low-High</dbiotest.ui.sort.countasc>
   <dbiotest.ui.sort.qualitydesc>Quality High-Low</dbiotest.ui.sort.qualitydesc>
   <dbiotest.ui.sort.qualityasc>Quality Low-High</dbiotest.ui.sort.qualityasc>
+  <dbiotest.ui.cellsize.button>Cell: {0}</dbiotest.ui.cellsize.button>
+  <dbiotest.ui.cellsize.large>Large</dbiotest.ui.cellsize.large>
+  <dbiotest.ui.cellsize.medium>Medium</dbiotest.ui.cellsize.medium>
+  <dbiotest.ui.cellsize.small>Small</dbiotest.ui.cellsize.small>
   <dbiotest.category.all>All</dbiotest.category.all>
   <dbiotest.category.material>Materials</dbiotest.category.material>
   <dbiotest.category.medical>Medical</dbiotest.category.medical>

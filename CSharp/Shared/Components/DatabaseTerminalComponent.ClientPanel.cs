@@ -120,7 +120,6 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         Quality = 2
     }
 
-    private const int IconGridColumns = 8;
     private const int LeftClickTakeGroupCap = 8;
     private static readonly (string key, string fallback, int categoryFlag)[] PanelCategories = new[]
     {
@@ -132,6 +131,52 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         ("dbiotest.category.equipment", "Equipment", (int)MapEntityCategory.Equipment),
         ("dbiotest.category.misc", "Misc", (int)MapEntityCategory.Misc)
     };
+
+    private int GetIconGridColumns()
+    {
+        return _cellSizeMode switch
+        {
+            CellSizeMode.Large => 8,
+            CellSizeMode.Medium => 10,
+            CellSizeMode.Small => 12,
+            _ => 10
+        };
+    }
+
+    private string GetCellSizeLabel()
+    {
+        return _cellSizeMode switch
+        {
+            CellSizeMode.Large => T("dbiotest.ui.cellsize.large", "Large"),
+            CellSizeMode.Small => T("dbiotest.ui.cellsize.small", "Small"),
+            _ => T("dbiotest.ui.cellsize.medium", "Medium")
+        };
+    }
+
+    private string GetCellSizeButtonLabel()
+    {
+        string template = T("dbiotest.ui.cellsize.button", "Cell: {0}");
+        string value = GetCellSizeLabel();
+        try
+        {
+            return string.Format(template, value);
+        }
+        catch
+        {
+            return $"{template} {value}";
+        }
+    }
+
+    private void CycleCellSizeMode()
+    {
+        _cellSizeMode = _cellSizeMode switch
+        {
+            CellSizeMode.Large => CellSizeMode.Medium,
+            CellSizeMode.Medium => CellSizeMode.Small,
+            _ => CellSizeMode.Large
+        };
+        _runtimeCellSizeMode = _cellSizeMode;
+    }
 
     private List<TerminalVirtualEntry> ParsePanelEntriesFromLuaPayload()
     {
@@ -495,11 +540,12 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private void CreateIconCell(GUILayoutGroup row, TerminalVirtualEntry entry)
     {
         if (row == null || entry == null) { return; }
+        int columns = Math.Max(1, GetIconGridColumns());
 
         var button = new GUIButton(
-            new RectTransform(new Vector2(1f / IconGridColumns, 1f), row.RectTransform),
+            new RectTransform(new Vector2(1f / columns, 1f), row.RectTransform),
             "",
-            style: "GUIButtonSmall");
+            style: "GUIButtonSmallFreeScale");
 
         Sprite icon = ResolveEntryIcon(entry.PrefabIdentifier ?? entry.Identifier ?? "");
         if (icon != null)
@@ -547,23 +593,41 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         return filtered;
     }
 
-    private float GetIconGridRowRelativeHeight(int rowCount)
+    private float GetIconGridRowRelativeHeight(int rowCount, int columns)
     {
         if (_panelIconGridList == null) { return 0.28f; }
 
         float width = Math.Max(1f, _panelIconGridList.Rect.Width);
         float height = Math.Max(1f, _panelIconGridList.Rect.Height);
         float aspect = width / height;
-        float squareHeight = aspect / Math.Max(1, IconGridColumns);
+        float squareHeight = aspect / Math.Max(1, columns);
 
         // When there are only a few rows, deliberately allocate more height so cells don't look like thin bars.
-        float sparseBoostHeight = rowCount <= 0 ? squareHeight : (0.90f / Math.Max(1, rowCount));
+        float sparseBoostHeight = rowCount <= 0 ? squareHeight : (0.75f / Math.Max(1, rowCount));
         float targetHeight = rowCount <= 3
             ? Math.Max(squareHeight, sparseBoostHeight)
             : squareHeight;
 
-        // Clamp to keep behavior stable across HUD scales and aspect ratios.
-        return Math.Max(0.20f, Math.Min(0.40f, targetHeight));
+        float minClamp;
+        float maxClamp;
+        switch (_cellSizeMode)
+        {
+            case CellSizeMode.Large:
+                minClamp = 0.16f;
+                maxClamp = 0.30f;
+                break;
+            case CellSizeMode.Small:
+                minClamp = 0.11f;
+                maxClamp = 0.20f;
+                break;
+            default:
+                minClamp = 0.13f;
+                maxClamp = 0.24f;
+                break;
+        }
+
+        // Clamp per mode to keep behavior stable across HUD scales and aspect ratios.
+        return Math.Max(minClamp, Math.Min(maxClamp, targetHeight));
     }
 
     private static int ComputeIconGridEntriesSignature(IReadOnlyList<TerminalVirtualEntry> entries)
@@ -590,17 +654,18 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (_panelIconGridList?.Content == null) { return; }
 
         var filtered = BuildFilteredEntries();
-        int rowCount = Math.Max(1, (int)Math.Ceiling(filtered.Count / (double)IconGridColumns));
-        float rowHeight = GetIconGridRowRelativeHeight(rowCount);
+        int activeColumns = Math.Max(1, GetIconGridColumns());
+        int rowCount = Math.Max(1, (int)Math.Ceiling(filtered.Count / (double)activeColumns));
+        float rowHeight = GetIconGridRowRelativeHeight(rowCount, activeColumns);
         int entrySignature = ComputeIconGridEntriesSignature(filtered);
         int gridWidth = _panelIconGridList.Rect.Width;
         int gridHeight = _panelIconGridList.Rect.Height;
         string signature =
             $"{_cachedSessionOpen}|{_localSortMode}|{_localSortDescending}|{_selectedCategoryFlag}|{(_currentSearchText ?? "").Trim()}|" +
-            $"{filtered.Count}|{rowCount}|{rowHeight:0.###}|{gridWidth}x{gridHeight}|{entrySignature}";
+            $"{filtered.Count}|mode={_cellSizeMode}|cols={activeColumns}|{rowCount}|{rowHeight:0.###}|{gridWidth}x{gridHeight}|{entrySignature}";
         if (!force && signature == _lastIconGridRenderSignature) { return; }
         _lastIconGridRenderSignature = signature;
-        LogPanelDebug($"grid rebuild rows={rowCount} rowHeight={rowHeight:0.###} grid={gridWidth}x{gridHeight} entries={filtered.Count}");
+        LogPanelDebug($"grid rebuild mode={_cellSizeMode} cols={activeColumns} rows={rowCount} rowHeight={rowHeight:0.###} grid={gridWidth}x{gridHeight} entries={filtered.Count}");
 
         _panelIconGridList.Content.ClearChildren();
 
@@ -618,7 +683,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             // GUIListBox handles row height more reliably when each row is a frame element.
             var rowElement = new GUIFrame(
                 new RectTransform(new Vector2(1f, rowHeight), _panelIconGridList.Content.RectTransform),
-                style: "ListBoxElement")
+                style: "ListBoxElementSquare")
             {
                 CanBeFocused = false
             };
@@ -631,9 +696,9 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                 AbsoluteSpacing = 2
             };
 
-            for (int c = 0; c < IconGridColumns; c++)
+            for (int c = 0; c < activeColumns; c++)
             {
-                int idx = r * IconGridColumns + c;
+                int idx = r * activeColumns + c;
                 if (idx >= filtered.Count) { break; }
                 CreateIconCell(row, filtered[idx]);
             }
@@ -680,6 +745,11 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     {
         bool prevFrameVisible = _panelFrame?.Visible ?? false;
         bool prevFrameEnabled = _panelFrame?.Enabled ?? false;
+        if (visible && !_panelLastVisible && _cellSizeMode != _runtimeCellSizeMode)
+        {
+            _cellSizeMode = _runtimeCellSizeMode;
+            _lastIconGridRenderSignature = "";
+        }
 
         if (_panelFrame != null &&
             (_panelFrame.Visible != visible || _panelFrame.Enabled != visible))
@@ -776,8 +846,9 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             AbsoluteSpacing = 6
         };
 
+        _cellSizeMode = _runtimeCellSizeMode;
         _panelSearchBox = new GUITextBox(
-            new RectTransform(new Vector2(0.72f, 0.9f), _panelToolbarLayout.RectTransform),
+            new RectTransform(new Vector2(0.56f, 0.9f), _panelToolbarLayout.RectTransform),
             _currentSearchText ?? "",
             createClearButton: true);
         _panelSearchBox.ToolTip = T("dbiotest.ui.search.tooltip", "Search by item name or identifier.");
@@ -790,12 +861,24 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         };
 
         _panelSortButton = new GUIButton(
-            new RectTransform(new Vector2(0.28f, 0.9f), _panelToolbarLayout.RectTransform),
+            new RectTransform(new Vector2(0.22f, 0.9f), _panelToolbarLayout.RectTransform),
             GetSortButtonLabel(),
             style: "GUIButtonSmall");
         _panelSortButton.OnClicked = (_, __) =>
         {
             CycleLocalSortMode();
+            RefreshIconGrid(force: true);
+            UpdateClientPanelVisuals();
+            return true;
+        };
+
+        _panelCellSizeButton = new GUIButton(
+            new RectTransform(new Vector2(0.22f, 0.9f), _panelToolbarLayout.RectTransform),
+            GetCellSizeButtonLabel(),
+            style: "GUIButtonSmall");
+        _panelCellSizeButton.OnClicked = (_, __) =>
+        {
+            CycleCellSizeMode();
             RefreshIconGrid(force: true);
             UpdateClientPanelVisuals();
             return true;
@@ -841,7 +924,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         _panelIconGridList = new GUIListBox(
             new RectTransform(new Vector2(0.84f, 1f), _panelContentLayout.RectTransform))
         {
-            Spacing = 1
+            Spacing = 0
         };
 
         _panelBufferInfo = null;
@@ -1060,6 +1143,11 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         {
             _panelSortButton.Text = GetSortButtonLabel();
             _panelSortButton.Enabled = true;
+        }
+        if (_panelCellSizeButton != null)
+        {
+            _panelCellSizeButton.Text = GetCellSizeButtonLabel();
+            _panelCellSizeButton.Enabled = true;
         }
 
         if (_panelSearchBox != null &&

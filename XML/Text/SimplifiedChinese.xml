@@ -83,6 +83,10 @@
   <dbiotest.ui.sort.countasc>数量从低到高</dbiotest.ui.sort.countasc>
   <dbiotest.ui.sort.qualitydesc>品质从高到低</dbiotest.ui.sort.qualitydesc>
   <dbiotest.ui.sort.qualityasc>品质从低到高</dbiotest.ui.sort.qualityasc>
+  <dbiotest.ui.cellsize.button>格子: {0}</dbiotest.ui.cellsize.button>
+  <dbiotest.ui.cellsize.large>大</dbiotest.ui.cellsize.large>
+  <dbiotest.ui.cellsize.medium>中</dbiotest.ui.cellsize.medium>
+  <dbiotest.ui.cellsize.small>小</dbiotest.ui.cellsize.small>
   <dbiotest.category.all>全部</dbiotest.category.all>
   <dbiotest.category.material>材料</dbiotest.category.material>
   <dbiotest.category.medical>医疗</dbiotest.category.medical>

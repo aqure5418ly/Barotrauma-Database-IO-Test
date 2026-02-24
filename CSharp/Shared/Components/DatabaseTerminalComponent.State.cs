@@ -264,6 +264,14 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         typeof(Item).GetField("fullyInitialized", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
 #if CLIENT
+    private enum CellSizeMode : byte
+    {
+        Large = 0,
+        Medium = 1,
+        Small = 2
+    }
+
+    private static CellSizeMode _runtimeCellSizeMode = CellSizeMode.Medium;
     private GUIFrame _panelFrame;
     private GUILayoutGroup _panelMainLayout;
     private GUILayoutGroup _panelToolbarLayout;
@@ -279,6 +287,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private GUIButton _panelCloseButton;
     private GUITextBox _panelSearchBox;
     private GUIButton _panelSortButton;
+    private GUIButton _panelCellSizeButton;
     private readonly List<GUIButton> _panelCategoryButtons = new List<GUIButton>();
     private readonly List<TerminalVirtualEntry> _panelEntrySnapshot = new List<TerminalVirtualEntry>();
     private CustomInterface _fixedXmlControlPanel;
@@ -288,6 +297,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private int _selectedCategoryFlag = -1;
     private int _localSortMode;
     private bool _localSortDescending;
+    private CellSizeMode _cellSizeMode = CellSizeMode.Medium;
 
     private string _lastIconGridRenderSignature = "";
     private const float PanelInteractionRange = 340f;
