@@ -165,7 +165,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         if (!IsValidXmlActionActor(_sessionOwner) && _sessionOwner != null)
         {
-            DebugConsole.NewMessage(
+            DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(
                 $"{Constants.LogPrefix} XML action owner reset (invalid session owner): {action} for '{_resolvedDatabaseId}'.",
                 Microsoft.Xna.Framework.Color.Orange);
             ModFileLog.Write(
@@ -196,3 +196,4 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             $"db='{_resolvedDatabaseId}' page={Math.Max(1, _cachedPageIndex)}/{Math.Max(1, _cachedPageTotal)} itemId={item?.ID}");
     }
 }
+

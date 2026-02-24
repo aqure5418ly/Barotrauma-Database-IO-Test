@@ -56,7 +56,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (!EnablePanelDebugLog || !ModFileLog.IsDebugEnabled) { return; }
         long seq = NextPanelTraceSeq();
         string line = $"{Constants.LogPrefix} [Panel#{seq}] {message}";
-        DebugConsole.NewMessage(line, Color.LightSkyBlue);
+        DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(line, Color.LightSkyBlue);
         ModFileLog.WriteDebug("Panel", line);
     }
 
@@ -1222,3 +1222,4 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     }
 #endif
 }
+

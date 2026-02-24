@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -934,7 +934,7 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent, IClientSeri
             if (Timing.TotalTime >= _nextNoPowerLogTime)
             {
                 _nextNoPowerLogTime = Timing.TotalTime + 3.0;
-                DebugConsole.NewMessage(
+                DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(
                     $"{DatabaseIOTest.Constants.LogPrefix} Restocker '{_resolvedDatabaseId}' has no power (need {Math.Max(0f, MinRequiredVoltage):0.##}V).",
                     Microsoft.Xna.Framework.Color.Orange);
             }
@@ -1258,3 +1258,4 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent, IClientSeri
         return (Microsoft.Xna.Framework.Vector2.Zero, null);
     }
 }
+

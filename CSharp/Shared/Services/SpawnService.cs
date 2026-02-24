@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Barotrauma;
@@ -60,7 +60,7 @@ namespace DatabaseIOTest.Services
             var prefab = ItemPrefab.FindByIdentifier(itemData.Identifier.ToIdentifier()) as ItemPrefab;
             if (prefab == null)
             {
-                DebugConsole.NewMessage($"{Constants.LogPrefix} Prefab not found: {itemData.Identifier}", Color.Orange);
+                DatabaseIOTest.Services.ModFileLog.TryConsoleMessage($"{Constants.LogPrefix} Prefab not found: {itemData.Identifier}", Color.Orange);
                 return;
             }
 
@@ -187,3 +187,4 @@ namespace DatabaseIOTest.Services
         }
     }
 }
+

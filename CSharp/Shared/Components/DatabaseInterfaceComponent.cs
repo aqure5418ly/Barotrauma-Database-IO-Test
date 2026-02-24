@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Barotrauma;
@@ -71,7 +71,7 @@ public partial class DatabaseInterfaceComponent : ItemComponent
             if (Timing.TotalTime >= _nextNoPowerLogTime)
             {
                 _nextNoPowerLogTime = Timing.TotalTime + 3.0;
-                DebugConsole.NewMessage(
+                DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(
                     $"{DatabaseIOTest.Constants.LogPrefix} Interface '{_resolvedDatabaseId}' has no power (need {Math.Max(0f, MinRequiredVoltage):0.##}V).",
                     Microsoft.Xna.Framework.Color.Orange);
             }
@@ -101,7 +101,7 @@ public partial class DatabaseInterfaceComponent : ItemComponent
 
         if (existingCount + incomingCount > Math.Max(1, MaxStorageCount))
         {
-            DebugConsole.NewMessage(
+            DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(
                 $"{DatabaseIOTest.Constants.LogPrefix} Ingest denied: capacity exceeded for '{_resolvedDatabaseId}' ({existingCount + incomingCount}>{MaxStorageCount})",
                 Microsoft.Xna.Framework.Color.OrangeRed);
             return;
@@ -171,3 +171,4 @@ public partial class DatabaseInterfaceComponent : ItemComponent
         return string.IsNullOrWhiteSpace(value) ? fallback : value;
     }
 }
+

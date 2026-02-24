@@ -41,7 +41,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         UpdateDescriptionLocal();
         TrySyncSummary(force: true);
 
-        DebugConsole.NewMessage(
+        DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(
             $"{Constants.LogPrefix} Page switched to {_sessionCurrentPageIndex + 1}/{Math.Max(1, _sessionPages.Count)} for '{_resolvedDatabaseId}'.",
             Microsoft.Xna.Framework.Color.LightGray);
 
@@ -126,7 +126,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (!DatabaseStore.TryAcquireTerminal(_resolvedDatabaseId, item.ID))
         {
             string blockedLine = $"{Constants.LogPrefix} Compact blocked: '{_resolvedDatabaseId}' is locked by another terminal session.";
-            DebugConsole.NewMessage(blockedLine, Microsoft.Xna.Framework.Color.Orange);
+            DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(blockedLine, Microsoft.Xna.Framework.Color.Orange);
             ModFileLog.Write("Terminal", blockedLine);
             return false;
         }
@@ -155,7 +155,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                 $"eligible={beforeDiag.eligible} blockedCond={beforeDiag.blockedCondition} blockedContained={beforeDiag.blockedContained} " +
                 $"uniqueEligibleKeys={beforeDiag.uniqueKeys} potentialMergeEntries={beforeDiag.potentialMergeEntries} " +
                 $"sort={GetSortModeLabel((TerminalSortMode)NormalizeSortModeIndex(SortModeIndex))} desc={SortDescending}";
-            DebugConsole.NewMessage(
+            DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(
                 compactLine,
                 mergedEntries > 0 ? Microsoft.Xna.Framework.Color.LightGreen : Microsoft.Xna.Framework.Color.Yellow);
             ModFileLog.Write("Terminal", compactLine);
@@ -202,7 +202,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             $"uniqueEligibleKeys={beforeDiag.uniqueKeys} potentialMergeEntries={beforeDiag.potentialMergeEntries} " +
             $"sort={GetSortModeLabel((TerminalSortMode)NormalizeSortModeIndex(SortModeIndex))} desc={SortDescending} " +
             $"search='{(SearchKeyword ?? "").Trim()}' page={Math.Max(1, _sessionCurrentPageIndex + 1)}/{Math.Max(1, _sessionPages.Count)}";
-        DebugConsole.NewMessage(
+        DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(
             compactLine,
             mergedEntries > 0 ? Microsoft.Xna.Framework.Color.LightGreen : Microsoft.Xna.Framework.Color.Yellow);
         ModFileLog.Write("Terminal", compactLine);
@@ -579,7 +579,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                 $"{Constants.LogPrefix} Page fill under target db='{_resolvedDatabaseId}' terminal={item?.ID} " +
                 $"page={Math.Max(1, _sessionCurrentPageIndex + 1)}/{Math.Max(1, _sessionPages.Count)} " +
                 $"expected={_pendingPageFillCheckExpectedCount} actual={actualCount} retries={_pendingPageFillCheckRetries}";
-            DebugConsole.NewMessage(warnLine, Microsoft.Xna.Framework.Color.Orange);
+            DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(warnLine, Microsoft.Xna.Framework.Color.Orange);
             ModFileLog.Write("Terminal", warnLine);
             _currentPageFillVerified = false;
             _pendingPageFillCheckGeneration = -1;
@@ -591,7 +591,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             $"{Constants.LogPrefix} Page fill retry db='{_resolvedDatabaseId}' terminal={item?.ID} " +
             $"page={Math.Max(1, _sessionCurrentPageIndex + 1)}/{Math.Max(1, _sessionPages.Count)} " +
             $"expected={_pendingPageFillCheckExpectedCount} actual={actualCount} retry={nextRetry}";
-        DebugConsole.NewMessage(retryLine, Microsoft.Xna.Framework.Color.Yellow);
+        DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(retryLine, Microsoft.Xna.Framework.Color.Yellow);
         ModFileLog.Write("Terminal", retryLine);
 
         if (LoadCurrentPageIntoInventory(_sessionOwner))
@@ -888,3 +888,4 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     }
 
 }
+

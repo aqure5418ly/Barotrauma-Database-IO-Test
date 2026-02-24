@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Reflection;
 using Barotrauma;
 using DatabaseIOTest.Patches;
@@ -32,7 +32,7 @@ namespace DatabaseIOTest
                 "Core",
                 $"{Constants.LogPrefix} BuildStamp='{BuildStamp}' asm='{asmLocation}' cwd='{Environment.CurrentDirectory}'");
             LogLuaBridgeDiagnostics();
-            DebugConsole.NewMessage($"{Constants.LogPrefix} Loaded", Microsoft.Xna.Framework.Color.Green);
+            DatabaseIOTest.Services.ModFileLog.TryConsoleMessage($"{Constants.LogPrefix} Loaded", Microsoft.Xna.Framework.Color.Green);
             RegisterHooks();
             InstallPatches();
         }
@@ -43,7 +43,7 @@ namespace DatabaseIOTest
             UninstallPatches();
             Services.DatabaseStore.Clear();
             Services.ModFileLog.Write("Core", $"{Constants.LogPrefix} Unloaded");
-            DebugConsole.NewMessage($"{Constants.LogPrefix} Unloaded", Microsoft.Xna.Framework.Color.Yellow);
+            DatabaseIOTest.Services.ModFileLog.TryConsoleMessage($"{Constants.LogPrefix} Unloaded", Microsoft.Xna.Framework.Color.Yellow);
         }
 
         private void RegisterHooks()
@@ -247,3 +247,4 @@ namespace DatabaseIOTest
         }
     }
 }
+

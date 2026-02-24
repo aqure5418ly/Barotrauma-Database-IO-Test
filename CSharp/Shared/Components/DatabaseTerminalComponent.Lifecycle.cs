@@ -211,7 +211,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             if (Timing.TotalTime >= _nextNoPowerLogTime)
             {
                 _nextNoPowerLogTime = Timing.TotalTime + 3.0;
-                DebugConsole.NewMessage(
+                DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(
                     $"{Constants.LogPrefix} Terminal '{_resolvedDatabaseId}' has no power (need {Math.Max(0f, MinRequiredVoltage):0.##}V).",
                     Microsoft.Xna.Framework.Color.Orange);
             }
@@ -277,3 +277,4 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         }
     }
 }
+
