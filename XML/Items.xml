@@ -14,7 +14,7 @@
     <Fabricate suitablefabricators="fabricator" requiredtime="28">
       <RequiredSkill identifier="electrical" level="72" />
       <RequiredSkill identifier="mechanical" level="68" />
-      <RequiredItem identifier="fpgacircuit" amount="2" />
+      <RequiredItem identifier="fpgacircuit" amount="5" />
       <RequiredItem identifier="titaniumaluminiumalloy" amount="1" />
       <RequiredItem identifier="plastic" amount="2" />
       <RequiredItem identifier="silicon" amount="2" />
@@ -42,7 +42,7 @@
     <Fabricate suitablefabricators="fabricator" requiredtime="32">
       <RequiredSkill identifier="electrical" level="78" />
       <RequiredSkill identifier="mechanical" level="72" />
-      <RequiredItem identifier="fpgacircuit" amount="3" />
+      <RequiredItem identifier="fpgacircuit" amount="8" />
       <RequiredItem identifier="titaniumaluminiumalloy" amount="2" />
       <RequiredItem identifier="plastic" amount="2" />
       <RequiredItem identifier="silicon" amount="3" />
@@ -111,7 +111,7 @@
     <Fabricate suitablefabricators="fabricator" requiredtime="16">
       <RequiredSkill identifier="electrical" level="38" />
       <RequiredSkill identifier="mechanical" level="32" />
-      <RequiredItem identifier="fpgacircuit" amount="1" />
+      <RequiredItem identifier="fpgacircuit" amount="5" />
       <RequiredItem identifier="steel" amount="2" />
       <RequiredItem identifier="plastic" amount="2" />
     </Fabricate>
