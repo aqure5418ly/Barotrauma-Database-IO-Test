@@ -226,6 +226,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     private byte _pendingClientAction;
     private string _pendingClientTakeIdentifier = "";
+    private int _pendingClientTakeCount = 1;
     private int _luaTakeRequestNonce;
     private int _lastProcessedLuaTakeRequestNonce;
     private bool _processingLuaTakeRequest;
@@ -287,7 +288,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private int _selectedCategoryFlag = -1;
     private int _localSortMode;
     private bool _localSortDescending;
-    private int _pendingClientTakeCount = 1;
+
     private string _lastIconGridRenderSignature = "";
     private const float PanelInteractionRange = 340f;
     // Panel trace logs were used to debug fixed-terminal flicker.

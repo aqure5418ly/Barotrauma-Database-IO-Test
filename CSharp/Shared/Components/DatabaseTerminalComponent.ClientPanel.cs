@@ -120,9 +120,9 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         Quality = 2
     }
 
-    private const int IconGridColumns = 8;
+    private const int IconGridColumns = 6;
     private const int LeftClickTakeGroupCap = 8;
-    private const float IconGridRowRelativeHeight = 0.18f;
+    private const float IconGridRowRelativeHeight = 0.22f;
     private static readonly (string key, string fallback, int categoryFlag)[] PanelCategories = new[]
     {
         ("dbiotest.category.all", "All", -1),
@@ -506,7 +506,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (icon != null)
         {
             var iconImage = new GUIImage(
-                new RectTransform(new Vector2(0.82f, 0.82f), button.RectTransform, Anchor.Center),
+                new RectTransform(new Vector2(0.9f, 0.9f), button.RectTransform, Anchor.Center),
                 icon,
                 scaleToFit: true);
             iconImage.CanBeFocused = false;
@@ -575,7 +575,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                 new RectTransform(new Vector2(1f, IconGridRowRelativeHeight), _panelIconGridList.Content.RectTransform),
                 isHorizontal: true)
             {
-                AbsoluteSpacing = 2
+                AbsoluteSpacing = 1
             };
 
             for (int c = 0; c < IconGridColumns; c++)
@@ -1028,10 +1028,9 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         }
 
         UpdatePanelBufferVisuals();
-        if (snapshotChanged)
-        {
-            RefreshIconGrid(force: true);
-        }
+        // Always call RefreshIconGrid — the internal signature check handles dedup.
+        // This ensures the grid rebuilds when _cachedSessionOpen changes (buttons enabled state).
+        RefreshIconGrid(force: snapshotChanged);
     }
 
     private void UpdatePanelBufferVisuals()

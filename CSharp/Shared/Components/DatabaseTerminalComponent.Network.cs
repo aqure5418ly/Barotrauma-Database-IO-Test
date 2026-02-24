@@ -94,7 +94,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (action == TerminalPanelAction.TakeByIdentifier)
         {
             takeIdentifier = (msg.ReadString() ?? "").Trim();
-            takeCount = Math.Max(1, msg.ReadByte());
+            takeCount = Math.Max(1, (int)msg.ReadByte());
         }
         if (action == TerminalPanelAction.None) { return; }
         if (!SessionVariant && !_inPlaceSessionActive) { return; }
