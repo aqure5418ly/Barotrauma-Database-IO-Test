@@ -43,9 +43,9 @@
       <RequiredSkill identifier="electrical" level="78" />
       <RequiredSkill identifier="mechanical" level="72" />
       <RequiredItem identifier="fpgacircuit" amount="8" />
-      <RequiredItem identifier="titaniumaluminiumalloy" amount="2" />
-      <RequiredItem identifier="plastic" amount="2" />
-      <RequiredItem identifier="silicon" amount="3" />
+      <RequiredItem identifier="titaniumaluminiumalloy" amount="8" />
+      <RequiredItem identifier="fulgurium" amount="8" />
+      <RequiredItem identifier="physicorium" amount="8" />
     </Fabricate>
     <Body width="64" height="88" density="20" />
     <Holdable slots="Any,RightHand,LeftHand" msg="ItemMsgPickUpUse" pickkey="Use" />
