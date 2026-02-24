@@ -1,4 +1,4 @@
-.PHONY: build build-all build-client build-server build-win build-linux build-osx
+.PHONY: build build-all build-client build-server build-win build-linux build-osx channel-binary channel-source
 
 build: build-all
 
@@ -19,3 +19,9 @@ build-linux:
 
 build-osx:
 	powershell -ExecutionPolicy Bypass -File ./build-assembly.ps1 -Configuration Release -Target osx
+
+channel-binary:
+	powershell -ExecutionPolicy Bypass -File ./switch-channel.ps1 -Channel binary
+
+channel-source:
+	powershell -ExecutionPolicy Bypass -File ./switch-channel.ps1 -Channel source
