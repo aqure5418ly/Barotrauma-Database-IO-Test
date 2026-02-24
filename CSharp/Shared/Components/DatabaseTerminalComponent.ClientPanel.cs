@@ -600,6 +600,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             $"{filtered.Count}|{rowCount}|{rowHeight:0.###}|{gridWidth}x{gridHeight}|{entrySignature}";
         if (!force && signature == _lastIconGridRenderSignature) { return; }
         _lastIconGridRenderSignature = signature;
+        LogPanelDebug($"grid rebuild rows={rowCount} rowHeight={rowHeight:0.###} grid={gridWidth}x{gridHeight} entries={filtered.Count}");
 
         _panelIconGridList.Content.ClearChildren();
 
@@ -614,8 +615,17 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         for (int r = 0; r < rowCount; r++)
         {
-            var row = new GUILayoutGroup(
+            // GUIListBox handles row height more reliably when each row is a frame element.
+            var rowElement = new GUIFrame(
                 new RectTransform(new Vector2(1f, rowHeight), _panelIconGridList.Content.RectTransform),
+                style: "ListBoxElement")
+            {
+                CanBeFocused = false
+            };
+            rowElement.HoverColor = rowElement.Color;
+
+            var row = new GUILayoutGroup(
+                new RectTransform(Vector2.One, rowElement.RectTransform),
                 isHorizontal: true)
             {
                 AbsoluteSpacing = 2
@@ -831,7 +841,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         _panelIconGridList = new GUIListBox(
             new RectTransform(new Vector2(0.84f, 1f), _panelContentLayout.RectTransform))
         {
-            Spacing = 2
+            Spacing = 1
         };
 
         _panelBufferInfo = null;
