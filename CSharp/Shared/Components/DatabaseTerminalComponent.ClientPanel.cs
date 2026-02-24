@@ -120,9 +120,8 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         Quality = 2
     }
 
-    private const int IconGridColumns = 6;
+    private const int IconGridColumns = 8;
     private const int LeftClickTakeGroupCap = 8;
-    private const float IconGridRowRelativeHeight = 0.22f;
     private static readonly (string key, string fallback, int categoryFlag)[] PanelCategories = new[]
     {
         ("dbiotest.category.all", "All", -1),
@@ -548,6 +547,18 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         return filtered;
     }
 
+    private float GetIconGridRowRelativeHeight()
+    {
+        if (_panelIconGridList == null) { return 0.26f; }
+
+        float width = Math.Max(1f, _panelIconGridList.Rect.Width);
+        float height = Math.Max(1f, _panelIconGridList.Rect.Height);
+        float aspect = width / height;
+        float rowHeight = aspect / Math.Max(1, IconGridColumns);
+        // Keep rows close to square while avoiding extreme sizes.
+        return Math.Max(0.16f, Math.Min(0.38f, rowHeight));
+    }
+
     private void RefreshIconGrid(bool force = false)
     {
         if (_panelIconGridList?.Content == null) { return; }
@@ -569,13 +580,14 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         }
 
         int rowCount = (int)Math.Ceiling(filtered.Count / (double)IconGridColumns);
+        float rowHeight = GetIconGridRowRelativeHeight();
         for (int r = 0; r < rowCount; r++)
         {
             var row = new GUILayoutGroup(
-                new RectTransform(new Vector2(1f, IconGridRowRelativeHeight), _panelIconGridList.Content.RectTransform),
+                new RectTransform(new Vector2(1f, rowHeight), _panelIconGridList.Content.RectTransform),
                 isHorizontal: true)
             {
-                AbsoluteSpacing = 1
+                AbsoluteSpacing = 2
             };
 
             for (int c = 0; c < IconGridColumns; c++)
