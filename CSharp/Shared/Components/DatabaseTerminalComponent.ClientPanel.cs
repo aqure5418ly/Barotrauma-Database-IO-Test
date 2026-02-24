@@ -149,7 +149,19 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             string id = (fields[0] ?? "").Trim();
             if (string.IsNullOrWhiteSpace(id)) { continue; }
             string prefabId = fields.Length > 1 ? (fields[1] ?? "").Trim() : id;
-            string displayName = fields.Length > 2 ? (fields[2] ?? "").Trim() : id;
+            string payloadDisplayName = fields.Length > 2 ? (fields[2] ?? "").Trim() : id;
+            // Client resolves localized name from identifier so each locale sees its own language.
+            string localizedDisplayName = ResolveDisplayNameForIdentifier(id);
+            string displayName;
+            if (!string.IsNullOrWhiteSpace(localizedDisplayName) &&
+                (!localizedDisplayName.Equals(id, StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(payloadDisplayName)))
+            {
+                displayName = localizedDisplayName;
+            }
+            else
+            {
+                displayName = string.IsNullOrWhiteSpace(payloadDisplayName) ? id : payloadDisplayName;
+            }
 
             int amount = 0;
             if (fields.Length > 3)
@@ -175,7 +187,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             {
                 Identifier = id,
                 PrefabIdentifier = string.IsNullOrWhiteSpace(prefabId) ? id : prefabId,
-                DisplayName = string.IsNullOrWhiteSpace(displayName) ? id : displayName,
+                DisplayName = displayName,
                 Amount = Math.Max(0, amount),
                 BestQuality = Math.Max(0, quality),
                 AverageCondition = Math.Max(0f, condition)
