@@ -201,7 +201,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
             if (!DatabaseStore.TryAcquireTerminal(_resolvedDatabaseId, item.ID))
             {
-                DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(
+                DebugConsole.NewMessage(
                     $"{Constants.LogPrefix} Taking over '{_resolvedDatabaseId}'... retry in a moment.",
                     Microsoft.Xna.Framework.Color.Orange);
                 UpdateSummaryFromStore();
@@ -244,7 +244,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             {
                 DatabaseStore.AppendItems(_resolvedDatabaseId, allData);
                 DatabaseStore.ReleaseTerminal(_resolvedDatabaseId, item.ID);
-                DatabaseIOTest.Services.ModFileLog.TryConsoleMessage($"{Constants.LogPrefix} Failed to open session terminal for '{_resolvedDatabaseId}'.", Microsoft.Xna.Framework.Color.OrangeRed);
+                DebugConsole.NewMessage($"{Constants.LogPrefix} Failed to open session terminal for '{_resolvedDatabaseId}'.", Microsoft.Xna.Framework.Color.OrangeRed);
             });
 
         if (!started)
@@ -269,7 +269,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
             if (!DatabaseStore.TryAcquireTerminal(_resolvedDatabaseId, item.ID))
             {
-                DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(
+                DebugConsole.NewMessage(
                     $"{Constants.LogPrefix} Taking over '{_resolvedDatabaseId}'... retry in a moment.",
                     Microsoft.Xna.Framework.Color.Orange);
                 UpdateSummaryFromStore();
@@ -296,7 +296,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         UpdateDescriptionLocal();
         TrySyncSummary(force: true);
         RefreshLuaB1BridgeState(force: true);
-        DatabaseIOTest.Services.ModFileLog.TryConsoleMessage($"{Constants.LogPrefix} In-place terminal session opened for '{_resolvedDatabaseId}'.", Microsoft.Xna.Framework.Color.LightGray);
+        DebugConsole.NewMessage($"{Constants.LogPrefix} In-place terminal session opened for '{_resolvedDatabaseId}'.", Microsoft.Xna.Framework.Color.LightGray);
     }
 
     private void FlushIdleInventoryItems()
@@ -340,7 +340,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         if (returnedCount > 0 || droppedCount > 0)
         {
-            DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(
+            DebugConsole.NewMessage(
                 $"{Constants.LogPrefix} Cleared {leakedItems.Count} idle terminal item(s) for '{_resolvedDatabaseId}' (returned={returnedCount}, dropped={droppedCount}).",
                 Microsoft.Xna.Framework.Color.Orange);
             ModFileLog.Write(
@@ -384,13 +384,13 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                 () =>
                 {
                     commitSession();
-                    DatabaseIOTest.Services.ModFileLog.TryConsoleMessage($"{Constants.LogPrefix} Failed to close session terminal for '{_resolvedDatabaseId}'.", Microsoft.Xna.Framework.Color.OrangeRed);
+                    DebugConsole.NewMessage($"{Constants.LogPrefix} Failed to close session terminal for '{_resolvedDatabaseId}'.", Microsoft.Xna.Framework.Color.OrangeRed);
                 });
 
             if (!converted)
             {
                 commitSession();
-                DatabaseIOTest.Services.ModFileLog.TryConsoleMessage($"{Constants.LogPrefix} Failed to close session terminal for '{_resolvedDatabaseId}'.", Microsoft.Xna.Framework.Color.OrangeRed);
+                DebugConsole.NewMessage($"{Constants.LogPrefix} Failed to close session terminal for '{_resolvedDatabaseId}'.", Microsoft.Xna.Framework.Color.OrangeRed);
             }
         }
         else
@@ -398,7 +398,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             commitSession();
         }
 
-        DatabaseIOTest.Services.ModFileLog.TryConsoleMessage($"{Constants.LogPrefix} Terminal session closed ({reason}) for '{_resolvedDatabaseId}'.", Microsoft.Xna.Framework.Color.LightGray);
+        DebugConsole.NewMessage($"{Constants.LogPrefix} Terminal session closed ({reason}) for '{_resolvedDatabaseId}'.", Microsoft.Xna.Framework.Color.LightGray);
     }
 
     private bool HandlePanelActionServer(TerminalPanelAction action, Character actor, string source = "unknown")
@@ -564,7 +564,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             bool forced = DatabaseStore.TryForceCloseActiveSession(_resolvedDatabaseId, item.ID, actor);
             if (forced)
             {
-                DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(
+                DebugConsole.NewMessage(
                     $"{Constants.LogPrefix} Force takeover requested for '{_resolvedDatabaseId}'.",
                     Microsoft.Xna.Framework.Color.Orange);
                 ModFileLog.Write(
@@ -580,7 +580,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         if (actor == null)
         {
-            DatabaseIOTest.Services.ModFileLog.TryConsoleMessage($"{Constants.LogPrefix} {_resolvedDatabaseId} is already locked by another terminal.", Microsoft.Xna.Framework.Color.OrangeRed);
+            DebugConsole.NewMessage($"{Constants.LogPrefix} {_resolvedDatabaseId} is already locked by another terminal.", Microsoft.Xna.Framework.Color.OrangeRed);
             return false;
         }
 
@@ -590,7 +590,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             bool forced = DatabaseStore.TryForceCloseActiveSession(_resolvedDatabaseId, item.ID, actor);
             if (forced)
             {
-                DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(
+                DebugConsole.NewMessage(
                     $"{Constants.LogPrefix} Force takeover requested for '{_resolvedDatabaseId}'.",
                     Microsoft.Xna.Framework.Color.Orange);
                 ModFileLog.Write(
@@ -602,7 +602,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         _pendingTakeoverRequesterId = actor.ID;
         _pendingTakeoverUntil = Timing.TotalTime + TakeoverConfirmWindowSeconds;
-        DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(
+        DebugConsole.NewMessage(
             $"{Constants.LogPrefix} {_resolvedDatabaseId} is locked. Use again within {TakeoverConfirmWindowSeconds:0.#}s to force takeover.",
             Microsoft.Xna.Framework.Color.Orange);
         return false;
@@ -656,7 +656,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         UpdateDescriptionLocal();
         TrySyncSummary(force: true);
         RefreshLuaB1BridgeState(force: true);
-        DatabaseIOTest.Services.ModFileLog.TryConsoleMessage($"{Constants.LogPrefix} In-place terminal session closed ({reason}) for '{_resolvedDatabaseId}'.", Microsoft.Xna.Framework.Color.LightGray);
+        DebugConsole.NewMessage($"{Constants.LogPrefix} In-place terminal session closed ({reason}) for '{_resolvedDatabaseId}'.", Microsoft.Xna.Framework.Color.LightGray);
     }
 
     private bool SpawnReplacement(string targetIdentifier, Character actor, Action beforeSwap, Action<Item, Character> onSpawned, Action onSpawnFailed)
@@ -673,7 +673,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         var prefab = ItemPrefab.FindByIdentifier(targetIdentifier.ToIdentifier()) as ItemPrefab;
         if (prefab == null)
         {
-            DatabaseIOTest.Services.ModFileLog.TryConsoleMessage($"{Constants.LogPrefix} ItemPrefab not found: {targetIdentifier}", Microsoft.Xna.Framework.Color.OrangeRed);
+            DebugConsole.NewMessage($"{Constants.LogPrefix} ItemPrefab not found: {targetIdentifier}", Microsoft.Xna.Framework.Color.OrangeRed);
             return false;
         }
 
@@ -781,7 +781,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (_sessionAutomationConsumedCount > 0)
         {
             string line = $"{Constants.LogPrefix} Session '{_resolvedDatabaseId}' consumed {_sessionAutomationConsumedCount} item(s) by automation.";
-            DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(line, Microsoft.Xna.Framework.Color.LightGray);
+            DebugConsole.NewMessage(line, Microsoft.Xna.Framework.Color.LightGray);
             ModFileLog.Write("Terminal", line);
         }
 
@@ -815,4 +815,5 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         return true;
     }
 }
+
 

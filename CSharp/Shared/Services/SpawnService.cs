@@ -60,7 +60,7 @@ namespace DatabaseIOTest.Services
             var prefab = ItemPrefab.FindByIdentifier(itemData.Identifier.ToIdentifier()) as ItemPrefab;
             if (prefab == null)
             {
-                DatabaseIOTest.Services.ModFileLog.TryConsoleMessage($"{Constants.LogPrefix} Prefab not found: {itemData.Identifier}", Color.Orange);
+                DebugConsole.NewMessage($"{Constants.LogPrefix} Prefab not found: {itemData.Identifier}", Color.Orange);
                 return;
             }
 
@@ -187,4 +187,5 @@ namespace DatabaseIOTest.Services
         }
     }
 }
+
 

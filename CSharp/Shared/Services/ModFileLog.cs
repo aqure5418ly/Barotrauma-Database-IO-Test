@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Reflection;
 using System.Text;
 using Barotrauma;
 using Microsoft.Xna.Framework;
@@ -34,46 +33,6 @@ namespace DatabaseIOTest.Services
         private static string _debugModeSource = "default";
         private static bool _initNoticeSent;
         private static readonly List<string> LogRoots = new List<string>();
-        private static bool _newMessageMethodResolved;
-        private static MethodInfo _newMessageMethod;
-
-        private static MethodInfo ResolveNewMessageMethod()
-        {
-            if (_newMessageMethodResolved) { return _newMessageMethod; }
-            _newMessageMethodResolved = true;
-
-            try
-            {
-                _newMessageMethod = typeof(DebugConsole).GetMethod(
-                    "NewMessage",
-                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
-                    null,
-                    new[] { typeof(string), typeof(Color?), typeof(bool) },
-                    null);
-            }
-            catch
-            {
-                _newMessageMethod = null;
-            }
-
-            return _newMessageMethod;
-        }
-
-        public static void TryConsoleMessage(string message, Color? color = null, bool isCommand = false)
-        {
-            if (string.IsNullOrWhiteSpace(message)) { return; }
-
-            try
-            {
-                MethodInfo method = ResolveNewMessageMethod();
-                if (method == null) { return; }
-                method.Invoke(null, new object[] { message, color, isCommand });
-            }
-            catch
-            {
-                // Keep silent if in-game console output is unavailable.
-            }
-        }
 
         private static void EnsureInitialized()
         {
@@ -193,13 +152,13 @@ namespace DatabaseIOTest.Services
                 if (_enabled)
                 {
                     string joined = string.Join(" | ", LogRoots);
-                    TryConsoleMessage(
+                    DebugConsole.NewMessage(
                         $"{DatabaseIOTest.Constants.LogPrefix} File log ready: {joined} | route=cslog/lualog | debug={(_debugEnabled ? "on" : "off")} ({_debugModeSource})",
                         Color.LightGray);
                 }
                 else
                 {
-                    TryConsoleMessage(
+                    DebugConsole.NewMessage(
                         $"{DatabaseIOTest.Constants.LogPrefix} File log disabled: no writable log path.",
                         Color.Orange);
                 }
@@ -212,38 +171,8 @@ namespace DatabaseIOTest.Services
 
         private static string GetRuntimeRole()
         {
-            try
-            {
-                if (GameMain.IsSingleplayer) { return "SP"; }
-            }
-            catch
-            {
-                // Ignore and continue probing.
-            }
-
-            try
-            {
-                PropertyInfo networkMemberProp = typeof(GameMain).GetProperty(
-                    "NetworkMember",
-                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-                object networkMember = networkMemberProp?.GetValue(null);
-                if (networkMember == null) { return "SP"; }
-
-                PropertyInfo isServerProp = networkMember.GetType().GetProperty(
-                    "IsServer",
-                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                object raw = isServerProp?.GetValue(networkMember);
-                if (raw is bool isServer)
-                {
-                    return isServer ? "Server" : "Client";
-                }
-            }
-            catch
-            {
-                // Ignore and fallback.
-            }
-
-            return "Client";
+            if (GameMain.NetworkMember == null) { return "SP"; }
+            return GameMain.NetworkMember.IsServer ? "Server" : "Client";
         }
 
         private static bool ResolveDebugEnabled(out string source)

@@ -194,7 +194,7 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
         var recipe = FindRecipeByIdentifier(_fabricator, targetIdentifier);
         if (recipe == null)
         {
-            DatabaseIOTest.Services.ModFileLog.TryConsoleMessage($"{DatabaseIOTest.Constants.LogPrefix} Fabricator recipe not found: {targetIdentifier}", Microsoft.Xna.Framework.Color.OrangeRed);
+            DebugConsole.NewMessage($"{DatabaseIOTest.Constants.LogPrefix} Fabricator recipe not found: {targetIdentifier}", Microsoft.Xna.Framework.Color.OrangeRed);
             ModFileLog.Write("Fabricator", $"{DatabaseIOTest.Constants.LogPrefix} recipe not found target='{targetIdentifier}' db='{_resolvedDatabaseId}'");
             return;
         }
@@ -202,14 +202,14 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
         var inputContainer = _fabricator.InputContainer;
         if (inputContainer?.Inventory == null)
         {
-            DatabaseIOTest.Services.ModFileLog.TryConsoleMessage($"{DatabaseIOTest.Constants.LogPrefix} Fabricator input container missing for '{targetIdentifier}'.", Microsoft.Xna.Framework.Color.OrangeRed);
+            DebugConsole.NewMessage($"{DatabaseIOTest.Constants.LogPrefix} Fabricator input container missing for '{targetIdentifier}'.", Microsoft.Xna.Framework.Color.OrangeRed);
             ModFileLog.Write("Fabricator", $"{DatabaseIOTest.Constants.LogPrefix} input container missing target='{targetIdentifier}' db='{_resolvedDatabaseId}'");
             return;
         }
 
         int batchAmount = Math.Max(1, amount);
         var targetItem = recipe.TargetItem?.Identifier.Value ?? targetIdentifier;
-        DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(
+        DebugConsole.NewMessage(
             $"{DatabaseIOTest.Constants.LogPrefix} Recipe '{targetItem}' x{batchAmount} (db='{_resolvedDatabaseId}')",
             Microsoft.Xna.Framework.Color.LightGray);
         ModFileLog.Write(
@@ -232,7 +232,7 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
             float minCondition = required.MinCondition;
             float maxCondition = required.MaxCondition;
             string allowedText = string.Join(",", allowedIds.OrderBy(s => s, StringComparer.OrdinalIgnoreCase));
-            DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(
+            DebugConsole.NewMessage(
                 $"{DatabaseIOTest.Constants.LogPrefix} Req#{reqIndex}: need={need} ids=[{allowedText}]",
                 Microsoft.Xna.Framework.Color.Gray);
             ModFileLog.Write(
@@ -260,7 +260,7 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
                 ModFileLog.Write(
                     "Fabricator",
                     $"{DatabaseIOTest.Constants.LogPrefix} order fail target='{targetItem}' amount={batchAmount} failedReq#{reqIndex} need={need} ids=[{allowedText}]");
-                DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(
+                DebugConsole.NewMessage(
                     $"{DatabaseIOTest.Constants.LogPrefix} Insufficient materials in database for '{targetIdentifier}'.",
                     Microsoft.Xna.Framework.Color.Orange);
                 return;
@@ -288,7 +288,7 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
 
         if (!TryResolveServerSelectedRecipe(_fabricator, out string identifier, out int amount))
         {
-            DatabaseIOTest.Services.ModFileLog.TryConsoleMessage(
+            DebugConsole.NewMessage(
                 $"{DatabaseIOTest.Constants.LogPrefix} DB Fill failed: could not resolve current fabricator selection.",
                 Microsoft.Xna.Framework.Color.Orange);
             ModFileLog.Write(
@@ -586,4 +586,5 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
         return false;
     }
 }
+
 

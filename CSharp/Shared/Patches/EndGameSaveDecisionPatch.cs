@@ -113,45 +113,7 @@ namespace DatabaseIOTest.Patches
 
         private static bool IsServerAuthority()
         {
-            try
-            {
-                if (GameMain.IsSingleplayer)
-                {
-                    return true;
-                }
-            }
-            catch
-            {
-                // Keep probing via reflection.
-            }
-
-            try
-            {
-                Type gameMainType = typeof(GameMain);
-                PropertyInfo networkMemberProp = gameMainType.GetProperty(
-                    "NetworkMember",
-                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-                object networkMember = networkMemberProp?.GetValue(null);
-                if (networkMember == null)
-                {
-                    return true;
-                }
-
-                PropertyInfo isServerProp = networkMember.GetType().GetProperty(
-                    "IsServer",
-                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                object raw = isServerProp?.GetValue(networkMember);
-                if (raw is bool isServer)
-                {
-                    return isServer;
-                }
-            }
-            catch
-            {
-                // Safe fallback below.
-            }
-
-            return false;
+            return GameMain.NetworkMember == null || GameMain.NetworkMember.IsServer;
         }
 
         private static void AddMatchingMethods(
