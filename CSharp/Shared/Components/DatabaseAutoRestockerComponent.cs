@@ -4,16 +4,25 @@ using System.Linq;
 using System.Reflection;
 using Barotrauma;
 using Barotrauma.Items.Components;
+using Barotrauma.Networking;
 using DatabaseIOTest.Models;
 using DatabaseIOTest.Services;
 
-public partial class DatabaseAutoRestockerComponent : ItemComponent
+public partial class DatabaseAutoRestockerComponent : ItemComponent, IClientSerializable, IServerSerializable
 {
     private enum RestockerAction : byte
     {
         None = 0,
         PrevSupply = 1,
         NextSupply = 2
+    }
+
+    private enum PreviewNetOp : byte
+    {
+        None = 0,
+        Subscribe = 1,
+        Unsubscribe = 2,
+        Snapshot = 3
     }
 
     [Editable, Serialize(DatabaseIOTest.Constants.DefaultDatabaseId, IsPropertySaveable.Yes, description: "Shared database id.")]
@@ -68,6 +77,11 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
     private double _lastPollTime;
     private double _lastDescriptionUpdateTime;
     private double _nextNoPowerLogTime;
+    private double _nextPreviewSubscriberSweepTime;
+    private string _lastPreviewBroadcastIdentifier = "";
+    private int _lastPreviewBroadcastAmount = -1;
+
+    private readonly Dictionary<Client, double> _previewSubscribers = new Dictionary<Client, double>();
 
     private string _lastSupplyIdentifiers = "";
     private readonly List<string> _supplyList = new List<string>();
@@ -94,6 +108,8 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
     private static readonly Dictionary<ulong, double> SlotLockUntil = new Dictionary<ulong, double>();
 
     private const double DescriptionUpdateInterval = 0.75;
+    private const double PreviewSubscriberTimeoutSeconds = 2.5;
+    private const double PreviewSubscriberSweepInterval = 0.5;
 
     private bool IsServerAuthority => GameMain.NetworkMember == null || GameMain.NetworkMember.IsServer;
 
@@ -105,6 +121,11 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
     private string _previewLastIdentifier = "__init__";
     private int _previewLastAmount = int.MinValue;
     private double _nextPreviewQueueWarnLogTime;
+    private byte _pendingPreviewClientOp;
+    private bool _previewSubscribed;
+    private double _nextPreviewSubscribeHeartbeatAt;
+
+    private const double PreviewSubscribeHeartbeatSeconds = 1.2;
 
     private static readonly MethodInfo PreviewAddToGuiUpdateListMethodWithOrder = typeof(GUIComponent).GetMethod(
         "AddToGUIUpdateList",
@@ -161,16 +182,33 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
         {
             DatabaseStore.Unwatch(_watchingDatabaseId, _storeWatcherId);
         }
+
+        if (IsServerAuthority)
+        {
+            _previewSubscribers.Clear();
+        }
+#if CLIENT
+        _previewSubscribed = false;
+        _pendingPreviewClientOp = (byte)PreviewNetOp.None;
+#endif
     }
 
     public override void Update(float deltaTime, Camera cam)
     {
-        if (!IsServerAuthority) { return; }
+        if (!IsServerAuthority)
+        {
+#if CLIENT
+            UpdateClientPreviewSubscriptionPassive();
+#endif
+            return;
+        }
 
         RefreshParsedConfig();
         ConsumeXmlActionRequest();
 
         double now = Timing.TotalTime;
+        SweepPreviewSubscribers(now);
+
         if (now - _lastPollTime >= Math.Max(PollInterval, 0.05f))
         {
             _lastPollTime = now;
@@ -338,6 +376,79 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
 
         SelectedSupplyIdentifierPreview = selectedIdentifier;
         SelectedSupplyAmountPreview = selectedAmount;
+        TrySyncPreviewSnapshot(force: false);
+    }
+
+    private void SweepPreviewSubscribers(double now)
+    {
+        if (!IsServerAuthority) { return; }
+        if (now < _nextPreviewSubscriberSweepTime) { return; }
+        _nextPreviewSubscriberSweepTime = now + PreviewSubscriberSweepInterval;
+        if (_previewSubscribers.Count <= 0) { return; }
+
+        var stale = new List<Client>();
+        foreach (var pair in _previewSubscribers)
+        {
+            if (pair.Key == null || now - pair.Value > PreviewSubscriberTimeoutSeconds)
+            {
+                stale.Add(pair.Key);
+            }
+        }
+
+        foreach (var client in stale)
+        {
+            _previewSubscribers.Remove(client);
+        }
+    }
+
+    private void TouchPreviewSubscriber(Client c)
+    {
+        if (!IsServerAuthority || c == null) { return; }
+        _previewSubscribers[c] = Timing.TotalTime;
+    }
+
+    private void RemovePreviewSubscriber(Client c)
+    {
+        if (!IsServerAuthority || c == null) { return; }
+        _previewSubscribers.Remove(c);
+    }
+
+    private bool HasPreviewSubscribers()
+    {
+        return _previewSubscribers.Count > 0;
+    }
+
+    private void TrySyncPreviewSnapshot(bool force)
+    {
+        if (!IsServerAuthority) { return; }
+        if (!HasPreviewSubscribers()) { return; }
+        if (GameMain.NetworkMember?.IsServer != true) { return; }
+
+        string identifier = (SelectedSupplyIdentifierPreview ?? "").Trim();
+        int amount = Math.Max(0, SelectedSupplyAmountPreview);
+        bool changed = force ||
+                       !string.Equals(_lastPreviewBroadcastIdentifier ?? "", identifier, StringComparison.OrdinalIgnoreCase) ||
+                       _lastPreviewBroadcastAmount != amount;
+        if (!changed) { return; }
+
+        _lastPreviewBroadcastIdentifier = identifier;
+        _lastPreviewBroadcastAmount = amount;
+
+#if SERVER
+        try
+        {
+            item.CreateServerEvent(this);
+        }
+        catch (Exception ex)
+        {
+            if (ModFileLog.IsDebugEnabled)
+            {
+                ModFileLog.WriteDebug(
+                    "Restocker",
+                    $"{DatabaseIOTest.Constants.LogPrefix} preview snapshot sync deferred id={item?.ID}: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+#endif
     }
 
 #if CLIENT
@@ -351,10 +462,23 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
     {
         EnsurePreviewUiCreated();
         UpdateClientPreviewVisibility();
+        SyncPreviewClientSubscription(_previewVisible);
         if (!_previewVisible || _previewFrame == null) { return; }
 
         UpdateClientPreviewContent();
         QueuePreviewUi();
+    }
+
+    private void UpdateClientPreviewSubscriptionPassive()
+    {
+        if (!_previewSubscribed) { return; }
+
+        var controlled = Character.Controlled;
+        bool shouldShow = controlled != null &&
+                          (controlled.SelectedItem == item || controlled.SelectedSecondaryItem == item);
+        if (shouldShow) { return; }
+
+        SyncPreviewClientSubscription(false);
     }
 
     private void EnsurePreviewUiCreated()
@@ -389,6 +513,49 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
             "x0",
             textAlignment: Alignment.CenterRight);
         _previewAmountText.CanBeFocused = false;
+    }
+
+    private void SyncPreviewClientSubscription(bool shouldShow)
+    {
+        if (item == null || item.Removed)
+        {
+            _previewSubscribed = false;
+            _nextPreviewSubscribeHeartbeatAt = 0;
+            return;
+        }
+
+        if (GameMain.NetworkMember == null || !GameMain.NetworkMember.IsClient)
+        {
+            _previewSubscribed = false;
+            _nextPreviewSubscribeHeartbeatAt = 0;
+            return;
+        }
+
+        double now = Timing.TotalTime;
+        if (shouldShow)
+        {
+            if (!_previewSubscribed || now >= _nextPreviewSubscribeHeartbeatAt)
+            {
+                SendPreviewClientOp(PreviewNetOp.Subscribe);
+                _previewSubscribed = true;
+                _nextPreviewSubscribeHeartbeatAt = now + PreviewSubscribeHeartbeatSeconds;
+            }
+            return;
+        }
+
+        if (_previewSubscribed)
+        {
+            SendPreviewClientOp(PreviewNetOp.Unsubscribe);
+            _previewSubscribed = false;
+            _nextPreviewSubscribeHeartbeatAt = 0;
+        }
+    }
+
+    private void SendPreviewClientOp(PreviewNetOp op)
+    {
+        if (op == PreviewNetOp.None || item == null || item.Removed) { return; }
+        _pendingPreviewClientOp = (byte)op;
+        item.CreateClientEvent(this);
     }
 
     private void UpdateClientPreviewVisibility()
@@ -489,6 +656,62 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
         }
     }
 #endif
+
+    public void ClientEventWrite(IWriteMessage msg, NetEntityEvent.IData extraData = null)
+    {
+#if CLIENT
+        msg.WriteByte(_pendingPreviewClientOp);
+        _pendingPreviewClientOp = (byte)PreviewNetOp.None;
+#else
+        msg.WriteByte((byte)PreviewNetOp.None);
+#endif
+    }
+
+    public void ServerEventRead(IReadMessage msg, Client c)
+    {
+        if (!IsServerAuthority) { return; }
+        if (c == null) { return; }
+
+        var op = (PreviewNetOp)msg.ReadByte();
+        switch (op)
+        {
+            case PreviewNetOp.Subscribe:
+                bool isNewSubscriber = !_previewSubscribers.ContainsKey(c);
+                TouchPreviewSubscriber(c);
+                if (isNewSubscriber)
+                {
+                    TrySyncPreviewSnapshot(force: true);
+                }
+                break;
+            case PreviewNetOp.Unsubscribe:
+                RemovePreviewSubscriber(c);
+                break;
+            default:
+                break;
+        }
+    }
+
+    public void ServerEventWrite(IWriteMessage msg, Client c, NetEntityEvent.IData extraData = null)
+    {
+        msg.WriteByte((byte)PreviewNetOp.Snapshot);
+        msg.WriteString((SelectedSupplyIdentifierPreview ?? "").Trim());
+        msg.WriteInt32(Math.Max(0, SelectedSupplyAmountPreview));
+    }
+
+    public void ClientEventRead(IReadMessage msg, float sendingTime)
+    {
+        var op = (PreviewNetOp)msg.ReadByte();
+        if (op != PreviewNetOp.Snapshot) { return; }
+
+        SelectedSupplyIdentifierPreview = (msg.ReadString() ?? "").Trim();
+        SelectedSupplyAmountPreview = Math.Max(0, msg.ReadInt32());
+#if CLIENT
+        if (_previewVisible)
+        {
+            UpdateClientPreviewContent();
+        }
+#endif
+    }
 
     private void RebuildFilteredSupplyList()
     {
