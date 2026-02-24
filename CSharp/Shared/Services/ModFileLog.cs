@@ -212,8 +212,38 @@ namespace DatabaseIOTest.Services
 
         private static string GetRuntimeRole()
         {
-            if (GameMain.NetworkMember == null) { return "SP"; }
-            return GameMain.NetworkMember.IsServer ? "Server" : "Client";
+            try
+            {
+                if (GameMain.IsSingleplayer) { return "SP"; }
+            }
+            catch
+            {
+                // Ignore and continue probing.
+            }
+
+            try
+            {
+                PropertyInfo networkMemberProp = typeof(GameMain).GetProperty(
+                    "NetworkMember",
+                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                object networkMember = networkMemberProp?.GetValue(null);
+                if (networkMember == null) { return "SP"; }
+
+                PropertyInfo isServerProp = networkMember.GetType().GetProperty(
+                    "IsServer",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                object raw = isServerProp?.GetValue(networkMember);
+                if (raw is bool isServer)
+                {
+                    return isServer ? "Server" : "Client";
+                }
+            }
+            catch
+            {
+                // Ignore and fallback.
+            }
+
+            return "Client";
         }
 
         private static bool ResolveDebugEnabled(out string source)
