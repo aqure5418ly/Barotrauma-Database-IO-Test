@@ -58,6 +58,12 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
     [Serialize(0, IsPropertySaveable.No, description: "XML action request (1=Prev,2=Next).")]
     public int XmlActionRequest { get; set; } = 0;
 
+    [Serialize("", IsPropertySaveable.No, description: "Selected supply identifier preview for client UI.")]
+    public string SelectedSupplyIdentifierPreview { get; set; } = "";
+
+    [Serialize(0, IsPropertySaveable.No, description: "Selected supply amount preview for client UI.")]
+    public int SelectedSupplyAmountPreview { get; set; } = 0;
+
     private string _resolvedDatabaseId = DatabaseIOTest.Constants.DefaultDatabaseId;
     private double _lastPollTime;
     private double _lastDescriptionUpdateTime;
@@ -91,6 +97,30 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
 
     private bool IsServerAuthority => GameMain.NetworkMember == null || GameMain.NetworkMember.IsServer;
 
+#if CLIENT
+    private GUIFrame _previewFrame;
+    private GUIFrame _previewIconFrame;
+    private GUITextBlock _previewAmountText;
+    private bool _previewVisible;
+    private string _previewLastIdentifier = "__init__";
+    private int _previewLastAmount = int.MinValue;
+    private double _nextPreviewQueueWarnLogTime;
+
+    private static readonly MethodInfo PreviewAddToGuiUpdateListMethodWithOrder = typeof(GUIComponent).GetMethod(
+        "AddToGUIUpdateList",
+        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+        null,
+        new[] { typeof(bool), typeof(int) },
+        null);
+
+    private static readonly MethodInfo PreviewAddToGuiUpdateListMethodNoArgs = typeof(GUIComponent).GetMethod(
+        "AddToGUIUpdateList",
+        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+        null,
+        Type.EmptyTypes,
+        null);
+#endif
+
     private readonly struct TargetInventory
     {
         public readonly Inventory Inventory;
@@ -118,6 +148,7 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
         if (IsServerAuthority)
         {
             EnsureStoreWatcherRegistered();
+            RefreshSelectedSupplyPreviewData();
             UpdateDescription();
         }
     }
@@ -149,6 +180,7 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
         if (now - _lastDescriptionUpdateTime >= DescriptionUpdateInterval)
         {
             _lastDescriptionUpdateTime = now;
+            RefreshSelectedSupplyPreviewData();
             UpdateDescription();
         }
     }
@@ -180,6 +212,7 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
         }
 
         ClampSupplyIndex(list.Count);
+        RefreshSelectedSupplyPreviewData();
         UpdateDescription();
     }
 
@@ -219,6 +252,7 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
                 _supplySearchTextCache.Clear();
             }
             RebuildFilteredSupplyList();
+            RefreshSelectedSupplyPreviewData();
         }
 
         if (!string.Equals(_lastTargetIdentifiers, TargetIdentifiers ?? "", StringComparison.Ordinal))
@@ -283,6 +317,178 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
         int index = Math.Max(0, Math.Min(list.Count - 1, SupplyIndex));
         return list[index];
     }
+
+    private void RefreshSelectedSupplyPreviewData()
+    {
+        if (!IsServerAuthority) { return; }
+
+        string selectedIdentifier = (GetSelectedSupplyIdentifier() ?? "").Trim();
+        int selectedAmount = 0;
+        if (!string.IsNullOrWhiteSpace(selectedIdentifier))
+        {
+            selectedAmount = DatabaseStore.GetIdentifierAmount(_resolvedDatabaseId, selectedIdentifier);
+        }
+
+        selectedAmount = Math.Max(0, selectedAmount);
+        if (string.Equals(SelectedSupplyIdentifierPreview ?? "", selectedIdentifier, StringComparison.OrdinalIgnoreCase) &&
+            SelectedSupplyAmountPreview == selectedAmount)
+        {
+            return;
+        }
+
+        SelectedSupplyIdentifierPreview = selectedIdentifier;
+        SelectedSupplyAmountPreview = selectedAmount;
+    }
+
+#if CLIENT
+    internal bool DrawClientPreviewFromGuiHook(string source)
+    {
+        UpdateClientPreviewUi();
+        return _previewVisible;
+    }
+
+    private void UpdateClientPreviewUi()
+    {
+        EnsurePreviewUiCreated();
+        UpdateClientPreviewVisibility();
+        if (!_previewVisible || _previewFrame == null) { return; }
+
+        UpdateClientPreviewContent();
+        QueuePreviewUi();
+    }
+
+    private void EnsurePreviewUiCreated()
+    {
+        if (_previewFrame != null) { return; }
+        if (GUI.Canvas == null) { return; }
+
+        _previewFrame = new GUIFrame(
+            new RectTransform(new Microsoft.Xna.Framework.Vector2(0.11f, 0.18f), GUI.Canvas, Anchor.BottomLeft)
+            {
+                RelativeOffset = new Microsoft.Xna.Framework.Vector2(0.39f, 0.08f)
+            },
+            style: "ItemUI");
+        _previewFrame.Visible = false;
+        _previewFrame.Enabled = false;
+        _previewFrame.CanBeFocused = false;
+
+        var layout = new GUILayoutGroup(
+            new RectTransform(new Microsoft.Xna.Framework.Vector2(0.92f, 0.92f), _previewFrame.RectTransform, Anchor.Center),
+            isHorizontal: false)
+        {
+            AbsoluteSpacing = 2
+        };
+
+        _previewIconFrame = new GUIFrame(
+            new RectTransform(new Microsoft.Xna.Framework.Vector2(1f, 0.72f), layout.RectTransform),
+            style: "InnerFrameDark");
+        _previewIconFrame.CanBeFocused = false;
+
+        _previewAmountText = new GUITextBlock(
+            new RectTransform(new Microsoft.Xna.Framework.Vector2(1f, 0.28f), layout.RectTransform),
+            "x0",
+            textAlignment: Alignment.CenterRight);
+        _previewAmountText.CanBeFocused = false;
+    }
+
+    private void UpdateClientPreviewVisibility()
+    {
+        bool shouldShow = false;
+        if (item != null && !item.Removed)
+        {
+            var controlled = Character.Controlled;
+            if (controlled != null)
+            {
+                shouldShow = controlled.SelectedItem == item || controlled.SelectedSecondaryItem == item;
+            }
+        }
+
+        if (_previewVisible == shouldShow && _previewFrame != null) { return; }
+        _previewVisible = shouldShow;
+
+        if (_previewFrame != null)
+        {
+            _previewFrame.Visible = shouldShow;
+            _previewFrame.Enabled = shouldShow;
+        }
+    }
+
+    private static Sprite ResolvePreviewSprite(string identifier)
+    {
+        string id = (identifier ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(id)) { return null; }
+
+        var prefab = ItemPrefab.FindByIdentifier(id.ToIdentifier()) as ItemPrefab;
+        return prefab?.InventoryIcon ?? prefab?.Sprite;
+    }
+
+    private void UpdateClientPreviewContent()
+    {
+        if (_previewFrame == null || _previewIconFrame == null || _previewAmountText == null) { return; }
+
+        string identifier = (SelectedSupplyIdentifierPreview ?? "").Trim();
+        int amount = Math.Max(0, SelectedSupplyAmountPreview);
+        if (string.IsNullOrWhiteSpace(identifier))
+        {
+            amount = 0;
+        }
+
+        if (string.Equals(_previewLastIdentifier, identifier, StringComparison.OrdinalIgnoreCase) &&
+            _previewLastAmount == amount)
+        {
+            return;
+        }
+
+        _previewLastIdentifier = identifier;
+        _previewLastAmount = amount;
+
+        _previewIconFrame.ClearChildren();
+        Sprite icon = ResolvePreviewSprite(identifier);
+        if (icon != null)
+        {
+            var iconImage = new GUIImage(
+                new RectTransform(new Microsoft.Xna.Framework.Vector2(0.86f, 0.86f), _previewIconFrame.RectTransform, Anchor.Center),
+                icon,
+                scaleToFit: true);
+            iconImage.CanBeFocused = false;
+        }
+
+        _previewAmountText.Text = $"x{amount}";
+        _previewFrame.ToolTip = string.IsNullOrWhiteSpace(identifier)
+            ? T("dbiotest.restocker.nosupply", "Not configured")
+            : $"{identifier}\n{T("dbiotest.restocker.amount", "Amount")}: {amount}";
+    }
+
+    private void QueuePreviewUi()
+    {
+        if (_previewFrame == null) { return; }
+
+        MethodInfo method = PreviewAddToGuiUpdateListMethodWithOrder ?? PreviewAddToGuiUpdateListMethodNoArgs;
+        if (method == null) { return; }
+
+        try
+        {
+            if (ReferenceEquals(method, PreviewAddToGuiUpdateListMethodWithOrder))
+            {
+                method.Invoke(_previewFrame, new object[] { false, 2 });
+            }
+            else
+            {
+                method.Invoke(_previewFrame, null);
+            }
+        }
+        catch (Exception ex)
+        {
+            if (ModFileLog.IsDebugEnabled && Timing.TotalTime >= _nextPreviewQueueWarnLogTime)
+            {
+                _nextPreviewQueueWarnLogTime = Timing.TotalTime + 5.0;
+                ModFileLog.WriteDebug(
+                    "Restocker",
+                    $"{DatabaseIOTest.Constants.LogPrefix} restocker preview queue failed id={item?.ID}: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+    }
+#endif
 
     private void RebuildFilteredSupplyList()
     {
@@ -404,6 +610,7 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent
         }
 
         _lastIdentifierSnapshotVersion = delta.Version;
+        RefreshSelectedSupplyPreviewData();
         if (!changed) { return; }
 
         _cachedDatabaseIdentifiers = current

@@ -1171,6 +1171,21 @@ namespace DatabaseIOTest.Services
             return GetOrCreate(id).ItemCount;
         }
 
+        public static int GetIdentifierAmount(string databaseId, string identifier)
+        {
+            string id = Normalize(databaseId);
+            string key = (identifier ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(key)) { return 0; }
+
+            var db = GetOrCreate(id);
+            if (db.Items == null || db.Items.Count <= 0) { return 0; }
+
+            var amounts = BuildIdentifierAmountMap(db.Items);
+            return amounts.TryGetValue(key, out int amount)
+                ? Math.Max(0, amount)
+                : 0;
+        }
+
         public static void AppendItems(string databaseId, List<ItemData> items)
         {
             if (items == null || items.Count == 0) { return; }

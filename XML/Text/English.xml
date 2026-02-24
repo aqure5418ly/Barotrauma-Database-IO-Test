@@ -68,6 +68,8 @@
   <dbiotest.restocker.filter>Filter</dbiotest.restocker.filter>
   <dbiotest.restocker.prev>Prev</dbiotest.restocker.prev>
   <dbiotest.restocker.next>Next</dbiotest.restocker.next>
+  <dbiotest.restocker.preview>Preview</dbiotest.restocker.preview>
+  <dbiotest.restocker.amount>Amount</dbiotest.restocker.amount>
 
   <dbiotest.ui.title>Database Terminal</dbiotest.ui.title>
   <dbiotest.ui.search.tooltip>Search by item name or identifier.</dbiotest.ui.search.tooltip>

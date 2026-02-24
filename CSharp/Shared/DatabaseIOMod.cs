@@ -103,7 +103,8 @@ namespace DatabaseIOTest
                 {
                     typeof(DatabaseTerminalUiHijackPatch),
                     typeof(DatabaseTerminalContainerSilencePatch),
-                    typeof(DatabaseTerminalFixedHudPatch)
+                    typeof(DatabaseTerminalFixedHudPatch),
+                    typeof(DatabaseAutoRestockerPreviewPatch)
                 };
 
                 foreach (Type patchType in uiPatchTypes)
