@@ -70,8 +70,12 @@
   <dbiotest.restocker.filter>筛选</dbiotest.restocker.filter>
   <dbiotest.restocker.prev>上一个</dbiotest.restocker.prev>
   <dbiotest.restocker.next>下一个</dbiotest.restocker.next>
+  <dbiotest.restocker.toggle>启用 / 停用</dbiotest.restocker.toggle>
   <dbiotest.restocker.preview>预览</dbiotest.restocker.preview>
   <dbiotest.restocker.amount>数量</dbiotest.restocker.amount>
+  <dbiotest.restocker.enabled>状态</dbiotest.restocker.enabled>
+  <dbiotest.restocker.enabled.on>已启用</dbiotest.restocker.enabled.on>
+  <dbiotest.restocker.enabled.off>已停用</dbiotest.restocker.enabled.off>
 
   <dbiotest.ui.title>数据库终端</dbiotest.ui.title>
   <dbiotest.ui.search.tooltip>按物品名称或标识符搜索。</dbiotest.ui.search.tooltip>

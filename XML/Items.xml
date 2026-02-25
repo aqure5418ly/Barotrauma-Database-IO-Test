@@ -265,7 +265,7 @@
       <RequiredItem identifier="wrench" type="Equipped" />
     </Holdable>
     <CustomInterface canbeselected="true" allowuioverlap="true">
-      <GuiFrame relativesize="0.34,0.18" anchor="BottomLeft" relativeoffset="0.04,0.08" style="ItemUI" />
+      <GuiFrame relativesize="0.34,0.24" anchor="BottomLeft" relativeoffset="0.04,0.08" style="ItemUI" />
       <TextBox text="dbiotest.restocker.filter" propertyname="SupplyFilter" targetitemcomponent="DatabaseAutoRestockerComponent" maxtextlength="40" />
       <Button text="dbiotest.restocker.prev">
         <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseAutoRestockerComponent" xmlactionrequest="1" />
@@ -273,12 +273,17 @@
       <Button text="dbiotest.restocker.next">
         <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseAutoRestockerComponent" xmlactionrequest="2" />
       </Button>
+      <Button text="dbiotest.restocker.toggle">
+        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseAutoRestockerComponent" xmlactionrequest="3" />
+      </Button>
     </CustomInterface>
     <Powered minvoltage="0.5" powerconsumption="20" />
     <ConnectionPanel selectkey="Action" canbeselected="true" msg="ItemMsgRewireScrewdriver" hudpriority="10">
       <GuiFrame relativesize="0.22,0.28" minsize="380,320" maxsize="480,420" anchor="Center" style="ConnectionPanel" />
       <RequiredItem identifier="screwdriver" type="Equipped" />
       <input name="power_in" displayname="connection.powerin" />
+      <input name="toggle" displayname="connection.togglestate" />
+      <input name="set_state" displayname="connection.setstate" />
     </ConnectionPanel>
     <DatabaseAutoRestockerComponent
       databaseId="default"

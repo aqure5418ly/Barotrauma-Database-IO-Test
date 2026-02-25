@@ -68,8 +68,12 @@
   <dbiotest.restocker.filter>Filter</dbiotest.restocker.filter>
   <dbiotest.restocker.prev>Prev</dbiotest.restocker.prev>
   <dbiotest.restocker.next>Next</dbiotest.restocker.next>
+  <dbiotest.restocker.toggle>Enable / Disable</dbiotest.restocker.toggle>
   <dbiotest.restocker.preview>Preview</dbiotest.restocker.preview>
   <dbiotest.restocker.amount>Amount</dbiotest.restocker.amount>
+  <dbiotest.restocker.enabled>State</dbiotest.restocker.enabled>
+  <dbiotest.restocker.enabled.on>Enabled</dbiotest.restocker.enabled.on>
+  <dbiotest.restocker.enabled.off>Disabled</dbiotest.restocker.enabled.off>
 
   <dbiotest.ui.title>Database Terminal</dbiotest.ui.title>
   <dbiotest.ui.search.tooltip>Search by item name or identifier.</dbiotest.ui.search.tooltip>

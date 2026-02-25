@@ -1,35 +1,35 @@
-# Database IO Test (0.1.0)
+﻿# Database IO Test (0.3.9)
 
 ## Status
-- This is a **test build**.
-- Core gameplay logic is implemented in **C# (LuaCs)**.
-- There is **no active Lua UI** in this version.
-- The `Lua/` folder is currently kept only for future work and is effectively deprecated for runtime use.
+- Core gameplay logic and UI are implemented in **C# (LuaCs)**.
+- Terminal interaction is currently **C# UI + XML CustomInterface**.
+- Data model and interaction flow are still evolving.
 
 ## What This Mod Adds
-- `DatabaseInterface` (handheld) and `DatabaseInterfaceFixed` (wired machine)
-  - Ingests items and serializes them into a shared database.
-- `DatabaseTerminal` (handheld) and `DatabaseTerminalFixed` (wired machine)
-  - Session-based access to stored items.
-  - Paging, search, sort, compact actions via XML + C# logic.
+- `DatabaseStorageAnchor`
+  - Persistence anchor for shared database storage.
+- `DatabaseInterface` (handheld) and `DatabaseInterfaceFixed` (stationary)
+  - Ingest items and serialize them into the shared database.
+- `DatabaseTerminal` (handheld) and `DatabaseTerminalFixed` (stationary)
+  - Session-based access to database items.
+  - Paging, search, sort and compact actions via C# UI.
 - `DatabaseAutoRestocker`
   - Pulls configured items from database and refills linked targets.
 - Fabricator integration (`DB Fill` button via override)
   - Pulls recipe materials from database into fabricator input.
 
-## Important Notes
-- `filelist.xml` does not load Lua scripts for this mod.
-- Current UI behavior is XML CustomInterface + C# components only.
-- This is still an evolving data model.
+## Runtime Requirements
+- Install **LuaCsForBarotrauma**.
+- Open **LuaCs Settings** (top-right in game) and enable **Enable CSharp Scripting**.
+- Enable this mod in your content package list.
 
 ## Inspiration And References
-- Inspiration:
-  - Applied Energistics 2 (AE2): https://appliedenergistics.org/
-- Code/architecture references:
-  - Item IO Framework: https://steamcommunity.com/sharedfiles/filedetails/?id=2950383008&searchtext=item+io
-  - IO Storage: https://steamcommunity.com/sharedfiles/filedetails/?id=3646358075
+- Applied Energistics 2 (AE2): https://appliedenergistics.org/
+- Item IO Framework: https://steamcommunity.com/sharedfiles/filedetails/?id=2950383008
+- IO Storage: https://steamcommunity.com/sharedfiles/filedetails/?id=3646358075
+- UI reference Super Terminal: https://steamcommunity.com/sharedfiles/filedetails/?id=3670545214&searchtext=superterminal
 
-These projects were used as design/implementation references only. This mod is not affiliated with them.
+These projects are design/implementation references only. This mod is not affiliated with them.
 
 ## Save Compatibility Warning
 - Future updates may change internal database serialization format.
@@ -42,7 +42,3 @@ These projects were used as design/implementation references only. This mod is n
 3. Backup your save files.
 4. Update mod files.
 5. Re-test with a non-critical save first.
-
-## Requirements
-- Barotrauma with LuaCs enabled.
-- This package enabled in content packages.

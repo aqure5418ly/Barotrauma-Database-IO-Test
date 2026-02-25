@@ -14,7 +14,8 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent, IClientSeri
     {
         None = 0,
         PrevSupply = 1,
-        NextSupply = 2
+        NextSupply = 2,
+        ToggleEnabled = 3
     }
 
     private enum PreviewNetOp : byte
@@ -64,7 +65,10 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent, IClientSeri
     [Editable(MinValueFloat = 0.0f, MaxValueFloat = 10f), Serialize(0.5f, IsPropertySaveable.Yes, description: "Minimum voltage required when RequirePower=true.")]
     public float MinRequiredVoltage { get; set; } = 0.5f;
 
-    [Serialize(0, IsPropertySaveable.No, description: "XML action request (1=Prev,2=Next).")]
+    [Editable, Serialize(true, IsPropertySaveable.Yes, description: "Whether auto-restock logic is enabled.")]
+    public bool Enabled { get; set; } = true;
+
+    [Serialize(0, IsPropertySaveable.No, description: "XML action request (1=Prev,2=Next,3=ToggleEnabled).")]
     public int XmlActionRequest { get; set; } = 0;
 
     [Serialize("", IsPropertySaveable.No, description: "Selected supply identifier preview for client UI.")]
@@ -223,6 +227,28 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent, IClientSeri
         }
     }
 
+    public override void ReceiveSignal(Signal signal, Connection connection)
+    {
+        base.ReceiveSignal(signal, connection);
+        if (!IsServerAuthority) { return; }
+        if (connection == null) { return; }
+
+        string signalName = (connection.Name ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(signalName)) { return; }
+
+        if (signalName.Equals("toggle", StringComparison.OrdinalIgnoreCase))
+        {
+            SetEnabledState(!Enabled, "signal:toggle");
+            return;
+        }
+
+        if (!signalName.Equals("set_state", StringComparison.OrdinalIgnoreCase)) { return; }
+
+        bool? parsed = ParseSignalBoolean(ReadSignalText(signal));
+        if (!parsed.HasValue) { return; }
+        SetEnabledState(parsed.Value, "signal:set_state");
+    }
+
     private void ConsumeXmlActionRequest()
     {
         int request = XmlActionRequest;
@@ -233,12 +259,19 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent, IClientSeri
         {
             1 => RestockerAction.PrevSupply,
             2 => RestockerAction.NextSupply,
+            3 => RestockerAction.ToggleEnabled,
             _ => RestockerAction.None
         };
 
         if (action == RestockerAction.None) { return; }
         var list = GetFilteredSupplyList();
         if (list.Count == 0) { return; }
+
+        if (action == RestockerAction.ToggleEnabled)
+        {
+            SetEnabledState(!Enabled, "xml:toggle");
+            return;
+        }
 
         if (action == RestockerAction.PrevSupply)
         {
@@ -252,6 +285,77 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent, IClientSeri
         ClampSupplyIndex(list.Count);
         RefreshSelectedSupplyPreviewData();
         UpdateDescription();
+    }
+
+    private void SetEnabledState(bool nextState, string source)
+    {
+        if (Enabled == nextState) { return; }
+        Enabled = nextState;
+        UpdateDescription();
+
+        if (ModFileLog.IsDebugEnabled)
+        {
+            ModFileLog.WriteDebug(
+                "Restocker",
+                $"{DatabaseIOTest.Constants.LogPrefix} restocker enabled changed id={item?.ID} db='{_resolvedDatabaseId}' enabled={Enabled} source={source}");
+        }
+    }
+
+    private static bool? ParseSignalBoolean(string raw)
+    {
+        string token = (raw ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(token)) { return null; }
+
+        switch (token.ToLowerInvariant())
+        {
+            case "1":
+            case "true":
+            case "on":
+            case "yes":
+            case "enable":
+            case "enabled":
+                return true;
+            case "0":
+            case "false":
+            case "off":
+            case "no":
+            case "disable":
+            case "disabled":
+                return false;
+            default:
+                if (float.TryParse(token, out float numeric))
+                {
+                    return numeric > 0.0001f;
+                }
+                return null;
+        }
+    }
+
+    private static string ReadSignalText(Signal signal)
+    {
+        if (signal == null) { return ""; }
+        Type signalType = signal.GetType();
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+
+        var valueField = signalType.GetField("value", flags);
+        if (valueField?.GetValue(signal) is string fieldValue)
+        {
+            return fieldValue;
+        }
+
+        var valueProperty = signalType.GetProperty("value", flags);
+        if (valueProperty?.GetValue(signal) is string propertyValue)
+        {
+            return propertyValue;
+        }
+
+        var upperProperty = signalType.GetProperty("Value", flags);
+        if (upperProperty?.GetValue(signal) is string upperValue)
+        {
+            return upperValue;
+        }
+
+        return signal.ToString() ?? "";
     }
 
     private void RefreshParsedConfig()
@@ -929,6 +1033,8 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent, IClientSeri
 
     private void TryRestock(double now)
     {
+        if (!Enabled) { return; }
+
         if (!HasRequiredPower())
         {
             if (Timing.TotalTime >= _nextNoPowerLogTime)
@@ -1165,6 +1271,10 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent, IClientSeri
         string slotLabel = T("dbiotest.restocker.slots", "Slots");
         string filterLabel = T("dbiotest.restocker.filter", "Filter");
         string hint = T("dbiotest.restocker.hint", "Auto restock linked containers.");
+        string enabledLabel = T("dbiotest.restocker.enabled", "State");
+        string enabledText = Enabled
+            ? T("dbiotest.restocker.enabled.on", "Enabled")
+            : T("dbiotest.restocker.enabled.off", "Disabled");
         string supply = GetSelectedSupplyIdentifier();
         if (string.IsNullOrWhiteSpace(supply))
         {
@@ -1190,7 +1300,7 @@ public partial class DatabaseAutoRestockerComponent : ItemComponent, IClientSeri
             filterInfo = $"\n{filterLabel}: {SupplyFilter}";
         }
 
-        item.Description = $"{hint}\n\n{dbLabel}: {_resolvedDatabaseId}\n{supplyLabel}: {supply}{filterInfo}\n{targetLabel}: {targetCount}\n{slotLabel}: {slotText}{powerLine}";
+        item.Description = $"{hint}\n\n{dbLabel}: {_resolvedDatabaseId}\n{enabledLabel}: {enabledText}\n{supplyLabel}: {supply}{filterInfo}\n{targetLabel}: {targetCount}\n{slotLabel}: {slotText}{powerLine}";
     }
 
     private float GetCurrentVoltage()
