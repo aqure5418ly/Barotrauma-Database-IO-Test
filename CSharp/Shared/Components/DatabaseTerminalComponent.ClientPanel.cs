@@ -229,11 +229,46 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                     out condition);
             }
 
+            string variantKey = fields.Length > 6 ? (fields[6] ?? "").Trim() : "";
+            bool hasContained = false;
+            if (fields.Length > 7)
+            {
+                string containedRaw = (fields[7] ?? "").Trim();
+                hasContained = string.Equals(containedRaw, "1", StringComparison.Ordinal) ||
+                               string.Equals(containedRaw, "true", StringComparison.OrdinalIgnoreCase);
+            }
+
+            int variantQuality = quality;
+            if (fields.Length > 8)
+            {
+                int.TryParse(fields[8] ?? "0", out variantQuality);
+            }
+
+            float variantCondition = condition;
+            if (fields.Length > 9)
+            {
+                float.TryParse(
+                    fields[9] ?? "100",
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out variantCondition);
+            }
+
+            if (string.IsNullOrWhiteSpace(variantKey))
+            {
+                // Backward-compatible fallback for legacy 6-field payloads.
+                variantKey = $"legacy:{id.ToLowerInvariant()}|q={Math.Max(0, variantQuality)}|c={Math.Max(0f, variantCondition):0.00}|r={i}";
+            }
+
             rows.Add(new TerminalVirtualEntry
             {
                 Identifier = id,
                 PrefabIdentifier = string.IsNullOrWhiteSpace(prefabId) ? id : prefabId,
                 DisplayName = displayName,
+                VariantKey = variantKey,
+                HasContainedItems = hasContained,
+                VariantQuality = Math.Max(0, variantQuality),
+                VariantCondition = Math.Max(0f, variantCondition),
                 CategoryInt = ResolveCategoryForIdentifier(string.IsNullOrWhiteSpace(prefabId) ? id : prefabId),
                 Amount = Math.Max(0, amount),
                 BestQuality = Math.Max(0, quality),
@@ -282,12 +317,19 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                 string displayName = string.IsNullOrWhiteSpace(localizedDisplay)
                     ? (string.IsNullOrWhiteSpace(entry.DisplayName) ? identifier : entry.DisplayName.Trim())
                     : localizedDisplay;
+                string variantKey = string.IsNullOrWhiteSpace(entry.VariantKey)
+                    ? $"local:{identifier.ToLowerInvariant()}|q={Math.Max(0, entry.VariantQuality > 0 ? entry.VariantQuality : entry.BestQuality)}|c={Math.Max(0f, entry.VariantCondition > 0f ? entry.VariantCondition : entry.AverageCondition):0.00}|i={nextSnapshot.Count}"
+                    : entry.VariantKey.Trim();
 
                 nextSnapshot.Add(new TerminalVirtualEntry
                 {
                     Identifier = identifier,
                     PrefabIdentifier = prefabIdentifier,
                     DisplayName = displayName,
+                    VariantKey = variantKey,
+                    HasContainedItems = entry.HasContainedItems,
+                    VariantQuality = Math.Max(0, entry.VariantQuality > 0 ? entry.VariantQuality : entry.BestQuality),
+                    VariantCondition = Math.Max(0f, entry.VariantCondition > 0f ? entry.VariantCondition : entry.AverageCondition),
                     CategoryInt = ResolveCategoryForIdentifier(prefabIdentifier),
                     Amount = Math.Max(0, entry.Amount),
                     BestQuality = Math.Max(0, entry.BestQuality),
@@ -299,6 +341,9 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         nextSnapshot = nextSnapshot
             .OrderBy(entry => entry.DisplayName ?? entry.Identifier ?? "", StringComparer.OrdinalIgnoreCase)
             .ThenBy(entry => entry.Identifier ?? "", StringComparer.OrdinalIgnoreCase)
+            .ThenBy(entry => entry.VariantQuality)
+            .ThenBy(entry => entry.VariantCondition)
+            .ThenBy(entry => entry.VariantKey ?? "", StringComparer.Ordinal)
             .ToList();
 
         bool changed = !ArePanelEntryListsEqual(_panelEntrySnapshot, nextSnapshot);
@@ -326,6 +371,10 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             if (!string.Equals(a.Identifier ?? "", b.Identifier ?? "", StringComparison.OrdinalIgnoreCase)) { return false; }
             if (!string.Equals(a.PrefabIdentifier ?? "", b.PrefabIdentifier ?? "", StringComparison.OrdinalIgnoreCase)) { return false; }
             if (!string.Equals(a.DisplayName ?? "", b.DisplayName ?? "", StringComparison.Ordinal)) { return false; }
+            if (!string.Equals(a.VariantKey ?? "", b.VariantKey ?? "", StringComparison.Ordinal)) { return false; }
+            if (a.HasContainedItems != b.HasContainedItems) { return false; }
+            if (a.VariantQuality != b.VariantQuality) { return false; }
+            if (Math.Abs(a.VariantCondition - b.VariantCondition) > 0.001f) { return false; }
             if (a.CategoryInt != b.CategoryInt) { return false; }
             if (a.Amount != b.Amount) { return false; }
             if (a.BestQuality != b.BestQuality) { return false; }
@@ -377,6 +426,18 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (cmp == 0)
         {
             cmp = StringComparer.OrdinalIgnoreCase.Compare(left.Identifier ?? "", right.Identifier ?? "");
+        }
+        if (cmp == 0)
+        {
+            cmp = left.VariantQuality.CompareTo(right.VariantQuality);
+        }
+        if (cmp == 0)
+        {
+            cmp = left.VariantCondition.CompareTo(right.VariantCondition);
+        }
+        if (cmp == 0)
+        {
+            cmp = StringComparer.Ordinal.Compare(left.VariantKey ?? "", right.VariantKey ?? "");
         }
         if (_localSortDescending) { cmp = -cmp; }
         return cmp;
@@ -474,13 +535,18 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (entry == null) { return ""; }
         string displayName = entry.DisplayName ?? entry.Identifier ?? "";
         int amount = Math.Max(0, entry.Amount);
-        int quality = Math.Max(0, entry.BestQuality);
-        float condition = Math.Max(0f, entry.AverageCondition);
+        int quality = Math.Max(0, entry.VariantQuality > 0 ? entry.VariantQuality : entry.BestQuality);
+        float condition = Math.Max(0f, entry.VariantCondition > 0f ? entry.VariantCondition : entry.AverageCondition);
+        string hasContainedText = entry.HasContainedItems
+            ? T("dbiotest.panel.variant.contained.yes", "Yes")
+            : T("dbiotest.panel.variant.contained.no", "No");
         string secondaryHint = hasSecondaryClick
             ? T("dbiotest.panel.takehint.secondary", "Right click: take 1")
             : T("dbiotest.panel.takehint.shift", "Shift+Left: take 1");
 
         return $"{displayName}\n" +
+               $"{T("dbiotest.panel.variant.key", "Variant")}: {entry.VariantKey}\n" +
+               $"{T("dbiotest.panel.variant.contained", "Contained Items")}: {hasContainedText}\n" +
                $"{T("dbiotest.terminal.amount", "Amount")}: {amount}\n" +
                $"{T("dbiotest.terminal.quality", "Quality")}: {quality} | {T("dbiotest.terminal.condition", "Condition")}: {condition:0.#}%\n" +
                $"{T("dbiotest.panel.takehint.primary", "Left click: take a stack")} ({LeftClickTakeGroupCap} cap)\n" +
@@ -565,11 +631,27 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         amountLabel.TextColor = Color.White;
         amountLabel.CanBeFocused = false;
 
+        int variantQuality = Math.Max(0, entry.VariantQuality > 0 ? entry.VariantQuality : entry.BestQuality);
+        float variantCondition = Math.Max(0f, entry.VariantCondition > 0f ? entry.VariantCondition : entry.AverageCondition);
+        string variantBadge = $"Q{variantQuality}";
+        if (entry.HasContainedItems)
+        {
+            variantBadge += " C";
+        }
+        variantBadge += $" {MathF.Round(variantCondition)}%";
+        var badgeLabel = new GUITextBlock(
+            new RectTransform(new Vector2(0.95f, 0.24f), button.RectTransform, Anchor.TopLeft),
+            variantBadge,
+            font: GUIStyle.SmallFont,
+            textAlignment: Alignment.TopLeft);
+        badgeLabel.TextColor = Color.LightGray;
+        badgeLabel.CanBeFocused = false;
+
         bool hasSecondaryClick = TryBindSecondaryClick(
             button,
             (_, __) =>
             {
-                RequestPanelTakeByIdentifierClient(entry.Identifier, 1);
+                RequestPanelTakeByIdentifierClient(entry.Identifier, entry.VariantKey, 1);
                 return true;
             });
 
@@ -578,7 +660,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         button.OnClicked = (_, __) =>
         {
             int count = IsSingleTakeModifierPressed() ? 1 : ResolveTakeStackSize(entry.Identifier);
-            RequestPanelTakeByIdentifierClient(entry.Identifier, count);
+            RequestPanelTakeByIdentifierClient(entry.Identifier, entry.VariantKey, count);
             return true;
         };
     }
@@ -641,6 +723,10 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                 var entry = entries[i];
                 if (entry == null) { continue; }
                 hash = (hash * 31) + StringComparer.OrdinalIgnoreCase.GetHashCode(entry.Identifier ?? "");
+                hash = (hash * 31) + StringComparer.Ordinal.GetHashCode(entry.VariantKey ?? "");
+                hash = (hash * 31) + (entry.HasContainedItems ? 1 : 0);
+                hash = (hash * 31) + Math.Max(0, entry.VariantQuality);
+                hash = (hash * 31) + (int)MathF.Round(Math.Max(0f, entry.VariantCondition));
                 hash = (hash * 31) + Math.Max(0, entry.Amount);
                 hash = (hash * 31) + Math.Max(0, entry.BestQuality);
                 hash = (hash * 31) + (int)MathF.Round(Math.Max(0f, entry.AverageCondition));
@@ -705,13 +791,14 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         }
     }
 
-    private void RequestPanelTakeByIdentifierClient(string identifier, int count)
+    private void RequestPanelTakeByIdentifierClient(string identifier, string variantKey, int count)
     {
         if (string.IsNullOrWhiteSpace(identifier)) { return; }
+        string wantedVariantKey = (variantKey ?? "").Trim();
         int takeCount = Math.Max(1, count);
         if (Timing.TotalTime < _nextClientPanelActionAllowedTime)
         {
-            LogPanelDebug($"take blocked by cooldown identifier='{identifier}' count={takeCount}");
+            LogPanelDebug($"take blocked by cooldown identifier='{identifier}' variant='{wantedVariantKey}' count={takeCount}");
             return;
         }
         _nextClientPanelActionAllowedTime = Timing.TotalTime + PanelActionCooldownSeconds;
@@ -719,14 +806,14 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (IsServerAuthority)
         {
             Character actor = Character.Controlled ?? _sessionOwner;
-            string result = TryTakeByIdentifierCountFromVirtualSession(identifier, takeCount, actor);
+            string result = TryTakeByVariantKeyCountFromVirtualSession(identifier, wantedVariantKey, takeCount, actor);
             if (string.IsNullOrEmpty(result))
             {
-                LogPanelDebug($"take local success identifier='{identifier}' count={takeCount}");
+                LogPanelDebug($"take local success identifier='{identifier}' variant='{wantedVariantKey}' count={takeCount}");
             }
             else
             {
-                LogPanelDebug($"take local failed identifier='{identifier}' count={takeCount} reason='{result}'");
+                LogPanelDebug($"take local failed identifier='{identifier}' variant='{wantedVariantKey}' count={takeCount} reason='{result}'");
             }
             RefreshPanelEntrySnapshot(force: true);
             RefreshIconGrid(force: true);
@@ -736,8 +823,9 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         _pendingClientTakeIdentifier = identifier;
         _pendingClientTakeCount = takeCount;
+        _pendingClientTakeVariantKey = wantedVariantKey;
         _pendingClientAction = (byte)TerminalPanelAction.TakeByIdentifier;
-        LogPanelDebug($"take sent to server identifier='{identifier}' count={takeCount}");
+        LogPanelDebug($"take sent to server identifier='{identifier}' variant='{wantedVariantKey}' count={takeCount}");
         item.CreateClientEvent(this);
     }
 

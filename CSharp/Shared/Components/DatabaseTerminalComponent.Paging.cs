@@ -456,6 +456,66 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         return false;
     }
 
+    private bool TryExtractOneVirtualItemDataByVariantKey(string identifier, string variantKey, out ItemData extracted)
+    {
+        extracted = null;
+        string wantedIdentifier = (identifier ?? "").Trim();
+        string wantedVariant = (variantKey ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(wantedIdentifier)) { return false; }
+        if (string.IsNullOrWhiteSpace(wantedVariant)) { return false; }
+
+        var signatureOrdinal = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        for (int i = 0; i < _sessionEntries.Count; i++)
+        {
+            var entry = _sessionEntries[i];
+            if (entry == null) { continue; }
+
+            string id = (entry.Identifier ?? "").Trim();
+            if (!string.Equals(id, wantedIdentifier, StringComparison.OrdinalIgnoreCase)) { continue; }
+
+            string baseSignature = BuildVariantBaseSignature(entry);
+            int ordinal = 0;
+            if (signatureOrdinal.TryGetValue(baseSignature, out int currentOrdinal))
+            {
+                ordinal = currentOrdinal;
+            }
+            signatureOrdinal[baseSignature] = ordinal + 1;
+
+            string currentVariantKey = BuildVariantKey(baseSignature, ordinal);
+            if (!string.Equals(currentVariantKey, wantedVariant, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (entry.ContainedItems != null && entry.ContainedItems.Count > 0)
+            {
+                extracted = entry.Clone();
+                extracted.StackSize = 1;
+                _sessionEntries.RemoveAt(i);
+                return true;
+            }
+
+            int stackSize = Math.Max(1, entry.StackSize);
+            if (stackSize <= 1)
+            {
+                extracted = entry.Clone();
+                extracted.StackSize = 1;
+                _sessionEntries.RemoveAt(i);
+                return true;
+            }
+
+            extracted = ExtractStackPart(entry, 1);
+            if (entry.StackSize <= 0)
+            {
+                _sessionEntries.RemoveAt(i);
+            }
+            return extracted != null;
+        }
+
+        return false;
+    }
+
     private static int WrapPageIndex(int index, int count)
     {
         if (count <= 0) { return 0; }

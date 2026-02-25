@@ -74,6 +74,10 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         public string Identifier { get; set; } = "";
         public string PrefabIdentifier { get; set; } = "";
         public string DisplayName { get; set; } = "";
+        public string VariantKey { get; set; } = "";
+        public bool HasContainedItems { get; set; }
+        public int VariantQuality { get; set; }
+        public float VariantCondition { get; set; } = 100f;
         public int CategoryInt { get; set; }
         public int Amount { get; set; }
         public int BestQuality { get; set; }
@@ -227,6 +231,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private byte _pendingClientAction;
     private string _pendingClientTakeIdentifier = "";
     private int _pendingClientTakeCount = 1;
+    private string _pendingClientTakeVariantKey = "";
     private int _luaTakeRequestNonce;
     private int _lastProcessedLuaTakeRequestNonce;
     private bool _processingLuaTakeRequest;

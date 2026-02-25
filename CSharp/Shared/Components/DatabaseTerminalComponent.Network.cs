@@ -80,10 +80,12 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         {
             msg.WriteString(_pendingClientTakeIdentifier ?? "");
             msg.WriteByte((byte)Math.Clamp(_pendingClientTakeCount, 1, byte.MaxValue));
+            msg.WriteString(_pendingClientTakeVariantKey ?? "");
         }
         _pendingClientAction = (byte)TerminalPanelAction.None;
         _pendingClientTakeIdentifier = "";
         _pendingClientTakeCount = 1;
+        _pendingClientTakeVariantKey = "";
     }
 
     public void ServerEventRead(IReadMessage msg, Client c)
@@ -91,10 +93,19 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         var action = (TerminalPanelAction)msg.ReadByte();
         string takeIdentifier = "";
         int takeCount = 1;
+        string takeVariantKey = "";
         if (action == TerminalPanelAction.TakeByIdentifier)
         {
             takeIdentifier = (msg.ReadString() ?? "").Trim();
             takeCount = Math.Max(1, (int)msg.ReadByte());
+            try
+            {
+                takeVariantKey = (msg.ReadString() ?? "").Trim();
+            }
+            catch
+            {
+                takeVariantKey = "";
+            }
         }
         if (action == TerminalPanelAction.None) { return; }
         if (!SessionVariant && !_inPlaceSessionActive) { return; }
@@ -107,13 +118,13 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         if (action == TerminalPanelAction.TakeByIdentifier)
         {
-            string result = TryTakeByIdentifierCountFromVirtualSession(takeIdentifier, takeCount, actor);
+            string result = TryTakeByVariantKeyCountFromVirtualSession(takeIdentifier, takeVariantKey, takeCount, actor);
             if (!string.IsNullOrEmpty(result))
             {
                 ModFileLog.Write(
                     "Panel",
                     $"{Constants.LogPrefix} take request denied id={item?.ID} db='{_resolvedDatabaseId}' actor='{actor?.Name ?? "none"}' " +
-                    $"identifier='{takeIdentifier}' count={takeCount} reason='{result}'");
+                    $"identifier='{takeIdentifier}' variant='{takeVariantKey}' count={takeCount} reason='{result}'");
             }
             return;
         }

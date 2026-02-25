@@ -37,8 +37,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             return snapshot;
         }
 
-        var grouped = new Dictionary<string, TerminalVirtualEntry>(StringComparer.OrdinalIgnoreCase);
-        var conditionWeight = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var signatureOrdinal = new Dictionary<string, int>(StringComparer.Ordinal);
 
         foreach (var entry in _sessionEntries)
         {
@@ -47,31 +46,37 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             if (string.IsNullOrWhiteSpace(id)) { continue; }
 
             int amount = Math.Max(1, entry.StackSize);
-            if (!grouped.TryGetValue(id, out var row))
+            string baseSignature = BuildVariantBaseSignature(entry);
+            int ordinal = 0;
+            if (signatureOrdinal.TryGetValue(baseSignature, out int currentOrdinal))
             {
-                row = new TerminalVirtualEntry
-                {
-                    Identifier = id,
-                    PrefabIdentifier = id,
-                    DisplayName = ResolveDisplayNameForIdentifier(id),
-                    Amount = 0,
-                    BestQuality = 0,
-                    AverageCondition = 100f
-                };
-                grouped[id] = row;
-                conditionWeight[id] = 0;
+                ordinal = currentOrdinal;
             }
+            signatureOrdinal[baseSignature] = ordinal + 1;
+            bool hasContained = entry.ContainedItems != null && entry.ContainedItems.Count > 0;
 
-            row.Amount += amount;
-            row.BestQuality = Math.Max(row.BestQuality, entry.Quality);
-            int weight = conditionWeight[id] + amount;
-            float weighted = row.AverageCondition * conditionWeight[id] + entry.Condition * amount;
-            row.AverageCondition = weight <= 0 ? 100f : weighted / weight;
-            conditionWeight[id] = weight;
+            snapshot.Add(new TerminalVirtualEntry
+            {
+                Identifier = id,
+                PrefabIdentifier = id,
+                DisplayName = ResolveDisplayNameForIdentifier(id),
+                VariantKey = BuildVariantKey(baseSignature, ordinal),
+                HasContainedItems = hasContained,
+                VariantQuality = Math.Max(0, entry.Quality),
+                VariantCondition = Math.Max(0f, entry.Condition),
+                Amount = amount,
+                BestQuality = Math.Max(0, entry.Quality),
+                AverageCondition = Math.Max(0f, entry.Condition)
+            });
         }
 
-        snapshot.AddRange(grouped.Values
-            .OrderBy(v => v.Identifier ?? "", StringComparer.OrdinalIgnoreCase));
+        snapshot = snapshot
+            .OrderBy(v => v.DisplayName ?? v.Identifier ?? "", StringComparer.OrdinalIgnoreCase)
+            .ThenBy(v => v.Identifier ?? "", StringComparer.OrdinalIgnoreCase)
+            .ThenBy(v => v.VariantQuality)
+            .ThenBy(v => v.VariantCondition)
+            .ThenBy(v => v.VariantKey ?? "", StringComparer.Ordinal)
+            .ToList();
         if (ModFileLog.IsDebugEnabled && Timing.TotalTime >= _nextVirtualViewDiagAt)
         {
             _nextVirtualViewDiagAt = Timing.TotalTime + VirtualViewDiagCooldownSeconds;
@@ -155,6 +160,67 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         return taken > 0 ? "" : lastFailure;
     }
 
+    public string TryTakeByVariantKeyCountFromVirtualSession(string identifier, string variantKey, int count, Character actor)
+    {
+        if (string.IsNullOrWhiteSpace(variantKey))
+        {
+            return TryTakeByIdentifierCountFromVirtualSession(identifier, count, actor);
+        }
+
+        int remaining = Math.Clamp(count, 1, byte.MaxValue);
+        string lastFailure = "not_found";
+        int taken = 0;
+        while (remaining > 0)
+        {
+            string result = TryTakeOneByVariantKeyFromVirtualSession(identifier, variantKey, actor);
+            if (!string.IsNullOrEmpty(result))
+            {
+                lastFailure = result;
+                break;
+            }
+
+            taken++;
+            remaining--;
+        }
+
+        return taken > 0 ? "" : lastFailure;
+    }
+
+    private string TryTakeOneByVariantKeyFromVirtualSession(string identifier, string variantKey, Character actor)
+    {
+        if (!IsServerAuthority) { return "not_authority"; }
+        if (!IsSessionActive()) { return "session_closed"; }
+        if (actor == null || actor.Removed || actor.IsDead || actor.Inventory == null) { return "invalid_actor"; }
+
+        string wanted = (identifier ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(wanted)) { return "invalid_identifier"; }
+        string wantedVariant = (variantKey ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(wantedVariant)) { return "invalid_variant"; }
+
+        var inventory = GetTerminalInventory();
+        if (inventory == null) { return "inventory_unavailable"; }
+        if (!HasAnyEmptyBufferSlot(inventory)) { return "inventory_full"; }
+
+        if (!TryExtractOneVirtualItemDataByVariantKey(wanted, wantedVariant, out var extracted) || extracted == null)
+        {
+            return "not_found";
+        }
+
+        SpawnService.SpawnItemsIntoInventory(
+            new List<ItemData> { extracted },
+            inventory,
+            actor,
+            guard: () => IsSessionActive());
+
+        int preferredPage = _sessionCurrentPageIndex < 0 ? 0 : _sessionCurrentPageIndex;
+        BuildPagesBySlotUsage(_sessionEntries, inventory, preferredPage);
+        UpdateSummaryFromStore();
+        UpdateDescriptionLocal();
+        TrySyncSummary(force: true);
+        RefreshLuaB1BridgeState(force: true);
+        return "";
+    }
+
     private static Character FindCharacterByEntityId(int entityId)
     {
         if (entityId <= 0) { return null; }
@@ -174,6 +240,40 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             .Replace(LuaRowSeparator, ' ')
             .Replace('\r', ' ')
             .Replace('\n', ' ');
+    }
+
+    private static string BuildVariantKey(string baseSignature, int ordinal)
+    {
+        return $"{baseSignature}#{Math.Max(0, ordinal)}";
+    }
+
+    private static string BuildVariantBaseSignature(ItemData item)
+    {
+        if (item == null) { return "null"; }
+        string id = ((item.Identifier ?? "").Trim()).ToLowerInvariant();
+        int quality = Math.Max(0, item.Quality);
+        string condition = Math.Max(0f, item.Condition).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+        string contained = BuildContainedSignature(item);
+        // Keep variant key stable while amount changes during repeated take actions.
+        return $"{id}|q={quality}|c={condition}|sub={contained}";
+    }
+
+    private static string BuildContainedSignature(ItemData item)
+    {
+        if (item?.ContainedItems == null || item.ContainedItems.Count <= 0)
+        {
+            return "none";
+        }
+
+        var childSignatures = new List<string>(item.ContainedItems.Count);
+        foreach (var child in item.ContainedItems)
+        {
+            if (child == null) { continue; }
+            childSignatures.Add(BuildVariantBaseSignature(child));
+        }
+
+        childSignatures.Sort(StringComparer.Ordinal);
+        return string.Join(";", childSignatures);
     }
 
     private static string EncodeLuaB1Rows(IReadOnlyList<TerminalVirtualEntry> rows)
@@ -198,6 +298,14 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             builder.Append(Math.Max(0, row.BestQuality));
             builder.Append(LuaFieldSeparator);
             builder.Append(row.AverageCondition.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture));
+            builder.Append(LuaFieldSeparator);
+            builder.Append(SanitizeLuaBridgeField(row.VariantKey ?? ""));
+            builder.Append(LuaFieldSeparator);
+            builder.Append(row.HasContainedItems ? "1" : "0");
+            builder.Append(LuaFieldSeparator);
+            builder.Append(Math.Max(0, row.VariantQuality));
+            builder.Append(LuaFieldSeparator);
+            builder.Append(Math.Max(0f, row.VariantCondition).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture));
         }
 
         return builder.ToString();
@@ -205,8 +313,8 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     private List<TerminalVirtualEntry> BuildLuaB1Rows()
     {
-        var grouped = new Dictionary<string, TerminalVirtualEntry>(StringComparer.OrdinalIgnoreCase);
-        var conditionWeight = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var rows = new List<TerminalVirtualEntry>();
+        var signatureOrdinal = new Dictionary<string, int>(StringComparer.Ordinal);
 
         foreach (var entry in _sessionEntries)
         {
@@ -215,31 +323,35 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             if (string.IsNullOrWhiteSpace(id)) { continue; }
 
             int amount = Math.Max(1, entry.StackSize);
-            if (!grouped.TryGetValue(id, out var row))
+            string baseSignature = BuildVariantBaseSignature(entry);
+            int ordinal = 0;
+            if (signatureOrdinal.TryGetValue(baseSignature, out int currentOrdinal))
             {
-                row = new TerminalVirtualEntry
-                {
-                    Identifier = id,
-                    PrefabIdentifier = id,
-                    DisplayName = id,
-                    Amount = 0,
-                    BestQuality = 0,
-                    AverageCondition = 100f
-                };
-                grouped[id] = row;
-                conditionWeight[id] = 0;
+                ordinal = currentOrdinal;
             }
+            signatureOrdinal[baseSignature] = ordinal + 1;
+            bool hasContained = entry.ContainedItems != null && entry.ContainedItems.Count > 0;
 
-            row.Amount += amount;
-            row.BestQuality = Math.Max(row.BestQuality, entry.Quality);
-            int weight = conditionWeight[id] + amount;
-            float weighted = row.AverageCondition * conditionWeight[id] + entry.Condition * amount;
-            row.AverageCondition = weight <= 0 ? 100f : weighted / weight;
-            conditionWeight[id] = weight;
+            rows.Add(new TerminalVirtualEntry
+            {
+                Identifier = id,
+                PrefabIdentifier = id,
+                DisplayName = id,
+                VariantKey = BuildVariantKey(baseSignature, ordinal),
+                HasContainedItems = hasContained,
+                VariantQuality = Math.Max(0, entry.Quality),
+                VariantCondition = Math.Max(0f, entry.Condition),
+                Amount = amount,
+                BestQuality = Math.Max(0, entry.Quality),
+                AverageCondition = Math.Max(0f, entry.Condition)
+            });
         }
 
-        return grouped.Values
+        return rows
             .OrderBy(v => v.Identifier ?? "", StringComparer.OrdinalIgnoreCase)
+            .ThenBy(v => v.VariantQuality)
+            .ThenBy(v => v.VariantCondition)
+            .ThenBy(v => v.VariantKey ?? "", StringComparer.Ordinal)
             .ToList();
     }
 
