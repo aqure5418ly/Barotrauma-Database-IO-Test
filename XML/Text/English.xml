@@ -3,7 +3,7 @@
   <entityname.DatabaseInterface>Database Interface</entityname.DatabaseInterface>
   <entitydescription.DatabaseInterface>Drop items into the slot to ingest them into the database.</entitydescription.DatabaseInterface>
   <entityname.DatabaseTerminal>Database Terminal</entityname.DatabaseTerminal>
-  <entitydescription.DatabaseTerminal>Use to open or close a database session.</entitydescription.DatabaseTerminal>
+  <entitydescription.DatabaseTerminal>Browse database items and route extracted items to terminal output buffer.</entitydescription.DatabaseTerminal>
   <entityname.DatabaseInterfaceFixed>Database Interface (Fixed)</entityname.DatabaseInterfaceFixed>
   <entitydescription.DatabaseInterfaceFixed>Stationary powered interface for early/mid game database ingest.</entitydescription.DatabaseInterfaceFixed>
   <entityname.DatabaseTerminalFixed>Database Terminal (Fixed)</entityname.DatabaseTerminalFixed>
@@ -17,8 +17,8 @@
   <dbiotest.interface.count>Stored Item Count</dbiotest.interface.count>
   <dbiotest.interface.dbid>Database ID</dbiotest.interface.dbid>
 
-  <dbiotest.terminal.closedhint>Use to open database session and populate container.</dbiotest.terminal.closedhint>
-  <dbiotest.terminal.openhint>Session active. Use panel buttons to switch pages or close session.</dbiotest.terminal.openhint>
+  <dbiotest.terminal.closedhint>Use terminal panel to browse and extract items.</dbiotest.terminal.closedhint>
+  <dbiotest.terminal.openhint>Atomic mode active. All reads/writes are server-authoritative.</dbiotest.terminal.openhint>
   <dbiotest.terminal.dbid>Database ID</dbiotest.terminal.dbid>
   <dbiotest.terminal.count>Stored Item Count</dbiotest.terminal.count>
   <dbiotest.terminal.entries>Entries</dbiotest.terminal.entries>
@@ -28,10 +28,8 @@
   <dbiotest.terminal.amount>Amount</dbiotest.terminal.amount>
   <dbiotest.terminal.quality>Quality</dbiotest.terminal.quality>
   <dbiotest.terminal.condition>Condition</dbiotest.terminal.condition>
-  <dbiotest.terminal.locked>Locked by another terminal session.</dbiotest.terminal.locked>
-  <dbiotest.terminal.closed>Session closed.</dbiotest.terminal.closed>
-  <dbiotest.btn.open>Open</dbiotest.btn.open>
-  <dbiotest.btn.force>Force</dbiotest.btn.force>
+  <dbiotest.terminal.locked>Session lock disabled in atomic mode.</dbiotest.terminal.locked>
+  <dbiotest.terminal.closed>Legacy session closed state.</dbiotest.terminal.closed>
   <dbiotest.btn.prev>Prev</dbiotest.btn.prev>
   <dbiotest.btn.next>Next</dbiotest.btn.next>
   <dbiotest.btn.findprev>FindPrev</dbiotest.btn.findprev>
@@ -39,7 +37,6 @@
   <dbiotest.btn.sort>Sort</dbiotest.btn.sort>
   <dbiotest.btn.dir>Dir</dbiotest.btn.dir>
   <dbiotest.btn.compact>Compact</dbiotest.btn.compact>
-  <dbiotest.btn.close>Close</dbiotest.btn.close>
   <dbiotest.power.status>Power</dbiotest.power.status>
   <dbiotest.power.online>Online</dbiotest.power.online>
   <dbiotest.power.offline>Offline</dbiotest.power.offline>
@@ -51,7 +48,7 @@
   <dbiotest.panel.takehint.primary>Left click: take a stack</dbiotest.panel.takehint.primary>
   <dbiotest.panel.takehint.secondary>Right click: take 1</dbiotest.panel.takehint.secondary>
   <dbiotest.panel.takehint.shift>Shift+Left: take 1</dbiotest.panel.takehint.shift>
-  <dbiotest.panel.closedhint>Session closed. Use Open button on terminal.</dbiotest.panel.closedhint>
+  <dbiotest.panel.closedhint>Panel hidden.</dbiotest.panel.closedhint>
   <dbiotest.panel.bufferhint>Buffer</dbiotest.panel.bufferhint>
   <dbiotest.panel.bufferunavailable>Buffer unavailable</dbiotest.panel.bufferunavailable>
   <dbiotest.anchor.hint>Persistent in-save storage anchor for database data.</dbiotest.anchor.hint>
@@ -79,7 +76,7 @@
   <dbiotest.ui.search.tooltip>Search by item name or identifier.</dbiotest.ui.search.tooltip>
   <dbiotest.ui.refresh>Refresh</dbiotest.ui.refresh>
   <dbiotest.ui.footer>Left-click an icon to spawn one item into terminal buffer.</dbiotest.ui.footer>
-  <dbiotest.ui.empty>No items in this session.</dbiotest.ui.empty>
+  <dbiotest.ui.empty>No items.</dbiotest.ui.empty>
 
   <dbiotest.ui.sort.nameasc>Name A-Z</dbiotest.ui.sort.nameasc>
   <dbiotest.ui.sort.namedesc>Name Z-A</dbiotest.ui.sort.namedesc>

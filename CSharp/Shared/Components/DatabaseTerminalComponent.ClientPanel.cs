@@ -73,7 +73,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             return;
         }
 
-        bool shouldEnableXmlPanel = !_cachedSessionOpen;
+        bool shouldEnableXmlPanel = false;
         if (_fixedXmlControlPanel.IsActive != shouldEnableXmlPanel)
         {
             _fixedXmlControlPanel.IsActive = shouldEnableXmlPanel;
@@ -104,7 +104,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         bool sessionActive = IsSessionActive();
         string signature =
             $"id={item?.ID}|{phase}|ctrl={controlledId}|sel={isSelected}|inv={isInControlledInventory}|near={isNearby}|show={shouldShow}|dist={distance:0.0}" +
-            $"|cachedOpen={_cachedSessionOpen}|sessionActive={sessionActive}|inPlace={UseInPlaceSession}|sessionVariant={SessionVariant}" +
+            $"|cachedOpen={_cachedSessionOpen}|sessionActive={sessionActive}|inPlace={UseInPlaceSession}" +
             $"|focus={focusOwner}|focusRemain={focusRemaining:0.00}|panel={panelVisible}/{panelEnabled}|sid={selectedId}|ssid={selectedSecondaryId}";
         if (signature == _lastPanelEvalSignature && Timing.TotalTime < _nextPanelEvalLogAllowedTime) { return; }
 
@@ -656,7 +656,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             });
 
         button.ToolTip = BuildItemTooltip(entry, hasSecondaryClick);
-        button.Enabled = _cachedSessionOpen && Math.Max(0, entry.Amount) > 0;
+        button.Enabled = Math.Max(0, entry.Amount) > 0;
         button.OnClicked = (_, __) =>
         {
             int count = IsSingleTakeModifierPressed() ? 1 : ResolveTakeStackSize(entry.Identifier);
@@ -805,7 +805,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         if (IsServerAuthority)
         {
-            Character actor = Character.Controlled ?? _sessionOwner;
+            Character actor = Character.Controlled;
             string result = TryTakeByVariantKeyCountFromVirtualSession(identifier, wantedVariantKey, takeCount, actor);
             if (string.IsNullOrEmpty(result))
             {
@@ -862,7 +862,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                 ? "rect=(null)"
                 : $"rect=({_panelFrame.Rect.X},{_panelFrame.Rect.Y},{_panelFrame.Rect.Width},{_panelFrame.Rect.Height})";
             LogPanelDebug(
-                $"panel {(visible ? "show" : "hide")} id={item?.ID} reason={reason} sessionVariant={SessionVariant} " +
+                $"panel {(visible ? "show" : "hide")} id={item?.ID} reason={reason} " +
                 $"summaryOpen={_cachedSessionOpen} page={Math.Max(1, _cachedPageIndex)}/{Math.Max(1, _cachedPageTotal)} " +
                 $"state={prevFrameVisible}/{prevFrameEnabled}->{currentFrameVisible}/{currentFrameEnabled} " +
                 $"selected={selectedId}/{selectedSecondaryId} focus={focusOwner} focusRemain={focusRemaining:0.00} {rectInfo}");
@@ -923,7 +923,9 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         _panelCloseButton = new GUIButton(new RectTransform(new Vector2(0.18f, 1f), topBar.RectTransform), T("dbiotest.panel.close", "Close"));
         _panelCloseButton.OnClicked = (_, __) =>
         {
-            RequestPanelActionClient(TerminalPanelAction.CloseSession);
+            _panelManualHideUntil = Timing.TotalTime + 1.0;
+            ReleaseClientPanelFocusIfOwned("manual close");
+            SetPanelVisible(false, "manual close");
             return true;
         };
 
@@ -1103,8 +1105,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         bool shouldShow = false;
         float distance = -1f;
 
-        bool panelCandidate = SessionVariant || UseInPlaceSession;
-        if (item == null || item.Removed || !panelCandidate)
+        if (item == null || item.Removed)
         {
             LogPanelEval("skip:candidate", controlled, isSelected, isInControlledInventory, isNearby, shouldShow, distance);
             ReleaseClientPanelFocusIfOwned("invalid item or unsupported panel mode");
@@ -1112,12 +1113,11 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             return;
         }
 
-        if (UseInPlaceSession && !SessionVariant && !_cachedSessionOpen)
+        if (Timing.TotalTime < _panelManualHideUntil)
         {
             controlled = Character.Controlled;
-            LogPanelEval("hide:closed_inplace", controlled, isSelected, isInControlledInventory, isNearby, shouldShow, distance);
-            ReleaseClientPanelFocusIfOwned("in-place session closed");
-            SetPanelVisible(false, "in-place session closed");
+            LogPanelEval("hide:manual", controlled, isSelected, isInControlledInventory, isNearby, shouldShow, distance);
+            SetPanelVisible(false, "manual hide cooldown");
             return;
         }
 
@@ -1135,17 +1135,13 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         float distanceSq = Vector2.DistanceSquared(controlled.WorldPosition, item.WorldPosition);
         distance = (float)Math.Sqrt(Math.Max(0f, distanceSq));
         isNearby = distanceSq <= PanelInteractionRange * PanelInteractionRange;
-        if (UseInPlaceSession)
+        if (IsFixedTerminal)
         {
-            shouldShow = _cachedSessionOpen && (isSelected || isNearby);
-        }
-        else if (SessionVariant)
-        {
-            shouldShow = _cachedSessionOpen && (isSelected || isInControlledInventory);
+            shouldShow = isSelected || isNearby;
         }
         else
         {
-            shouldShow = isSelected;
+            shouldShow = isSelected || isInControlledInventory;
         }
         if (!shouldShow)
         {
@@ -1246,19 +1242,16 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         if (_panelCloseButton != null)
         {
-            _panelCloseButton.Enabled = _cachedSessionOpen;
+            _panelCloseButton.Enabled = true;
         }
 
         if (_panelStatusText != null)
         {
-            _panelStatusText.Text = _cachedSessionOpen
-                ? T("dbiotest.panel.takehint", "Left click takes a stack. Right click (or Shift+Left) takes 1.")
-                : T("dbiotest.panel.closedhint", "Session closed. Use Open button on terminal.");
+            _panelStatusText.Text = T("dbiotest.panel.takehint", "Left click takes a stack. Right click (or Shift+Left) takes 1.");
         }
 
         UpdatePanelBufferVisuals();
-        // Always call RefreshIconGrid — the internal signature check handles dedup.
-        // This ensures the grid rebuilds when _cachedSessionOpen changes (buttons enabled state).
+        // Always call RefreshIconGrid - the internal signature check handles dedup.
         RefreshIconGrid(force: snapshotChanged);
     }
 
@@ -1284,30 +1277,6 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         }
     }
 
-    private void RequestPanelActionClient(TerminalPanelAction action)
-    {
-        if (action == TerminalPanelAction.None) { return; }
-        if (Timing.TotalTime < _nextClientPanelActionAllowedTime)
-        {
-            LogPanelDebug($"action blocked by cooldown: {action}");
-            return;
-        }
-        _nextClientPanelActionAllowedTime = Timing.TotalTime + PanelActionCooldownSeconds;
-        LogPanelDebug(
-            $"action requested: {action} source=cs_panel id={item?.ID} db='{_resolvedDatabaseId}' " +
-            $"cachedOpen={_cachedSessionOpen} sessionActive={IsSessionActive()} inPlace={UseInPlaceSession} sessionVariant={SessionVariant}");
-
-        if (IsServerAuthority)
-        {
-            LogPanelDebug($"action handled locally as server: {action} source=cs_panel");
-            HandlePanelActionServer(action, Character.Controlled, "cs_panel_local");
-            return;
-        }
-
-        _pendingClientAction = (byte)action;
-        LogPanelDebug($"action sent to server event: {action} source=cs_panel");
-        item.CreateClientEvent(this);
-    }
 #endif
 }
 

@@ -49,15 +49,33 @@
     </Fabricate>
     <Body width="64" height="88" density="20" />
     <Holdable slots="Any,RightHand,LeftHand" msg="ItemMsgPickUpUse" pickkey="Use" />
+    <ItemContainer
+      opentopped="true"
+      capacity="0"
+      maxstacksize="1"
+      ExtraStackSize="63"
+      slotsperrow="5"
+      canbeselected="true"
+      hideitems="false"
+      keepopenwhenequipped="true"
+      movableframe="true"
+      allowuioverlap="true">
+      <GuiFrame relativesize="0.34,0.20" anchor="Center" style="ItemUI" />
+      <SubContainer capacity="5" slotsperrow="5" maxstacksize="63">
+        <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
+      </SubContainer>
+      <SubContainer capacity="5" slotsperrow="5" maxstacksize="63">
+        <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
+      </SubContainer>
+    </ItemContainer>
     <DatabaseTerminalComponent
       databaseId="default"
-      terminalSessionTimeout="180"
-      terminalPageSize="20"
-      sessionVariant="false"
-      openSessionIdentifier="DatabaseTerminalSession"
-      closedTerminalIdentifier="DatabaseTerminal" />
+      requirePower="false"
+      minRequiredVoltage="0.5" />
   </Item>
 
+  <!-- Legacy compatibility item for old saves.
+       Behavior is identical to DatabaseTerminal (atomic/no-session). -->
   <Item
     identifier="DatabaseTerminalSession"
     category="Equipment"
@@ -84,17 +102,17 @@
       movableframe="true"
       allowuioverlap="true">
       <GuiFrame relativesize="0.34,0.20" anchor="Center" style="ItemUI" />
-      <SubContainer capacity="10" slotsperrow="5" maxstacksize="63">
+      <SubContainer capacity="5" slotsperrow="5" maxstacksize="63">
+        <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
+      </SubContainer>
+      <SubContainer capacity="5" slotsperrow="5" maxstacksize="63">
         <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
       </SubContainer>
     </ItemContainer>
     <DatabaseTerminalComponent
       databaseId="default"
-      terminalSessionTimeout="180"
-      terminalPageSize="20"
-      sessionVariant="true"
-      openSessionIdentifier="DatabaseTerminalSession"
-      closedTerminalIdentifier="DatabaseTerminal" />
+      requirePower="false"
+      minRequiredVoltage="0.5" />
   </Item>
 
   <Item
@@ -174,7 +192,10 @@
       movableframe="true"
       allowuioverlap="true">
       <GuiFrame relativesize="0.24,0.17" relativeoffset="0.02,0.05" anchor="Center" style="ItemUI" />
-      <SubContainer capacity="10" slotsperrow="5" maxstacksize="63">
+      <SubContainer capacity="5" slotsperrow="5" maxstacksize="63">
+        <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
+      </SubContainer>
+      <SubContainer capacity="5" slotsperrow="5" maxstacksize="63">
         <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
       </SubContainer>
     </ItemContainer>
@@ -184,18 +205,6 @@
     <Terminal canbeselected="true" msg="ItemMsgInteractSelect" AllowInGameEditing="false">
       <GuiFrame relativesize="0.6,0.8" anchor="Center" style="ItemUI" />
     </Terminal>
-    <CustomInterface canbeselected="true" allowuioverlap="true">
-      <GuiFrame relativesize="0.30,0.22" anchor="BottomLeft" relativeoffset="0.04,0.08" style="ItemUI" />
-      <Button text="dbiotest.btn.open">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="4" />
-      </Button>
-      <Button text="dbiotest.btn.force">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="5" />
-      </Button>
-      <Button text="dbiotest.btn.close">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="3" />
-      </Button>
-    </CustomInterface>
     <Powered minvoltage="0.5" powerconsumption="30" />
     <ConnectionPanel selectkey="Action" canbeselected="true" msg="ItemMsgRewireScrewdriver" hudpriority="10">
       <GuiFrame relativesize="0.22,0.28" minsize="380,320" maxsize="480,420" anchor="Center" style="ConnectionPanel" />
@@ -205,14 +214,9 @@
     </ConnectionPanel>
     <DatabaseTerminalComponent
       databaseId="default"
-      terminalSessionTimeout="180"
-      terminalPageSize="20"
-      sessionVariant="false"
       useInPlaceSession="true"
       requirePower="false"
-      minRequiredVoltage="0.5"
-      openSessionIdentifier="DatabaseTerminalFixed"
-      closedTerminalIdentifier="DatabaseTerminalFixed" />
+      minRequiredVoltage="0.5" />
   </Item>
 
 

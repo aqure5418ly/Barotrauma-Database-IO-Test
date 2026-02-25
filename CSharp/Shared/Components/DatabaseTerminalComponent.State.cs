@@ -87,29 +87,14 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     [Editable, Serialize(Constants.DefaultDatabaseId, IsPropertySaveable.Yes, description: "Shared database id.")]
     public string DatabaseId { get; set; } = Constants.DefaultDatabaseId;
 
-    [Editable(MinValueFloat = 5f, MaxValueFloat = 3600f), Serialize(Constants.DefaultTerminalSessionTimeout, IsPropertySaveable.Yes, description: "Session timeout in seconds.")]
-    public float TerminalSessionTimeout { get; set; } = Constants.DefaultTerminalSessionTimeout;
-
     [Editable, Serialize(false, IsPropertySaveable.Yes, description: "Require incoming electrical power to operate.")]
     public bool RequirePower { get; set; } = false;
 
     [Editable(MinValueFloat = 0.0f, MaxValueFloat = 10f), Serialize(0.5f, IsPropertySaveable.Yes, description: "Minimum voltage required when RequirePower=true.")]
     public float MinRequiredVoltage { get; set; } = 0.5f;
 
-    [Editable(MinValueInt = 8, MaxValueInt = 512), Serialize(20, IsPropertySaveable.Yes, description: "Max top-level entries loaded per page.")]
-    public int TerminalPageSize { get; set; } = 20;
-
-    [Editable, Serialize(false, IsPropertySaveable.Yes, description: "Whether this item is the open session variant.")]
-    public bool SessionVariant { get; set; } = false;
-
     [Editable, Serialize(false, IsPropertySaveable.Yes, description: "Keep session in-place without swapping item identifier.")]
     public bool UseInPlaceSession { get; set; } = false;
-
-    [Editable, Serialize("DatabaseTerminalSession", IsPropertySaveable.Yes, description: "Open session terminal identifier.")]
-    public string OpenSessionIdentifier { get; set; } = "DatabaseTerminalSession";
-
-    [Editable, Serialize("DatabaseTerminal", IsPropertySaveable.Yes, description: "Closed terminal identifier.")]
-    public string ClosedTerminalIdentifier { get; set; } = "DatabaseTerminal";
 
     [Editable, Serialize("", IsPropertySaveable.Yes, description: "Persisted shared database encoded string.")]
     public string SerializedDatabase { get; set; } = "";
@@ -117,7 +102,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     [Editable, Serialize(0, IsPropertySaveable.Yes, description: "Persisted database version.")]
     public int DatabaseVersion { get; set; } = 0;
 
-    [Serialize(0, IsPropertySaveable.No, description: "XML button action request (1=Prev,2=Next,3=Close,4=Open,5=ForceOpen,6=PrevMatch,7=NextMatch,8=SortMode,9=SortOrder,10=Compact).")]
+    [Serialize(0, IsPropertySaveable.No, description: "XML button action request (1=Prev,2=Next,8=SortMode,9=SortOrder).")]
     public int XmlActionRequest { get; set; } = 0;
 
     [Editable, Serialize("", IsPropertySaveable.Yes, description: "Search keyword for page jump by identifier.")]
@@ -174,33 +159,8 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     public string LuaTakeResultCode { get; set; } = "";
 
     private string _resolvedDatabaseId = Constants.DefaultDatabaseId;
-    private Character _sessionOwner;
-    private double _sessionOpenedAt;
     private readonly double _creationTime;
     private double _lastTickTime;
-    private double _nextToggleAllowedTime;
-    private double _nextPanelActionAllowedTime;
-    private double _nextNoPowerLogTime;
-    private bool _inPlaceSessionActive;
-    private int _pendingTakeoverRequesterId = -1;
-    private double _pendingTakeoverUntil;
-    private double _currentPageLoadedAt;
-
-    // Source-of-truth entries for this terminal session.
-    private readonly List<ItemData> _sessionEntries = new List<ItemData>();
-    // View indices into _sessionEntries used for sorting/paging.
-    private readonly List<int> _viewIndices = new List<int>();
-    // Materialized pages for UI/container load.
-    private readonly List<List<ItemData>> _sessionPages = new List<List<ItemData>>();
-    // For each materialized page, track corresponding source indices in _sessionEntries.
-    private readonly List<List<int>> _sessionPageSourceIndices = new List<List<int>>();
-    // identifier -> searchable text (identifier + localized names)
-    private readonly Dictionary<string, string> _searchTextCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-    private int _sessionCurrentPageIndex = -1;
-    private int _sessionTotalEntryCount;
-    private int _pageLoadGeneration;
-    private int _sessionAutomationConsumedCount;
-    private bool _sessionWritebackCommitted;
 
     private int _cachedItemCount;
     private bool _cachedLocked;
@@ -211,13 +171,6 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     private bool _pendingSummarySync;
     private double _nextPendingSummarySyncAt;
-
-    private int _pendingPageFillCheckGeneration = -1;
-    private double _pendingPageFillCheckAt;
-    private int _pendingPageFillCheckExpectedCount;
-    private int _pendingPageFillCheckPageIndex = -1;
-    private int _pendingPageFillCheckRetries;
-    private bool _currentPageFillVerified;
 
     private string _lastSyncedDatabaseId;
     private int _lastSyncedItemCount = -1;
@@ -244,21 +197,12 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private const char LuaFieldSeparator = (char)0x1F;
 
     private bool IsServerAuthority => GameMain.NetworkMember == null || GameMain.NetworkMember.IsServer;
-    internal bool IsFixedTerminal => UseInPlaceSession && !SessionVariant;
-    private const double ToggleCooldownSeconds = 0.6;
-    private const double MinSessionDurationBeforeClose = 0.9;
+    internal bool IsFixedTerminal => UseInPlaceSession;
     private const double PanelActionCooldownSeconds = 0.4;
-    private const double TakeoverConfirmWindowSeconds = 4.0;
-    private const double PageActionSafetySeconds = 0.55;
     private const double PendingSummarySyncRetrySeconds = 0.25;
-    private const double PageFillCheckDelaySeconds = 0.35;
-    private const int MaxPageFillCheckRetries = 1;
     private const double TerminalUpdatePerfWarnMs = 8.0;
     private const double TerminalUpdatePerfLogCooldownSeconds = 0.8;
     private double _nextUpdatePerfLogAt;
-    private const double TerminalUpdateStageWarnMs = 12.0;
-    private const double TerminalUpdateStageLogCooldownSeconds = 0.8;
-    private double _nextUpdateStageLogAt;
     private const double VirtualViewDiagCooldownSeconds = 0.85;
     private double _nextVirtualViewDiagAt;
 
@@ -298,6 +242,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private CustomInterface _fixedXmlControlPanel;
     private double _nextPanelEntryRefreshAt;
     private double _nextClientPanelActionAllowedTime;
+    private double _panelManualHideUntil;
     private string _currentSearchText = "";
     private int _selectedCategoryFlag = -1;
     private int _localSortMode;

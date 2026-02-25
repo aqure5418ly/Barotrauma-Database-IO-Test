@@ -1097,6 +1097,7 @@ namespace DatabaseIOTest.Services
             }
         }
 
+        [Obsolete("Legacy session-lock API. No-session terminal model should not call this.")]
         public static bool TryAcquireTerminal(string databaseId, int terminalEntityId)
         {
             string id = Normalize(databaseId);
@@ -1114,6 +1115,7 @@ namespace DatabaseIOTest.Services
             return true;
         }
 
+        [Obsolete("Legacy session-lock API. No-session terminal model should not call this.")]
         public static bool ReleaseTerminal(string databaseId, int terminalEntityId)
         {
             string id = Normalize(databaseId);
@@ -1124,6 +1126,7 @@ namespace DatabaseIOTest.Services
             return true;
         }
 
+        [Obsolete("Legacy session-lock API. No-session terminal model should not call this.")]
         public static bool TransferTerminalLock(string databaseId, int fromTerminalEntityId, int toTerminalEntityId)
         {
             string id = Normalize(databaseId);
@@ -1134,6 +1137,7 @@ namespace DatabaseIOTest.Services
             return true;
         }
 
+        [Obsolete("Legacy session-lock API. No-session terminal model should not call this.")]
         public static bool TryForceCloseActiveSession(string databaseId, int requesterTerminalEntityId, Character requester)
         {
             string id = Normalize(databaseId);
@@ -1159,6 +1163,7 @@ namespace DatabaseIOTest.Services
                 requester);
         }
 
+        [Obsolete("Legacy session-lock API. No-session terminal model should not call this.")]
         public static bool IsLocked(string databaseId)
         {
             string id = Normalize(databaseId);
@@ -1186,6 +1191,14 @@ namespace DatabaseIOTest.Services
                 : 0;
         }
 
+        public static List<ItemData> GetItemsSnapshot(string databaseId, out int version)
+        {
+            string id = Normalize(databaseId);
+            var db = GetOrCreate(id);
+            version = db.Version;
+            return CloneItemList(db.Items);
+        }
+
         public static void AppendItems(string databaseId, List<ItemData> items)
         {
             if (items == null || items.Count == 0) { return; }
@@ -1206,6 +1219,7 @@ namespace DatabaseIOTest.Services
             SyncTerminals(id, preferDelta: true);
         }
 
+        [Obsolete("Legacy session API. No-session terminal model should not call this.")]
         public static List<ItemData> TakeAllForTerminalSession(string databaseId, int terminalEntityId)
         {
             string id = Normalize(databaseId);
@@ -1230,6 +1244,7 @@ namespace DatabaseIOTest.Services
             return copy;
         }
 
+        [Obsolete("Legacy session API. No-session terminal model should not call this.")]
         public static bool WriteBackFromTerminalContainer(string databaseId, List<ItemData> items, int terminalEntityId)
         {
             string id = Normalize(databaseId);
@@ -1268,6 +1283,58 @@ namespace DatabaseIOTest.Services
                 data != null &&
                 string.Equals(data.Identifier, target, StringComparison.OrdinalIgnoreCase),
                 out taken);
+        }
+
+        public static bool TryTakeOneByVariantKey(
+            string databaseId,
+            string identifier,
+            string variantKey,
+            out ItemData taken)
+        {
+            taken = null;
+            if (string.IsNullOrWhiteSpace(identifier) || string.IsNullOrWhiteSpace(variantKey)) { return false; }
+
+            string targetIdentifier = identifier.Trim();
+            string targetVariant = variantKey.Trim();
+            string id = Normalize(databaseId);
+            var db = GetOrCreate(id);
+            if (db.Items == null || db.Items.Count == 0) { return false; }
+
+            int index = FindVariantCandidateIndex(db.Items, targetIdentifier, targetVariant);
+            if (index < 0) { return false; }
+
+            var entry = db.Items[index];
+            int beforeVersion = db.Version;
+            int beforeCount = db.ItemCount;
+            var beforeAmounts = BuildIdentifierAmountMap(db.Items);
+
+            if (entry.ContainedItems != null && entry.ContainedItems.Count > 0)
+            {
+                taken = entry.Clone();
+                db.Items.RemoveAt(index);
+            }
+            else if (entry.StackSize <= 1)
+            {
+                taken = entry.Clone();
+                db.Items.RemoveAt(index);
+            }
+            else
+            {
+                taken = ExtractSingleFromStack(entry);
+                if (entry.StackSize <= 0)
+                {
+                    db.Items.RemoveAt(index);
+                }
+            }
+
+            db.Version++;
+            _workingState.RecordMutation(id, StateMutationKind.Extract, "api:takeByVariantKey", beforeVersion, beforeCount);
+            if (TryBuildMutationDelta(id, "api:takeByVariantKey", beforeVersion, beforeAmounts, db, out var delta))
+            {
+                PublishDelta(delta);
+            }
+            SyncTerminals(id, preferDelta: true);
+            return true;
         }
 
         public static bool TryTakeOneByIdentifierForAutomation(
@@ -1402,46 +1469,18 @@ namespace DatabaseIOTest.Services
             string id = Normalize(databaseId);
             var db = GetOrCreate(id);
             int availableStore = CountMatching(db.Items, predicate);
-            int availableSession = 0;
-            if (TryGetActiveTerminal(id, out var activeTerminal))
-            {
-                availableSession = activeTerminal.CountTakeableForAutomation(predicate);
-            }
 
-            if (availableStore + availableSession < amount)
+            if (availableStore < amount)
             {
                 return false;
             }
 
             int remaining = amount;
-            bool storeChanged = false;
             int beforeVersion = db.Version;
             int beforeCount = db.ItemCount;
             var beforeAmounts = BuildIdentifierAmountMap(db.Items);
-            if (availableStore > 0)
-            {
-                int fromStore = Math.Min(availableStore, remaining);
-                remaining = TakeMatchingFromList(db.Items, predicate, fromStore, taken, policy);
-                storeChanged = fromStore > 0;
-            }
-
-            if (remaining > 0)
-            {
-                if (!TryGetActiveTerminal(id, out var activeTerminalNow) ||
-                    !activeTerminalNow.TryTakeItemsFromNonCurrentPagesForAutomation(predicate, remaining, policy, out var sessionTaken))
-                {
-                    if (taken.Count > 0)
-                    {
-                        var rollback = CloneItemList(db.Items);
-                        rollback.AddRange(CloneItemList(taken));
-                        db.Items = CompactItems(rollback);
-                    }
-                    return false;
-                }
-
-                taken.AddRange(sessionTaken);
-                remaining -= CountFlatItems(sessionTaken);
-            }
+            int fromStore = Math.Min(availableStore, remaining);
+            remaining = TakeMatchingFromList(db.Items, predicate, fromStore, taken, policy);
 
             if (remaining > 0)
             {
@@ -1454,7 +1493,7 @@ namespace DatabaseIOTest.Services
                 return false;
             }
 
-            if (storeChanged)
+            if (fromStore > 0)
             {
                 db.Version++;
                 _workingState.RecordMutation(id, StateMutationKind.Extract, "api:takeItemsForAutomation", beforeVersion, beforeCount);
@@ -2276,6 +2315,69 @@ namespace DatabaseIOTest.Services
             RemoveRangeSafe(source.SlotIndices, take);
 
             return part;
+        }
+
+        private static int FindVariantCandidateIndex(List<ItemData> items, string identifier, string variantKey)
+        {
+            if (items == null || items.Count == 0) { return -1; }
+            if (string.IsNullOrWhiteSpace(identifier) || string.IsNullOrWhiteSpace(variantKey)) { return -1; }
+
+            string wantedIdentifier = identifier.Trim();
+            string wantedVariant = variantKey.Trim();
+            var signatureOrdinal = new Dictionary<string, int>(StringComparer.Ordinal);
+
+            for (int i = 0; i < items.Count; i++)
+            {
+                var entry = items[i];
+                if (entry == null) { continue; }
+                string id = (entry.Identifier ?? "").Trim();
+                if (!string.Equals(id, wantedIdentifier, StringComparison.OrdinalIgnoreCase)) { continue; }
+
+                string baseSignature = BuildVariantBaseSignature(entry);
+                int ordinal = signatureOrdinal.TryGetValue(baseSignature, out int current) ? current : 0;
+                signatureOrdinal[baseSignature] = ordinal + 1;
+
+                string currentVariant = BuildVariantKey(baseSignature, ordinal);
+                if (string.Equals(currentVariant, wantedVariant, StringComparison.Ordinal))
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private static string BuildVariantKey(string baseSignature, int ordinal)
+        {
+            return $"{baseSignature}#{Math.Max(0, ordinal)}";
+        }
+
+        private static string BuildVariantBaseSignature(ItemData item)
+        {
+            if (item == null) { return "null"; }
+            string id = ((item.Identifier ?? "").Trim()).ToLowerInvariant();
+            int quality = Math.Max(0, item.Quality);
+            string condition = Math.Max(0f, item.Condition).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+            string contained = BuildContainedSignature(item);
+            return $"{id}|q={quality}|c={condition}|sub={contained}";
+        }
+
+        private static string BuildContainedSignature(ItemData item)
+        {
+            if (item?.ContainedItems == null || item.ContainedItems.Count <= 0)
+            {
+                return "none";
+            }
+
+            var childSignatures = new List<string>(item.ContainedItems.Count);
+            foreach (var child in item.ContainedItems)
+            {
+                if (child == null) { continue; }
+                childSignatures.Add(BuildVariantBaseSignature(child));
+            }
+
+            childSignatures.Sort(StringComparer.Ordinal);
+            return string.Join(";", childSignatures);
         }
 
         private static int CountMatching(IEnumerable<ItemData> items, Func<ItemData, bool> predicate)

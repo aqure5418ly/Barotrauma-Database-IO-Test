@@ -21,25 +21,13 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     public List<TerminalVirtualEntry> GetVirtualViewSnapshot(bool refreshCurrentPage = true)
     {
         var snapshot = new List<TerminalVirtualEntry>();
-        bool sessionActive = IsSessionActive();
-        if (!sessionActive)
-        {
-            if (ModFileLog.IsDebugEnabled &&
-                Timing.TotalTime >= _nextVirtualViewDiagAt)
-            {
-                _nextVirtualViewDiagAt = Timing.TotalTime + VirtualViewDiagCooldownSeconds;
-                ModFileLog.WriteDebug(
-                    "Terminal",
-                    $"{Constants.LogPrefix} VirtualViewSnapshot empty id={item?.ID} db='{_resolvedDatabaseId}' " +
-                    $"sessionActive={sessionActive} cachedOpen={_cachedSessionOpen} " +
-                    $"inPlace={_inPlaceSessionActive} sessionVariant={SessionVariant} sessionEntries={_sessionEntries.Count}");
-            }
-            return snapshot;
-        }
+        int version = 0;
+        var items = DatabaseStore.GetItemsSnapshot(_resolvedDatabaseId, out version);
+        if (items == null || items.Count <= 0) { return snapshot; }
 
         var signatureOrdinal = new Dictionary<string, int>(StringComparer.Ordinal);
 
-        foreach (var entry in _sessionEntries)
+        foreach (var entry in items)
         {
             if (entry == null) { continue; }
             string id = (entry.Identifier ?? "").Trim();
@@ -83,16 +71,14 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             ModFileLog.WriteDebug(
                 "Terminal",
                 $"{Constants.LogPrefix} VirtualViewSnapshot id={item?.ID} db='{_resolvedDatabaseId}' " +
-                $"snapshotEntries={snapshot.Count} sessionEntries={_sessionEntries.Count} " +
-                $"sessionActive={sessionActive} cachedOpen={_cachedSessionOpen} " +
-                $"inPlace={_inPlaceSessionActive} sessionVariant={SessionVariant}");
+                $"snapshotEntries={snapshot.Count} version={version} cachedOpen={_cachedSessionOpen}");
         }
         return snapshot;
     }
 
     public bool IsVirtualSessionOpenForUi()
     {
-        bool open = IsSessionActive() || _cachedSessionOpen;
+        bool open = true;
         if (ModFileLog.IsDebugEnabled &&
             Timing.TotalTime >= _nextVirtualViewDiagAt)
         {
@@ -100,8 +86,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             ModFileLog.WriteDebug(
                 "Terminal",
                 $"{Constants.LogPrefix} VirtualUiOpenState id={item?.ID} db='{_resolvedDatabaseId}' " +
-                $"open={open} sessionActive={IsSessionActive()} cachedOpen={_cachedSessionOpen} " +
-                $"inPlace={_inPlaceSessionActive} sessionVariant={SessionVariant}");
+                $"open={open} cachedOpen={_cachedSessionOpen}");
         }
         return open;
     }
@@ -109,7 +94,6 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     public string TryTakeOneByIdentifierFromVirtualSession(string identifier, Character actor)
     {
         if (!IsServerAuthority) { return "not_authority"; }
-        if (!IsSessionActive()) { return "session_closed"; }
         if (actor == null || actor.Removed || actor.IsDead || actor.Inventory == null) { return "invalid_actor"; }
 
         string wanted = (identifier ?? "").Trim();
@@ -117,21 +101,20 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         var inventory = GetTerminalInventory();
         if (inventory == null) { return "inventory_unavailable"; }
-        if (!HasAnyEmptyBufferSlot(inventory)) { return "inventory_full"; }
+        if (!TryFindEmptyOutputSlot(inventory, out int outputSlot)) { return "inventory_full"; }
 
-        if (!TryExtractOneVirtualItemData(wanted, out var extracted) || extracted == null)
+        if (!DatabaseStore.TryTakeOneByIdentifier(_resolvedDatabaseId, wanted, out var extracted) || extracted == null)
         {
             return "not_found";
         }
+        extracted.StackSize = 1;
+        extracted.SlotIndices = new List<int> { outputSlot };
 
         SpawnService.SpawnItemsIntoInventory(
             new List<ItemData> { extracted },
             inventory,
-            actor,
-            guard: () => IsSessionActive());
+            actor);
 
-        int preferredPage = _sessionCurrentPageIndex < 0 ? 0 : _sessionCurrentPageIndex;
-        BuildPagesBySlotUsage(_sessionEntries, inventory, preferredPage);
         UpdateSummaryFromStore();
         UpdateDescriptionLocal();
         TrySyncSummary(force: true);
@@ -189,7 +172,6 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private string TryTakeOneByVariantKeyFromVirtualSession(string identifier, string variantKey, Character actor)
     {
         if (!IsServerAuthority) { return "not_authority"; }
-        if (!IsSessionActive()) { return "session_closed"; }
         if (actor == null || actor.Removed || actor.IsDead || actor.Inventory == null) { return "invalid_actor"; }
 
         string wanted = (identifier ?? "").Trim();
@@ -199,26 +181,51 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         var inventory = GetTerminalInventory();
         if (inventory == null) { return "inventory_unavailable"; }
-        if (!HasAnyEmptyBufferSlot(inventory)) { return "inventory_full"; }
+        if (!TryFindEmptyOutputSlot(inventory, out int outputSlot)) { return "inventory_full"; }
 
-        if (!TryExtractOneVirtualItemDataByVariantKey(wanted, wantedVariant, out var extracted) || extracted == null)
+        if (!DatabaseStore.TryTakeOneByVariantKey(_resolvedDatabaseId, wanted, wantedVariant, out var extracted) || extracted == null)
         {
             return "not_found";
         }
+        extracted.StackSize = 1;
+        extracted.SlotIndices = new List<int> { outputSlot };
 
         SpawnService.SpawnItemsIntoInventory(
             new List<ItemData> { extracted },
             inventory,
-            actor,
-            guard: () => IsSessionActive());
+            actor);
 
-        int preferredPage = _sessionCurrentPageIndex < 0 ? 0 : _sessionCurrentPageIndex;
-        BuildPagesBySlotUsage(_sessionEntries, inventory, preferredPage);
         UpdateSummaryFromStore();
         UpdateDescriptionLocal();
         TrySyncSummary(force: true);
         RefreshLuaB1BridgeState(force: true);
         return "";
+    }
+
+    private static int GetOutputSlotStart(Inventory inventory)
+    {
+        if (inventory == null) { return 0; }
+        int capacity = Math.Max(0, inventory.Capacity);
+        if (capacity <= 1) { return 0; }
+        return capacity / 2;
+    }
+
+    private static bool TryFindEmptyOutputSlot(Inventory inventory, out int slot)
+    {
+        slot = -1;
+        if (inventory == null) { return false; }
+
+        int start = Math.Max(0, GetOutputSlotStart(inventory));
+        for (int i = start; i < inventory.Capacity; i++)
+        {
+            if (inventory.GetItemAt(i) == null)
+            {
+                slot = i;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static Character FindCharacterByEntityId(int entityId)
@@ -313,59 +320,27 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     private List<TerminalVirtualEntry> BuildLuaB1Rows()
     {
-        var rows = new List<TerminalVirtualEntry>();
-        var signatureOrdinal = new Dictionary<string, int>(StringComparer.Ordinal);
-
-        foreach (var entry in _sessionEntries)
+        var rows = GetVirtualViewSnapshot(refreshCurrentPage: false) ?? new List<TerminalVirtualEntry>();
+        foreach (var row in rows)
         {
-            if (entry == null) { continue; }
-            string id = (entry.Identifier ?? "").Trim();
-            if (string.IsNullOrWhiteSpace(id)) { continue; }
-
-            int amount = Math.Max(1, entry.StackSize);
-            string baseSignature = BuildVariantBaseSignature(entry);
-            int ordinal = 0;
-            if (signatureOrdinal.TryGetValue(baseSignature, out int currentOrdinal))
-            {
-                ordinal = currentOrdinal;
-            }
-            signatureOrdinal[baseSignature] = ordinal + 1;
-            bool hasContained = entry.ContainedItems != null && entry.ContainedItems.Count > 0;
-
-            rows.Add(new TerminalVirtualEntry
-            {
-                Identifier = id,
-                PrefabIdentifier = id,
-                DisplayName = id,
-                VariantKey = BuildVariantKey(baseSignature, ordinal),
-                HasContainedItems = hasContained,
-                VariantQuality = Math.Max(0, entry.Quality),
-                VariantCondition = Math.Max(0f, entry.Condition),
-                Amount = amount,
-                BestQuality = Math.Max(0, entry.Quality),
-                AverageCondition = Math.Max(0f, entry.Condition)
-            });
+            if (row == null) { continue; }
+            // Keep payload locale-agnostic; clients resolve localized names locally.
+            row.DisplayName = row.Identifier ?? "";
         }
-
-        return rows
-            .OrderBy(v => v.Identifier ?? "", StringComparer.OrdinalIgnoreCase)
-            .ThenBy(v => v.VariantQuality)
-            .ThenBy(v => v.VariantCondition)
-            .ThenBy(v => v.VariantKey ?? "", StringComparer.Ordinal)
-            .ToList();
+        return rows;
     }
 
     private void RefreshLuaB1BridgeState(bool force = false)
     {
         if (!IsServerAuthority) { return; }
 
-        bool sessionOpen = IsSessionActive();
+        bool sessionOpen = true;
         string dbId = DatabaseStore.Normalize(_resolvedDatabaseId);
         int totalEntries = 0;
         int totalAmount = 0;
         string payload = "";
 
-        if (sessionOpen && _sessionEntries.Count > 0)
+        if (sessionOpen)
         {
             var rows = BuildLuaB1Rows();
             totalEntries = rows.Count;
@@ -412,7 +387,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         try
         {
             _lastProcessedLuaTakeRequestNonce = nonce;
-            Character actor = FindCharacterByEntityId(LuaTakeRequestActorId) ?? _sessionOwner;
+            Character actor = FindCharacterByEntityId(LuaTakeRequestActorId);
             string reason = TryTakeOneByIdentifierFromVirtualSession(LuaTakeRequestIdentifier, actor);
             LuaTakeResultNonce = nonce;
             LuaTakeResultCode = reason ?? "";

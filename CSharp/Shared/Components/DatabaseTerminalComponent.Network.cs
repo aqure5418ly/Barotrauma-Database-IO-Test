@@ -1,9 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
 using System.Reflection;
-using System.Text;
 using Barotrauma;
 using Barotrauma.Items.Components;
 using Barotrauma.Networking;
@@ -18,18 +14,14 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 {
     public void ServerEventWrite(IWriteMessage msg, Client c, NetEntityEvent.IData extraData = null)
     {
-        var data = ExtractEventData<SummaryEventData>(extraData);
-        if (string.IsNullOrEmpty(data.DatabaseId))
-        {
-            data = new SummaryEventData(
-                _resolvedDatabaseId,
-                _cachedItemCount,
-                _cachedLocked,
-                IsSessionActive(),
-                _cachedPageIndex,
-                _cachedPageTotal,
-                _cachedRemainingPageItems);
-        }
+        var data = new SummaryEventData(
+            _resolvedDatabaseId,
+            _cachedItemCount,
+            _cachedLocked,
+            true,
+            1,
+            1,
+            0);
 
         msg.WriteString(data.DatabaseId ?? _resolvedDatabaseId);
         msg.WriteInt32(data.ItemCount);
@@ -38,7 +30,6 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         msg.WriteInt32(data.PageIndex);
         msg.WriteInt32(data.PageTotal);
         msg.WriteInt32(data.RemainingPageItems);
-        // Sync item entry payload so clients can render the UI panel.
         msg.WriteString(LuaB1RowsPayload ?? "");
     }
 
@@ -48,7 +39,6 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         int prevPage = _cachedPageIndex;
         int prevTotal = _cachedPageTotal;
         int prevCount = _cachedItemCount;
-        bool prevLocked = _cachedLocked;
 
         _resolvedDatabaseId = DatabaseStore.Normalize(msg.ReadString());
         _cachedItemCount = msg.ReadInt32();
@@ -57,7 +47,6 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         _cachedPageIndex = msg.ReadInt32();
         _cachedPageTotal = msg.ReadInt32();
         _cachedRemainingPageItems = msg.ReadInt32();
-        // Receive the item entry payload from server for client-side UI rendering.
         LuaB1RowsPayload = msg.ReadString() ?? "";
         UpdateDescriptionLocal();
 #if CLIENT
@@ -66,7 +55,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             LogPanelDebug(
                 $"summary update id={item?.ID} db='{_resolvedDatabaseId}' " +
                 $"open={prevOpen}->{_cachedSessionOpen} page={Math.Max(1, prevPage)}/{Math.Max(1, prevTotal)}->{Math.Max(1, _cachedPageIndex)}/{Math.Max(1, _cachedPageTotal)} " +
-                $"count={prevCount}->{_cachedItemCount} locked={prevLocked}->{_cachedLocked}");
+                $"count={prevCount}->{_cachedItemCount}");
             UpdateClientPanelVisuals();
         }
 #endif
@@ -82,6 +71,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             msg.WriteByte((byte)Math.Clamp(_pendingClientTakeCount, 1, byte.MaxValue));
             msg.WriteString(_pendingClientTakeVariantKey ?? "");
         }
+
         _pendingClientAction = (byte)TerminalPanelAction.None;
         _pendingClientTakeIdentifier = "";
         _pendingClientTakeCount = 1;
@@ -107,8 +97,8 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                 takeVariantKey = "";
             }
         }
+
         if (action == TerminalPanelAction.None) { return; }
-        if (!SessionVariant && !_inPlaceSessionActive) { return; }
 
         Character actor = c?.Character;
         if (actor == null || actor.Removed || actor.IsDead)
@@ -154,11 +144,11 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         }
 
         _cachedItemCount = data.ItemCount;
-        _cachedLocked = DatabaseStore.IsLocked(_resolvedDatabaseId);
-        _cachedSessionOpen = IsSessionActive();
-        _cachedPageIndex = _cachedSessionOpen ? Math.Max(1, _sessionCurrentPageIndex + 1) : 0;
-        _cachedPageTotal = _cachedSessionOpen ? Math.Max(1, _sessionPages.Count) : 0;
-        _cachedRemainingPageItems = _cachedSessionOpen ? CountPendingPageItems() : 0;
+        _cachedLocked = false;
+        _cachedSessionOpen = true;
+        _cachedPageIndex = 1;
+        _cachedPageTotal = 1;
+        _cachedRemainingPageItems = 0;
         _lastAppliedStoreVersion = Math.Max(0, data.Version);
 
         UpdateDescriptionLocal();
@@ -187,27 +177,28 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         }
 
         _cachedItemCount = Math.Max(0, delta.TotalAmount);
-        _cachedLocked = DatabaseStore.IsLocked(_resolvedDatabaseId);
-        _cachedSessionOpen = IsSessionActive();
-        _cachedPageIndex = _cachedSessionOpen ? Math.Max(1, _sessionCurrentPageIndex + 1) : 0;
-        _cachedPageTotal = _cachedSessionOpen ? Math.Max(1, _sessionPages.Count) : 0;
-        _cachedRemainingPageItems = _cachedSessionOpen ? CountPendingPageItems() : 0;
+        _cachedLocked = false;
+        _cachedSessionOpen = true;
+        _cachedPageIndex = 1;
+        _cachedPageTotal = 1;
+        _cachedRemainingPageItems = 0;
         _lastAppliedStoreVersion = Math.Max(0, delta.Version);
 
         UpdateDescriptionLocal();
         TrySyncSummary();
         return true;
     }
+
     private void UpdateSummaryFromStore()
     {
         if (!IsServerAuthority) { return; }
 
         _cachedItemCount = DatabaseStore.GetItemCount(_resolvedDatabaseId);
-        _cachedLocked = DatabaseStore.IsLocked(_resolvedDatabaseId);
-        _cachedSessionOpen = IsSessionActive();
-        _cachedPageIndex = _cachedSessionOpen ? Math.Max(1, _sessionCurrentPageIndex + 1) : 0;
-        _cachedPageTotal = _cachedSessionOpen ? Math.Max(1, _sessionPages.Count) : 0;
-        _cachedRemainingPageItems = _cachedSessionOpen ? CountPendingPageItems() : 0;
+        _cachedLocked = false;
+        _cachedSessionOpen = true;
+        _cachedPageIndex = 1;
+        _cachedPageTotal = 1;
+        _cachedRemainingPageItems = 0;
     }
 
     private void LoadSummaryFromSerialized()
@@ -216,15 +207,15 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         _resolvedDatabaseId = data.DatabaseId;
         _cachedItemCount = data.ItemCount;
         _cachedLocked = false;
-        _cachedSessionOpen = IsSessionActive();
-        _cachedPageIndex = _cachedSessionOpen ? Math.Max(1, _sessionCurrentPageIndex + 1) : 0;
-        _cachedPageTotal = _cachedSessionOpen ? Math.Max(1, _sessionPages.Count) : 0;
-        _cachedRemainingPageItems = _cachedSessionOpen ? CountPendingPageItems() : 0;
+        _cachedSessionOpen = true;
+        _cachedPageIndex = 1;
+        _cachedPageTotal = 1;
+        _cachedRemainingPageItems = 0;
     }
 
     private bool IsSessionActive()
     {
-        return SessionVariant || _inPlaceSessionActive;
+        return true;
     }
 
     private void TrySyncSummary(bool force = false)
@@ -282,7 +273,6 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (item == null || item.Removed) { return false; }
         if (item.ID <= 0) { return false; }
 
-        // During entity spawn the item may exist but still be marked as not fully initialized.
         try
         {
             if (ItemFullyInitializedProperty != null && ItemFullyInitializedProperty.PropertyType == typeof(bool))
@@ -299,7 +289,6 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         }
         catch
         {
-            // Ignore reflection issues and fall back to age-based guard.
         }
 
         return Timing.TotalTime - _creationTime >= 0.15;
@@ -314,29 +303,12 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     {
         string dbLabel = T("dbiotest.terminal.dbid", "Database ID");
         string countLabel = T("dbiotest.terminal.count", "Stored Item Count");
-        string hint = _cachedSessionOpen
-            ? T("dbiotest.terminal.openhint", "Session active. Use panel buttons to switch pages or close session.")
-            : T("dbiotest.terminal.closedhint", "Use to open database session and populate container.");
+        string hint = T("dbiotest.terminal.closedhint", "Use terminal panel to browse and take items.");
 
-        string lockLine = _cachedLocked && !_cachedSessionOpen
-            ? "\n" + T("dbiotest.terminal.locked", "Locked by another terminal session.")
-            : "";
-
-        string pageLine = "";
-        if (_cachedSessionOpen)
-        {
-            string pageLabel = T("dbiotest.terminal.page", "Page");
-            string remainingLabel = T("dbiotest.terminal.remainingpages", "Pending Page Items");
-            string sortLabel = T("dbiotest.terminal.sort", "Sort");
-            string directionLabel = SortDescending ? T("dbiotest.terminal.sortdesc", "Desc") : T("dbiotest.terminal.sortasc", "Asc");
-            string searchLabel = T("dbiotest.terminal.search", "Search");
-            string searchValue = string.IsNullOrWhiteSpace(SearchKeyword) ? "-" : SearchKeyword;
-            pageLine =
-                $"\n{pageLabel}: {Math.Max(1, _cachedPageIndex)}/{Math.Max(1, _cachedPageTotal)}" +
-                $"\n{remainingLabel}: {_cachedRemainingPageItems}" +
-                $"\n{sortLabel}: {GetSortModeLabel((TerminalSortMode)NormalizeSortModeIndex(SortModeIndex))} ({directionLabel})" +
-                $"\n{searchLabel}: {searchValue}";
-        }
+        string sortLabel = T("dbiotest.terminal.sort", "Sort");
+        string directionLabel = SortDescending ? T("dbiotest.terminal.sortdesc", "Desc") : T("dbiotest.terminal.sortasc", "Asc");
+        string searchLabel = T("dbiotest.terminal.search", "Search");
+        string searchValue = string.IsNullOrWhiteSpace(SearchKeyword) ? "-" : SearchKeyword;
 
         string powerLine = "";
         if (RequirePower)
@@ -348,7 +320,10 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             powerLine = $"\n{powerLabel}: {state} ({GetCurrentVoltage():0.##}/{Math.Max(0f, MinRequiredVoltage):0.##}V)";
         }
 
-        item.Description = $"{hint}\n\n{dbLabel}: {_resolvedDatabaseId}\n{countLabel}: {_cachedItemCount}{pageLine}{powerLine}{lockLine}";
+        item.Description =
+            $"{hint}\n\n{dbLabel}: {_resolvedDatabaseId}\n{countLabel}: {_cachedItemCount}" +
+            $"\n{sortLabel}: {GetSortModeLabel((TerminalSortMode)NormalizeSortModeIndex(SortModeIndex))} ({directionLabel})" +
+            $"\n{searchLabel}: {searchValue}{powerLine}";
     }
 
     private static string GetSortModeLabel(TerminalSortMode mode)
@@ -374,5 +349,4 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         float minVoltage = Math.Max(0f, MinRequiredVoltage);
         return GetCurrentVoltage() >= minVoltage;
     }
-
 }
