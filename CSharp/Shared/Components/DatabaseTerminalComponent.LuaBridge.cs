@@ -249,6 +249,18 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             .Replace('\n', ' ');
     }
 
+    private static string ResolveDisplayNameForIdentifier(string identifier)
+    {
+        string id = (identifier ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(id)) { return ""; }
+
+        var prefab = ItemPrefab.FindByIdentifier(id.ToIdentifier()) as ItemPrefab;
+        if (prefab == null) { return id; }
+
+        string localized = prefab.Name?.ToString();
+        return string.IsNullOrWhiteSpace(localized) ? id : localized.Trim();
+    }
+
     private static string BuildVariantKey(string baseSignature, int ordinal)
     {
         return $"{baseSignature}#{Math.Max(0, ordinal)}";

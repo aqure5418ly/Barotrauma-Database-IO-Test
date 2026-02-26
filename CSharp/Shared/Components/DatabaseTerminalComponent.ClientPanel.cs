@@ -60,6 +60,28 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         ModFileLog.WriteDebug("Panel", line);
     }
 
+    private void LogHandheldDiag(string stage, Character controlled = null, Character actor = null)
+    {
+        if (IsFixedTerminal || !ModFileLog.IsDebugEnabled) { return; }
+        if (Timing.TotalTime < _nextHandheldDiagLogAt) { return; }
+        _nextHandheldDiagLogAt = Timing.TotalTime + 0.2;
+
+        controlled ??= Character.Controlled;
+        int controlledId = controlled?.ID ?? -1;
+        int actorId = actor?.ID ?? -1;
+        int selectedId = controlled?.SelectedItem?.ID ?? -1;
+        int secondaryId = controlled?.SelectedSecondaryItem?.ID ?? -1;
+        bool panelVisible = _panelFrame?.Visible ?? false;
+        bool panelEnabled = _panelFrame?.Enabled ?? false;
+        bool manualHide = Timing.TotalTime < _panelManualHideUntil;
+
+        ModFileLog.WriteDebug(
+            "Terminal",
+            $"{Constants.LogPrefix} HandheldDiag stage={stage} id={item?.ID} actor={actorId} ctrl={controlledId} " +
+            $"sid={selectedId} ssid={secondaryId} armed={_handheldPanelArmedByUse} " +
+            $"panel={panelVisible}/{panelEnabled} manualHide={manualHide}");
+    }
+
     private void UpdateFixedXmlControlPanelState()
     {
         if (!EnableCsPanelOverlay || !IsFixedTerminal || item == null || item.Removed)
@@ -924,6 +946,10 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         _panelCloseButton.OnClicked = (_, __) =>
         {
             _panelManualHideUntil = Timing.TotalTime + 1.0;
+            if (!IsFixedTerminal)
+            {
+                _handheldPanelArmedByUse = false;
+            }
             ReleaseClientPanelFocusIfOwned("manual close");
             SetPanelVisible(false, "manual close");
             return true;
@@ -1024,7 +1050,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         {
             _panelBufferInfo = new GUITextBlock(
                 new RectTransform(new Vector2(1f, 0.04f), _panelMainLayout.RectTransform),
-                T("dbiotest.panel.bufferhint", "Buffer"),
+                T("dbiotest.panel.bufferpartition", "Buffer (slots 1-5: input, 6-10: output)"),
                 textAlignment: Alignment.Left);
 
             _panelBufferFrame = new GUIFrame(
@@ -1141,10 +1167,18 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         }
         else
         {
-            shouldShow = isSelected || isInControlledInventory;
+            shouldShow = _handheldPanelArmedByUse && isSelected;
         }
         if (!shouldShow)
         {
+            if (!IsFixedTerminal && !isSelected)
+            {
+                _handheldPanelArmedByUse = false;
+            }
+            if (!IsFixedTerminal)
+            {
+                LogHandheldDiag($"panel_hide selected={isSelected} inv={isInControlledInventory} nearby={isNearby}", controlled);
+            }
             LogPanelEval("hide:outside", controlled, isSelected, isInControlledInventory, isNearby, shouldShow, distance);
             ReleaseClientPanelFocusIfOwned("outside visibility conditions");
             SetPanelVisible(false, "outside visibility conditions");
@@ -1247,7 +1281,16 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         if (_panelStatusText != null)
         {
-            _panelStatusText.Text = T("dbiotest.panel.takehint", "Left click takes a stack. Right click (or Shift+Left) takes 1.");
+            string takeHint = T("dbiotest.panel.takehint", "Left click takes a stack. Right click (or Shift+Left) takes 1.");
+            if (IsFixedTerminal)
+            {
+                string flowHint = T("dbiotest.panel.bufferflow", "Input slots 1-5 auto-ingest, output slots 6-10 receive extracted items.");
+                _panelStatusText.Text = $"{takeHint} | {flowHint}";
+            }
+            else
+            {
+                _panelStatusText.Text = takeHint;
+            }
         }
 
         UpdatePanelBufferVisuals();
@@ -1264,7 +1307,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         {
             _panelBufferInfo.Text = inventory == null
                 ? T("dbiotest.panel.bufferunavailable", "Buffer unavailable")
-                : T("dbiotest.panel.bufferhint", "Buffer");
+                : T("dbiotest.panel.bufferpartition", "Buffer (slots 1-5: input, 6-10: output)");
         }
 
         if (inventory == null) { return; }

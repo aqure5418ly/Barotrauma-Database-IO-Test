@@ -248,6 +248,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private int _localSortMode;
     private bool _localSortDescending;
     private CellSizeMode _cellSizeMode = CellSizeMode.Medium;
+    private bool _handheldPanelArmedByUse;
 
     private string _lastIconGridRenderSignature = "";
     private const float PanelInteractionRange = 340f;
@@ -266,6 +267,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private double _nextPanelQueueWarnLogAllowedTime;
     private string _lastPanelEvalSignature = "";
     private double _nextPanelEvalLogAllowedTime;
+    private double _nextHandheldDiagLogAt;
     private static int _clientPanelFocusItemId = -1;
     private static double _clientPanelFocusUntil;
     private static string _clientPanelFocusReason = "";

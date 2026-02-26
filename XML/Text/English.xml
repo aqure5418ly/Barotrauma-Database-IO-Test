@@ -50,6 +50,8 @@
   <dbiotest.panel.takehint.shift>Shift+Left: take 1</dbiotest.panel.takehint.shift>
   <dbiotest.panel.closedhint>Panel hidden.</dbiotest.panel.closedhint>
   <dbiotest.panel.bufferhint>Buffer</dbiotest.panel.bufferhint>
+  <dbiotest.panel.bufferpartition>Buffer (slots 1-5: input, 6-10: output)</dbiotest.panel.bufferpartition>
+  <dbiotest.panel.bufferflow>Input slots 1-5 auto-ingest, output slots 6-10 receive extracted items.</dbiotest.panel.bufferflow>
   <dbiotest.panel.bufferunavailable>Buffer unavailable</dbiotest.panel.bufferunavailable>
   <dbiotest.anchor.hint>Persistent in-save storage anchor for database data.</dbiotest.anchor.hint>
   <dbiotest.anchor.dbid>Database ID</dbiotest.anchor.dbid>

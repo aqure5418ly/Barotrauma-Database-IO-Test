@@ -39,7 +39,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         taken = new List<ItemData>();
         if (!IsServerAuthority || predicate == null || amount <= 0) { return false; }
 
-        bool ok = DatabaseStore.TryTakeItemsForAutomation(_resolvedDatabaseId, predicate, amount, policy, out var extracted);
+        bool ok = DatabaseStore.TryTakeItemsForAutomation(_resolvedDatabaseId, predicate, amount, out var extracted, policy);
         if (!ok || extracted == null || extracted.Count <= 0) { return false; }
 
         taken = extracted;

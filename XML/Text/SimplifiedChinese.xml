@@ -52,6 +52,8 @@
   <dbiotest.panel.takehint.shift>Shift+左键：取 1 个</dbiotest.panel.takehint.shift>
   <dbiotest.panel.closedhint>面板已隐藏。</dbiotest.panel.closedhint>
   <dbiotest.panel.bufferhint>缓冲区</dbiotest.panel.bufferhint>
+  <dbiotest.panel.bufferpartition>缓冲区（1-5格：存入，6-10格：取出）</dbiotest.panel.bufferpartition>
+  <dbiotest.panel.bufferflow>1-5格会自动入库，6-10格用于接收取出的物品。</dbiotest.panel.bufferflow>
   <dbiotest.panel.bufferunavailable>缓冲区不可用</dbiotest.panel.bufferunavailable>
   <dbiotest.anchor.hint>存档内持久化锚点，用于保存数据库序列化数据。</dbiotest.anchor.hint>
   <dbiotest.anchor.dbid>数据库ID</dbiotest.anchor.dbid>
