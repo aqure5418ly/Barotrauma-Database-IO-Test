@@ -1046,32 +1046,29 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         _panelBufferInfo = null;
         _panelBufferFrame = null;
         _panelBufferDrawer = null;
-        if (IsFixedTerminal)
-        {
-            _panelBufferInfo = new GUITextBlock(
-                new RectTransform(new Vector2(1f, 0.04f), _panelMainLayout.RectTransform),
-                T("dbiotest.panel.bufferpartition", "Buffer (slots 1-5: input, 6-10: output)"),
-                textAlignment: Alignment.Left);
+        _panelBufferInfo = new GUITextBlock(
+            new RectTransform(new Vector2(1f, 0.04f), _panelMainLayout.RectTransform),
+            T("dbiotest.panel.bufferpartition", "Buffer (slots 1-5: input, 6-10: output)"),
+            textAlignment: Alignment.Left);
 
-            _panelBufferFrame = new GUIFrame(
-                new RectTransform(new Vector2(1f, 0.12f), _panelMainLayout.RectTransform),
-                style: "InnerFrameDark");
-            _panelBufferFrame.CanBeFocused = false;
-            _panelBufferDrawer = new GUICustomComponent(
-                new RectTransform(Vector2.One, _panelBufferFrame.RectTransform),
-                (sb, _) =>
+        _panelBufferFrame = new GUIFrame(
+            new RectTransform(new Vector2(1f, 0.12f), _panelMainLayout.RectTransform),
+            style: "InnerFrameDark");
+        _panelBufferFrame.CanBeFocused = false;
+        _panelBufferDrawer = new GUICustomComponent(
+            new RectTransform(Vector2.One, _panelBufferFrame.RectTransform),
+            (sb, _) =>
+            {
+                var inventory = GetTerminalInventory();
+                if (inventory != null)
                 {
-                    var inventory = GetTerminalInventory();
-                    if (inventory != null)
-                    {
-                        inventory.Draw(sb, false);
-                    }
-                },
-                null);
-        }
+                    inventory.Draw(sb, false);
+                }
+            },
+            null);
 
         _panelStatusText = new GUITextBlock(
-            new RectTransform(new Vector2(1f, IsFixedTerminal ? 0.08f : 0.12f), _panelMainLayout.RectTransform),
+            new RectTransform(new Vector2(1f, 0.08f), _panelMainLayout.RectTransform),
             "",
             textAlignment: Alignment.Left);
 
@@ -1167,11 +1164,11 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         }
         else
         {
-            shouldShow = _handheldPanelArmedByUse && isSelected;
+            shouldShow = _handheldPanelArmedByUse && (isSelected || isInControlledInventory);
         }
         if (!shouldShow)
         {
-            if (!IsFixedTerminal && !isSelected)
+            if (!IsFixedTerminal && !isSelected && !isInControlledInventory)
             {
                 _handheldPanelArmedByUse = false;
             }
@@ -1300,14 +1297,21 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     private void UpdatePanelBufferVisuals()
     {
-        if (!IsFixedTerminal || _panelBufferFrame == null) { return; }
+        if (_panelBufferFrame == null) { return; }
 
         var inventory = GetTerminalInventory();
         if (_panelBufferInfo != null)
         {
-            _panelBufferInfo.Text = inventory == null
-                ? T("dbiotest.panel.bufferunavailable", "Buffer unavailable")
-                : T("dbiotest.panel.bufferpartition", "Buffer (slots 1-5: input, 6-10: output)");
+            if (inventory == null)
+            {
+                _panelBufferInfo.Text = T("dbiotest.panel.bufferunavailable", "Buffer unavailable");
+            }
+            else
+            {
+                _panelBufferInfo.Text = IsFixedTerminal
+                    ? T("dbiotest.panel.bufferpartition", "Buffer (slots 1-5: input, 6-10: output)")
+                    : T("dbiotest.panel.bufferhint", "Buffer");
+            }
         }
 
         if (inventory == null) { return; }

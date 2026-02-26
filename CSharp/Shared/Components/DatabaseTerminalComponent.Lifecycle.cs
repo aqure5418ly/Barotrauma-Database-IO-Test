@@ -129,6 +129,13 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             character != null &&
             character == Character.Controlled)
         {
+            if (Timing.TotalTime < _nextHandheldUseToggleAt)
+            {
+                LogHandheldDiag("secondary_debounced", Character.Controlled, character);
+                return true;
+            }
+
+            _nextHandheldUseToggleAt = Timing.TotalTime + HandheldUseToggleCooldownSeconds;
             ToggleHandheldPanelByUse(character, "secondary use");
             LogHandheldDiag("secondary_handled", Character.Controlled, character);
             return true;

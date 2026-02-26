@@ -213,6 +213,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         typeof(Item).GetField("fullyInitialized", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
 #if CLIENT
+    private const double HandheldUseToggleCooldownSeconds = 0.75;
     private enum CellSizeMode : byte
     {
         Large = 0,
@@ -249,6 +250,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private bool _localSortDescending;
     private CellSizeMode _cellSizeMode = CellSizeMode.Medium;
     private bool _handheldPanelArmedByUse;
+    private double _nextHandheldUseToggleAt;
 
     private string _lastIconGridRenderSignature = "";
     private const float PanelInteractionRange = 340f;
