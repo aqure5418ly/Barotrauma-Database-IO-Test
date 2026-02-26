@@ -221,6 +221,88 @@
 
 
   <Item
+    identifier="DatabaseCraftTerminal"
+    category="Machine,Electrical"
+    tags="database_craft_terminal,database_terminal,machine,fabricator"
+    allowedlinks="deconstructor,locker,medicalfabricator,fabricator"
+    showcontentsintooltip="true"
+    linkable="true"
+    waterproof="true"
+    fireproof="true"
+    scale="0.5"
+    damagedbyexplosions="true"
+    explosiondamagemultiplier="0.2">
+    <InventoryIcon texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="1702,208,180,96" origin="0.5,0.5" />
+    <Sprite texture="Content/Items/Fabricators/FabricatorsAndDeconstructors.png" sourcerect="0,624,336,400" origin="0.5,0.5" depth="0.8" />
+    <BrokenSprite texture="Content/Items/Fabricators/FabricatorsAndDeconstructors.png" sourcerect="336,624,336,400" origin="0.5,0.5" depth="0.8" maxcondition="80" fadein="true" />
+    <BrokenSprite texture="Content/Items/Fabricators/FabricatorsAndDeconstructors.png" sourcerect="672,624,336,400" origin="0.5,0.5" depth="0.8" maxcondition="0" />
+    <Fabricate suitablefabricators="fabricator" requiredtime="28">
+      <RequiredSkill identifier="electrical" level="55" />
+      <RequiredSkill identifier="mechanical" level="48" />
+      <RequiredItem identifier="fpgacircuit" amount="2" />
+      <RequiredItem identifier="steel" amount="3" />
+      <RequiredItem identifier="plastic" amount="2" />
+    </Fabricate>
+    <Body width="168" height="198" density="40" />
+    <Holdable selectkey="Action" pickkey="Use" slots="RightHand+LeftHand" msg="ItemMsgDetachWrench" PickingTime="3.0" aimpos="60,0" handle1="0,0" attachable="true" aimable="false">
+      <RequiredItem identifier="wrench" type="Equipped" />
+    </Holdable>
+    <Fabricator canbeselected="true" powerconsumption="500.0" msg="ItemMsgInteractSelect" fabricationspeed="1.0">
+      <GuiFrame relativesize="0.4,0.6" style="ItemUI" anchor="Center" />
+      <sound file="Content/Items/Fabricators/Fabricator.ogg" type="OnActive" range="1000.0" loop="true" />
+      <poweronsound file="Content/Items/PowerOnLight1.ogg" range="600" loop="false" />
+      <StatusEffect type="InWater" target="This" condition="-0.5" />
+    </Fabricator>
+    <!-- Native fabricator IO containers must stay first for Fabricator input/output binding. -->
+    <ItemContainer capacity="5" canbeselected="true" hideitems="true" slotsperrow="5" uilabel="" allowuioverlap="true" />
+    <ItemContainer capacity="1" canbeselected="true" hideitems="true" slotsperrow="1" uilabel="" allowuioverlap="true" />
+    <!-- Embedded terminal buffer container (index=2). -->
+    <ItemContainer
+      opentopped="true"
+      capacity="0"
+      maxstacksize="1"
+      ExtraStackSize="63"
+      slotsperrow="5"
+      canbeselected="false"
+      hideitems="true"
+      keepopenwhenequipped="true"
+      movableframe="true"
+      allowuioverlap="true">
+      <GuiFrame relativesize="0.24,0.17" relativeoffset="0.02,0.05" anchor="Center" style="ItemUI" />
+      <SubContainer capacity="5" slotsperrow="5" maxstacksize="63">
+        <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
+      </SubContainer>
+      <SubContainer capacity="5" slotsperrow="5" maxstacksize="63">
+        <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
+      </SubContainer>
+    </ItemContainer>
+    <!-- Hook entry required by fixed terminal HookOnly pipeline. -->
+    <Terminal canbeselected="true" msg="ItemMsgInteractSelect" AllowInGameEditing="false">
+      <GuiFrame relativesize="0.6,0.8" anchor="Center" style="ItemUI" />
+    </Terminal>
+    <DatabaseFabricatorOrderComponent
+      databaseId="default"
+      autoHookActivateButton="false" />
+    <Powered minvoltage="0.5" powerconsumption="35" />
+    <ConnectionPanel selectkey="Action" canbeselected="true" msg="ItemMsgRewireScrewdriver" hudpriority="10">
+      <GuiFrame relativesize="0.22,0.28" minsize="380,320" maxsize="480,420" anchor="Center" style="ConnectionPanel" />
+      <RequiredItem identifier="screwdriver" type="Equipped" />
+      <input name="power_in" displayname="connection.powerin" />
+      <output name="condition_out" displayname="connection.conditionout" />
+    </ConnectionPanel>
+    <DatabaseTerminalComponent
+      databaseId="default"
+      useInPlaceSession="true"
+      readOnlyView="true"
+      terminalBufferContainerIndex="2"
+      compactLeftPanel="true"
+      followFabricatorSelection="true"
+      requirePower="false"
+      minRequiredVoltage="0.5" />
+  </Item>
+
+
+  <Item
     identifier="DatabaseStorageAnchor"
     category="Machine,Electrical"
     tags="database_storage_anchor,machine"

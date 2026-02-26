@@ -11,6 +11,8 @@ namespace DatabaseIOTest.Patches
     [HarmonyPatch]
     internal static class DatabaseTerminalUiHijackPatch
     {
+        private static readonly Identifier DatabaseTerminalTag = "database_terminal".ToIdentifier();
+
         private static IEnumerable<MethodBase> TargetMethods()
         {
             foreach (var method in typeof(Terminal).GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
@@ -29,6 +31,7 @@ namespace DatabaseIOTest.Patches
             {
                 Item item = __instance?.Item;
                 if (item == null || item.Removed) { return true; }
+                if (!item.HasTag(DatabaseTerminalTag)) { return true; }
 
                 var terminal = item.GetComponent<DatabaseTerminalComponent>();
                 if (terminal == null || !terminal.ShouldHijackFixedTerminalUi()) { return true; }

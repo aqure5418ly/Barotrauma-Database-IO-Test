@@ -1,8 +1,6 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using Barotrauma;
 using Barotrauma.Items.Components;
 using Barotrauma.Networking;
@@ -16,6 +14,9 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
 {
     [Editable, Serialize(DatabaseIOTest.Constants.DefaultDatabaseId, IsPropertySaveable.Yes, description: "Shared database id.")]
     public string DatabaseId { get; set; } = DatabaseIOTest.Constants.DefaultDatabaseId;
+
+    [Editable, Serialize(true, IsPropertySaveable.Yes, description: "Automatically hook Fabricator activate button to trigger DB Fill.")]
+    public bool AutoHookActivateButton { get; set; } = true;
 
     [Serialize(0, IsPropertySaveable.No, description: "XML action request (1=PullMaterials).")]
     public int XmlActionRequest { get; set; } = 0;
@@ -67,7 +68,7 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
                 ModFileLog.Write(
                     "Fabricator",
                     $"{DatabaseIOTest.Constants.LogPrefix} db fill client request db='{_resolvedDatabaseId}' itemId={item?.ID}");
-                TrySendOrderFromClient();
+                RequestDbFillFromClient();
             }
         }
 #endif
@@ -83,7 +84,7 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
                 ModFileLog.Write(
                     "Fabricator",
                     $"{DatabaseIOTest.Constants.LogPrefix} db fill server request db='{_resolvedDatabaseId}' itemId={item?.ID}");
-                HandleOrderFromServerSelection(Character.Controlled);
+                RequestDbFillFromClient();
             }
         }
     }
@@ -91,6 +92,17 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
 #if CLIENT
     private void EnsureActivateButtonHooked()
     {
+        if (!AutoHookActivateButton)
+        {
+            if (_hookedButton != null)
+            {
+                _hookedButton.OnClicked = _originalActivateHandler;
+                _hookedButton = null;
+                _originalActivateHandler = null;
+            }
+            return;
+        }
+
         if (_fabricator == null)
         {
             _fabricator = item.GetComponent<Fabricator>();
@@ -146,6 +158,31 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
     }
 #endif
 
+    public bool RequestDbFillFromClient()
+    {
+        if (_fabricator == null)
+        {
+            _fabricator = item.GetComponent<Fabricator>();
+        }
+        if (_fabricator == null) { return false; }
+
+#if CLIENT
+        if (GameMain.NetworkMember?.IsClient == true)
+        {
+            TrySendOrderFromClient();
+            return true;
+        }
+#endif
+
+        if (IsServerAuthority)
+        {
+            HandleOrderFromServerSelection(Character.Controlled);
+            return true;
+        }
+
+        return false;
+    }
+
     public void ClientEventWrite(IWriteMessage msg, NetEntityEvent.IData extraData = null)
     {
         msg.WriteString(_pendingIdentifier ?? "");
@@ -191,7 +228,7 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
         }
         if (_fabricator == null) { return; }
 
-        var recipe = FindRecipeByIdentifier(_fabricator, targetIdentifier);
+        var recipe = FabricatorRecipeResolver.FindRecipeByIdentifier(_fabricator, targetIdentifier);
         if (recipe == null)
         {
             DebugConsole.NewMessage($"{DatabaseIOTest.Constants.LogPrefix} Fabricator recipe not found: {targetIdentifier}", Microsoft.Xna.Framework.Color.OrangeRed);
@@ -218,14 +255,14 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
 
         var allTaken = new List<ItemData>();
         int reqIndex = 0;
-        foreach (var required in GetRequiredItems(recipe))
+        foreach (var required in FabricatorRecipeResolver.GetRequiredItems(recipe))
         {
             reqIndex++;
             int perCraft = Math.Max(0, required.Amount);
             int need = perCraft * batchAmount;
             if (need <= 0) { continue; }
 
-            var allowedIds = GetAllowedIdentifiers(required);
+            var allowedIds = FabricatorRecipeResolver.GetAllowedIdentifiers(required);
             if (allowedIds.Count == 0) { continue; }
 
             bool useCondition = required.UseCondition;
@@ -286,7 +323,9 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
         }
         if (_fabricator == null) { return; }
 
-        if (!TryResolveServerSelectedRecipe(_fabricator, out string identifier, out int amount))
+        if (!FabricatorRecipeResolver.TryResolveSelectedRecipe(_fabricator, isServerAuthority: true, out var selected) ||
+            selected == null ||
+            string.IsNullOrWhiteSpace(selected.Identifier))
         {
             DebugConsole.NewMessage(
                 $"{DatabaseIOTest.Constants.LogPrefix} DB Fill failed: could not resolve current fabricator selection.",
@@ -297,245 +336,7 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
             return;
         }
 
-        HandleOrderServer(identifier, amount, user);
-    }
-
-    private static bool TryResolveServerSelectedRecipe(Fabricator fabricator, out string identifier, out int amount)
-    {
-        identifier = "";
-        amount = 1;
-        if (fabricator == null) { return false; }
-
-        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-
-        bool TryReadIdentifierFromValue(object value, out string id)
-        {
-            id = "";
-            if (value == null) { return false; }
-
-            if (value is Identifier baroId)
-            {
-                if (baroId.IsEmpty) { return false; }
-                id = baroId.Value;
-                return !string.IsNullOrWhiteSpace(id);
-            }
-
-            if (value is string str)
-            {
-                id = str?.Trim() ?? "";
-                return !string.IsNullOrWhiteSpace(id);
-            }
-
-            // Some versions expose selected recipe object directly.
-            if (value is FabricationRecipe recipe && recipe.TargetItem?.Identifier != null)
-            {
-                id = recipe.TargetItem.Identifier.Value;
-                return !string.IsNullOrWhiteSpace(id);
-            }
-
-            return false;
-        }
-
-        // 1) direct identifier property/field
-        foreach (string memberName in new[] { "SelectedItemIdentifier", "selectedItemIdentifier" })
-        {
-            var prop = fabricator.GetType().GetProperty(memberName, flags);
-            if (prop != null && TryReadIdentifierFromValue(prop.GetValue(fabricator), out identifier))
-            {
-                break;
-            }
-
-            var field = fabricator.GetType().GetField(memberName, flags);
-            if (field != null && TryReadIdentifierFromValue(field.GetValue(fabricator), out identifier))
-            {
-                break;
-            }
-        }
-
-        // 2) selected recipe property/field
-        if (string.IsNullOrWhiteSpace(identifier))
-        {
-            foreach (string memberName in new[] { "SelectedRecipe", "selectedRecipe", "SelectedItem", "selectedItem" })
-            {
-                var prop = fabricator.GetType().GetProperty(memberName, flags);
-                if (prop != null && TryReadIdentifierFromValue(prop.GetValue(fabricator), out identifier))
-                {
-                    break;
-                }
-
-                var field = fabricator.GetType().GetField(memberName, flags);
-                if (field != null && TryReadIdentifierFromValue(field.GetValue(fabricator), out identifier))
-                {
-                    break;
-                }
-            }
-        }
-
-        // 3) selected index -> resolve from internal recipe list
-        if (string.IsNullOrWhiteSpace(identifier))
-        {
-            int selectedIndex = -1;
-            foreach (string memberName in new[] { "SelectedItemIndex", "selectedItemIndex", "selectedIndex" })
-            {
-                var prop = fabricator.GetType().GetProperty(memberName, flags);
-                if (prop != null)
-                {
-                    object value = prop.GetValue(fabricator);
-                    if (value != null && int.TryParse(value.ToString(), out selectedIndex))
-                    {
-                        break;
-                    }
-                }
-
-                var field = fabricator.GetType().GetField(memberName, flags);
-                if (field != null)
-                {
-                    object value = field.GetValue(fabricator);
-                    if (value != null && int.TryParse(value.ToString(), out selectedIndex))
-                    {
-                        break;
-                    }
-                }
-            }
-
-            if (selectedIndex >= 0)
-            {
-                var recipes = GetFabricatorRecipes(fabricator).ToList();
-                if (selectedIndex < recipes.Count)
-                {
-                    var recipe = recipes[selectedIndex];
-                    identifier = recipe?.TargetItem?.Identifier.Value ?? "";
-                }
-            }
-        }
-
-        // amount
-        foreach (string memberName in new[] { "AmountToFabricate", "amountToFabricate", "SelectedAmount", "selectedAmount" })
-        {
-            var prop = fabricator.GetType().GetProperty(memberName, flags);
-            if (prop != null)
-            {
-                object value = prop.GetValue(fabricator);
-                if (value != null && int.TryParse(value.ToString(), out int parsed))
-                {
-                    amount = Math.Max(1, parsed);
-                    break;
-                }
-            }
-
-            var field = fabricator.GetType().GetField(memberName, flags);
-            if (field != null)
-            {
-                object value = field.GetValue(fabricator);
-                if (value != null && int.TryParse(value.ToString(), out int parsed))
-                {
-                    amount = Math.Max(1, parsed);
-                    break;
-                }
-            }
-        }
-
-        identifier = identifier?.Trim() ?? "";
-        return !string.IsNullOrWhiteSpace(identifier);
-    }
-
-    private static IEnumerable<FabricationRecipe.RequiredItem> GetRequiredItems(FabricationRecipe recipe)
-    {
-        if (recipe?.RequiredItems == null) { yield break; }
-        foreach (var req in recipe.RequiredItems)
-        {
-            if (req != null) { yield return req; }
-        }
-    }
-
-    private static HashSet<string> GetAllowedIdentifiers(FabricationRecipe.RequiredItem required)
-    {
-        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (required == null) { return result; }
-
-        try
-        {
-            if (required.ItemPrefabs != null)
-            {
-                foreach (var prefab in required.ItemPrefabs)
-                {
-                    if (prefab?.Identifier != null)
-                    {
-                        result.Add(prefab.Identifier.Value);
-                    }
-                }
-            }
-        }
-        catch
-        {
-            // ignore
-        }
-
-        if (result.Count == 0 && required.FirstMatchingPrefab?.Identifier != null)
-        {
-            result.Add(required.FirstMatchingPrefab.Identifier.Value);
-        }
-
-        return result;
-    }
-
-    private static FabricationRecipe FindRecipeByIdentifier(Fabricator fabricator, string identifier)
-    {
-        if (fabricator == null || string.IsNullOrWhiteSpace(identifier)) { return null; }
-        string target = identifier.Trim();
-
-        foreach (var recipe in GetFabricatorRecipes(fabricator))
-        {
-            var targetItem = recipe?.TargetItem;
-            if (targetItem?.Identifier == null) { continue; }
-            if (string.Equals(targetItem.Identifier.Value, target, StringComparison.OrdinalIgnoreCase))
-            {
-                return recipe;
-            }
-        }
-
-        return null;
-    }
-
-    private static IEnumerable<FabricationRecipe> GetFabricatorRecipes(Fabricator fabricator)
-    {
-        if (fabricator == null) { yield break; }
-        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
-        var field = typeof(Fabricator).GetField("fabricationRecipes", flags);
-        var value = field?.GetValue(fabricator);
-        if (value == null) { yield break; }
-
-        if (value is IEnumerable<FabricationRecipe> directList)
-        {
-            foreach (var recipe in directList)
-            {
-                if (recipe != null) { yield return recipe; }
-            }
-            yield break;
-        }
-
-        if (value is IDictionary dictionary)
-        {
-            foreach (DictionaryEntry entry in dictionary)
-            {
-                if (entry.Value is FabricationRecipe recipe)
-                {
-                    yield return recipe;
-                }
-            }
-            yield break;
-        }
-
-        if (value is IEnumerable enumerable)
-        {
-            foreach (var entry in enumerable)
-            {
-                if (entry is FabricationRecipe recipe)
-                {
-                    yield return recipe;
-                }
-            }
-        }
+        HandleOrderServer(selected.Identifier, selected.Amount, user);
     }
 
     private static int CountFlatItems(IEnumerable<ItemData> items)

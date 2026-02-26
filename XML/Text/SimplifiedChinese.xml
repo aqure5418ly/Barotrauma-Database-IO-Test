@@ -8,6 +8,8 @@
   <entitydescription.DatabaseInterfaceFixed>前中期使用的固定式供电接口。</entitydescription.DatabaseInterfaceFixed>
   <entityname.DatabaseTerminalFixed>数据库终端（固定式）</entityname.DatabaseTerminalFixed>
   <entitydescription.DatabaseTerminalFixed>前中期使用的固定式供电终端。</entitydescription.DatabaseTerminalFixed>
+  <entityname.DatabaseCraftTerminal>数据库合成终端</entityname.DatabaseCraftTerminal>
+  <entitydescription.DatabaseCraftTerminal>带只读数据库面板的加工台，用于配方检索与备料。</entitydescription.DatabaseCraftTerminal>
   <entityname.DatabaseStorageAnchor>数据库存储器</entityname.DatabaseStorageAnchor>
   <entitydescription.DatabaseStorageAnchor>侵入式持久化锚点：将数据库序列化数据直接写入存档。</entitydescription.DatabaseStorageAnchor>
   <entityname.DatabaseAutoRestocker>数据库自动补货器</entityname.DatabaseAutoRestocker>
@@ -50,6 +52,10 @@
   <dbiotest.panel.takehint.primary>左键：取一组</dbiotest.panel.takehint.primary>
   <dbiotest.panel.takehint.secondary>右键：取 1 个</dbiotest.panel.takehint.secondary>
   <dbiotest.panel.takehint.shift>Shift+左键：取 1 个</dbiotest.panel.takehint.shift>
+  <dbiotest.panel.readonly>只读视图：已禁用取物操作。</dbiotest.panel.readonly>
+  <dbiotest.craft.dbfill>数据库补料</dbiotest.craft.dbfill>
+  <dbiotest.craft.recipe.none>未选中配方。</dbiotest.craft.recipe.none>
+  <dbiotest.craft.recipe.requirements>配方需求</dbiotest.craft.recipe.requirements>
   <dbiotest.panel.closedhint>面板已隐藏。</dbiotest.panel.closedhint>
   <dbiotest.panel.bufferhint>缓冲区</dbiotest.panel.bufferhint>
   <dbiotest.panel.bufferpartition>缓冲区（1-5格：存入，6-10格：取出）</dbiotest.panel.bufferpartition>

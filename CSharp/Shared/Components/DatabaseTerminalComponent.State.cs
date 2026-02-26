@@ -117,6 +117,18 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     [Editable, Serialize(true, IsPropertySaveable.Yes, description: "Enable C# client terminal panel overlay for testing.")]
     public bool EnableCsPanelOverlay { get; set; } = true;
 
+    [Editable, Serialize(false, IsPropertySaveable.Yes, description: "When true, terminal panel is read-only (view only, no take actions).")]
+    public bool ReadOnlyView { get; set; } = false;
+
+    [Editable(MinValueInt = 0, MaxValueInt = 16), Serialize(0, IsPropertySaveable.Yes, description: "Which ItemContainer index is used as terminal buffer inventory.")]
+    public int TerminalBufferContainerIndex { get; set; } = 0;
+
+    [Editable, Serialize(false, IsPropertySaveable.Yes, description: "Use compact left-side panel layout for fabricator-linked terminals.")]
+    public bool CompactLeftPanel { get; set; } = false;
+
+    [Editable, Serialize(false, IsPropertySaveable.Yes, description: "Filter panel entries by currently selected fabricator recipe requirements.")]
+    public bool FollowFabricatorSelection { get; set; } = false;
+
     [Serialize(false, IsPropertySaveable.No, description: "Lua B1: session open state.")]
     public bool LuaB1SessionOpen { get; set; } = false;
 
@@ -180,6 +192,10 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private int _lastSyncedPageTotal = -1;
     private int _lastSyncedRemainingPageItems = -1;
     private int _lastAppliedStoreVersion = -1;
+    private ItemContainer[] _cachedTerminalItemContainers;
+    private ItemContainer _cachedTerminalBufferContainer;
+    private int _cachedTerminalBufferRequestedIndex = int.MinValue;
+    private int _cachedTerminalBufferResolvedIndex = -1;
 
     private byte _pendingClientAction;
     private string _pendingClientTakeIdentifier = "";
@@ -238,8 +254,10 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private GUITextBox _panelSearchBox;
     private GUIButton _panelSortButton;
     private GUIButton _panelCellSizeButton;
+    private GUIButton _panelDbFillButton;
     private readonly List<GUIButton> _panelCategoryButtons = new List<GUIButton>();
     private readonly List<TerminalVirtualEntry> _panelEntrySnapshot = new List<TerminalVirtualEntry>();
+    private readonly Dictionary<string, int> _recipeRequiredByIdentifier = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
     private CustomInterface _fixedXmlControlPanel;
     private double _nextPanelEntryRefreshAt;
     private double _nextClientPanelActionAllowedTime;
@@ -249,6 +267,10 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private int _localSortMode;
     private bool _localSortDescending;
     private CellSizeMode _cellSizeMode = CellSizeMode.Medium;
+    private string _selectedRecipeIdentifier = "";
+    private int _selectedRecipeAmount = 1;
+    private int _selectedRecipeRequirementsHash;
+    private double _nextRecipeRequirementsRefreshAt;
     private bool _handheldPanelArmedByUse;
     private double _nextHandheldUseToggleAt;
 
@@ -260,6 +282,10 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private const double PanelEvalLogCooldown = 1.0;
     private const double PanelQueueLogCooldown = 2.0;
     private const double PanelEntryRefreshInterval = 0.25;
+    private const double RecipeRequirementsRefreshInterval = 0.5;
+    private const double PanelPerfDiagLogInterval = 1.0;
+    private const double PanelPerfSlowLogThresholdMs = 6.0;
+    private const double PanelPerfSlowLogCooldown = 0.75;
     private const double PanelFocusStickySeconds = 1.25;
     private static long _panelTraceSeq;
     private bool _panelLastVisible;
@@ -273,6 +299,17 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private static int _clientPanelFocusItemId = -1;
     private static double _clientPanelFocusUntil;
     private static string _clientPanelFocusReason = "";
+    private double _nextPanelPerfDiagLogAt;
+    private int _panelPerfDiagSamples;
+    private int _panelPerfDiagGridRebuilds;
+    private double _panelPerfDiagTotalMs;
+    private double _panelPerfDiagMaxMs;
+    private double _panelPerfDiagSnapshotMs;
+    private double _panelPerfDiagRecipeMs;
+    private double _panelPerfDiagVisualsMs;
+    private double _panelPerfDiagBufferMs;
+    private double _panelPerfDiagGridMs;
+    private double _nextPanelPerfSlowLogAt;
     private static readonly MethodInfo AddToGuiUpdateListMethodWithOrder =
         typeof(GUIComponent).GetMethod(
             "AddToGUIUpdateList",
@@ -289,6 +326,8 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             null);
 
 #endif
+
+    private bool _terminalBufferIndexFallbackWarned;
     private static string T(string key, string fallback)
     {
         var value = TextManager.Get(key)?.Value;

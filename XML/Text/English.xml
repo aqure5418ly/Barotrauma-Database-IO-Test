@@ -8,6 +8,8 @@
   <entitydescription.DatabaseInterfaceFixed>Stationary powered interface for early/mid game database ingest.</entitydescription.DatabaseInterfaceFixed>
   <entityname.DatabaseTerminalFixed>Database Terminal (Fixed)</entityname.DatabaseTerminalFixed>
   <entitydescription.DatabaseTerminalFixed>Stationary powered terminal for early/mid game database access.</entitydescription.DatabaseTerminalFixed>
+  <entityname.DatabaseCraftTerminal>Database Craft Terminal</entityname.DatabaseCraftTerminal>
+  <entitydescription.DatabaseCraftTerminal>Fabricator with an embedded read-only database panel for recipe planning.</entitydescription.DatabaseCraftTerminal>
   <entityname.DatabaseStorageAnchor>Database Storage Anchor</entityname.DatabaseStorageAnchor>
   <entitydescription.DatabaseStorageAnchor>Intrusive persistence anchor that stores serialized database data directly in save.</entitydescription.DatabaseStorageAnchor>
   <entityname.DatabaseAutoRestocker>Database Auto Restocker</entityname.DatabaseAutoRestocker>
@@ -48,6 +50,10 @@
   <dbiotest.panel.takehint.primary>Left click: take a stack</dbiotest.panel.takehint.primary>
   <dbiotest.panel.takehint.secondary>Right click: take 1</dbiotest.panel.takehint.secondary>
   <dbiotest.panel.takehint.shift>Shift+Left: take 1</dbiotest.panel.takehint.shift>
+  <dbiotest.panel.readonly>Read-only view: take actions are disabled.</dbiotest.panel.readonly>
+  <dbiotest.craft.dbfill>DB Fill</dbiotest.craft.dbfill>
+  <dbiotest.craft.recipe.none>No recipe selected.</dbiotest.craft.recipe.none>
+  <dbiotest.craft.recipe.requirements>Requirements</dbiotest.craft.recipe.requirements>
   <dbiotest.panel.closedhint>Panel hidden.</dbiotest.panel.closedhint>
   <dbiotest.panel.bufferhint>Buffer</dbiotest.panel.bufferhint>
   <dbiotest.panel.bufferpartition>Buffer (slots 1-5: input, 6-10: output)</dbiotest.panel.bufferpartition>

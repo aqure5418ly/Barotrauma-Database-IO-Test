@@ -21,8 +21,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     public List<TerminalVirtualEntry> GetVirtualViewSnapshot(bool refreshCurrentPage = true)
     {
         var snapshot = new List<TerminalVirtualEntry>();
-        int version = 0;
-        var items = DatabaseStore.GetItemsSnapshot(_resolvedDatabaseId, out version);
+        var items = DatabaseStore.GetItemsSnapshot(_resolvedDatabaseId, out _);
         if (items == null || items.Count <= 0) { return snapshot; }
 
         var signatureOrdinal = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -65,34 +64,17 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             .ThenBy(v => v.VariantCondition)
             .ThenBy(v => v.VariantKey ?? "", StringComparer.Ordinal)
             .ToList();
-        if (ModFileLog.IsDebugEnabled && Timing.TotalTime >= _nextVirtualViewDiagAt)
-        {
-            _nextVirtualViewDiagAt = Timing.TotalTime + VirtualViewDiagCooldownSeconds;
-            ModFileLog.WriteDebug(
-                "Terminal",
-                $"{Constants.LogPrefix} VirtualViewSnapshot id={item?.ID} db='{_resolvedDatabaseId}' " +
-                $"snapshotEntries={snapshot.Count} version={version} cachedOpen={_cachedSessionOpen}");
-        }
         return snapshot;
     }
 
     public bool IsVirtualSessionOpenForUi()
     {
-        bool open = true;
-        if (ModFileLog.IsDebugEnabled &&
-            Timing.TotalTime >= _nextVirtualViewDiagAt)
-        {
-            _nextVirtualViewDiagAt = Timing.TotalTime + VirtualViewDiagCooldownSeconds;
-            ModFileLog.WriteDebug(
-                "Terminal",
-                $"{Constants.LogPrefix} VirtualUiOpenState id={item?.ID} db='{_resolvedDatabaseId}' " +
-                $"open={open} cachedOpen={_cachedSessionOpen}");
-        }
-        return open;
+        return true;
     }
 
     public string TryTakeOneByIdentifierFromVirtualSession(string identifier, Character actor)
     {
+        if (ReadOnlyView) { return "read_only"; }
         if (!IsServerAuthority) { return "not_authority"; }
         if (actor == null || actor.Removed || actor.IsDead || actor.Inventory == null) { return "invalid_actor"; }
 
@@ -124,6 +106,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     public string TryTakeByIdentifierCountFromVirtualSession(string identifier, int count, Character actor)
     {
+        if (ReadOnlyView) { return "read_only"; }
         int remaining = Math.Clamp(count, 1, byte.MaxValue);
         string lastFailure = "not_found";
         int taken = 0;
@@ -145,6 +128,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     public string TryTakeByVariantKeyCountFromVirtualSession(string identifier, string variantKey, int count, Character actor)
     {
+        if (ReadOnlyView) { return "read_only"; }
         if (string.IsNullOrWhiteSpace(variantKey))
         {
             return TryTakeByIdentifierCountFromVirtualSession(identifier, count, actor);
@@ -171,6 +155,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     private string TryTakeOneByVariantKeyFromVirtualSession(string identifier, string variantKey, Character actor)
     {
+        if (ReadOnlyView) { return "read_only"; }
         if (!IsServerAuthority) { return "not_authority"; }
         if (actor == null || actor.Removed || actor.IsDead || actor.Inventory == null) { return "invalid_actor"; }
 

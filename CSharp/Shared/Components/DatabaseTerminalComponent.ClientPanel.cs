@@ -311,10 +311,105 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         return (int)prefab.Category;
     }
 
+    private double GetPanelEntryRefreshInterval()
+    {
+        return (ReadOnlyView && FollowFabricatorSelection) ? 0.5 : PanelEntryRefreshInterval;
+    }
+
+    private static int ComputeRecipeRequirementsHash(IReadOnlyDictionary<string, int> requiredByIdentifier)
+    {
+        if (requiredByIdentifier == null || requiredByIdentifier.Count <= 0) { return 0; }
+        unchecked
+        {
+            int hash = 17;
+            foreach (var pair in requiredByIdentifier.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                hash = (hash * 31) + StringComparer.OrdinalIgnoreCase.GetHashCode(pair.Key ?? "");
+                hash = (hash * 31) + Math.Max(0, pair.Value);
+            }
+            return hash;
+        }
+    }
+
+    private bool RefreshRecipeRequirementsFromFabricator(bool force = false)
+    {
+        if (!FollowFabricatorSelection || item == null || item.Removed)
+        {
+            _recipeRequiredByIdentifier.Clear();
+            _selectedRecipeIdentifier = "";
+            _selectedRecipeAmount = 1;
+            _selectedRecipeRequirementsHash = 0;
+            _nextRecipeRequirementsRefreshAt = 0;
+            return false;
+        }
+
+        if (!force && Timing.TotalTime < _nextRecipeRequirementsRefreshAt)
+        {
+            return _recipeRequiredByIdentifier.Count > 0;
+        }
+        _nextRecipeRequirementsRefreshAt = Timing.TotalTime + RecipeRequirementsRefreshInterval;
+
+        var fabricator = item.GetComponent<Fabricator>();
+        if (fabricator == null)
+        {
+            _recipeRequiredByIdentifier.Clear();
+            _selectedRecipeIdentifier = "";
+            _selectedRecipeAmount = 1;
+            _selectedRecipeRequirementsHash = 0;
+            return false;
+        }
+
+        if (!FabricatorRecipeResolver.TryResolveSelectedRecipe(fabricator, IsServerAuthority, out var selected) ||
+            selected == null ||
+            string.IsNullOrWhiteSpace(selected.Identifier))
+        {
+            _recipeRequiredByIdentifier.Clear();
+            _selectedRecipeIdentifier = "";
+            _selectedRecipeAmount = 1;
+            _selectedRecipeRequirementsHash = 0;
+            return false;
+        }
+
+        var nextRequired = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        _selectedRecipeIdentifier = selected.Identifier ?? "";
+        _selectedRecipeAmount = Math.Max(1, selected.Amount);
+
+        foreach (var required in selected.RequiredItems ?? Array.Empty<RecipeRequiredInfo>())
+        {
+            if (required == null) { continue; }
+            int totalNeed = Math.Max(0, required.TotalAmount);
+            if (totalNeed <= 0) { continue; }
+
+            foreach (string allowedId in required.AllowedIdentifiers ?? Array.Empty<string>())
+            {
+                string normalized = (allowedId ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(normalized)) { continue; }
+                if (nextRequired.TryGetValue(normalized, out int current))
+                {
+                    nextRequired[normalized] = current + totalNeed;
+                }
+                else
+                {
+                    nextRequired[normalized] = totalNeed;
+                }
+            }
+        }
+
+        _recipeRequiredByIdentifier.Clear();
+        foreach (var pair in nextRequired)
+        {
+            _recipeRequiredByIdentifier[pair.Key] = pair.Value;
+        }
+
+        _selectedRecipeRequirementsHash = ComputeRecipeRequirementsHash(_recipeRequiredByIdentifier);
+        return _recipeRequiredByIdentifier.Count > 0;
+    }
+
     private bool RefreshPanelEntrySnapshot(bool force = false)
     {
         if (!force && Timing.TotalTime < _nextPanelEntryRefreshAt) { return false; }
-        _nextPanelEntryRefreshAt = Timing.TotalTime + PanelEntryRefreshInterval;
+        _nextPanelEntryRefreshAt = Timing.TotalTime + GetPanelEntryRefreshInterval();
 
         List<TerminalVirtualEntry> source;
         if (IsServerAuthority)
@@ -557,6 +652,9 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (entry == null) { return ""; }
         string displayName = entry.DisplayName ?? entry.Identifier ?? "";
         int amount = Math.Max(0, entry.Amount);
+        int recipeNeed = 0;
+        bool hasRecipeNeed = FollowFabricatorSelection &&
+                             _recipeRequiredByIdentifier.TryGetValue(entry.Identifier ?? "", out recipeNeed);
         int quality = Math.Max(0, entry.VariantQuality > 0 ? entry.VariantQuality : entry.BestQuality);
         float condition = Math.Max(0f, entry.VariantCondition > 0f ? entry.VariantCondition : entry.AverageCondition);
         string hasContainedText = entry.HasContainedItems
@@ -565,14 +663,22 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         string secondaryHint = hasSecondaryClick
             ? T("dbiotest.panel.takehint.secondary", "Right click: take 1")
             : T("dbiotest.panel.takehint.shift", "Shift+Left: take 1");
+        string readOnlyHint = ReadOnlyView
+            ? $"\n{T("dbiotest.panel.readonly", "Read-only view: take actions are disabled.")}"
+            : "";
+
+        string requirementLine = hasRecipeNeed
+            ? $"{T("dbiotest.craft.recipe.requirements", "Requirements")}: {amount}/{Math.Max(0, recipeNeed)}\n"
+            : "";
 
         return $"{displayName}\n" +
                $"{T("dbiotest.panel.variant.key", "Variant")}: {entry.VariantKey}\n" +
                $"{T("dbiotest.panel.variant.contained", "Contained Items")}: {hasContainedText}\n" +
                $"{T("dbiotest.terminal.amount", "Amount")}: {amount}\n" +
                $"{T("dbiotest.terminal.quality", "Quality")}: {quality} | {T("dbiotest.terminal.condition", "Condition")}: {condition:0.#}%\n" +
+               $"{requirementLine}" +
                $"{T("dbiotest.panel.takehint.primary", "Left click: take a stack")} ({LeftClickTakeGroupCap} cap)\n" +
-               $"{secondaryHint}";
+               $"{secondaryHint}{readOnlyHint}";
     }
 
     private bool TryBindSecondaryClick(GUIButton button, Func<GUIButton, object, bool> handler)
@@ -645,9 +751,17 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             iconImage.CanBeFocused = false;
         }
 
+        int haveAmount = Math.Max(0, entry.Amount);
+        int recipeNeed = 0;
+        bool hasRecipeNeed = FollowFabricatorSelection &&
+                             _recipeRequiredByIdentifier.TryGetValue(entry.Identifier ?? "", out recipeNeed);
+        string amountText = hasRecipeNeed
+            ? $"{haveAmount}/{Math.Max(0, recipeNeed)}"
+            : $"x{haveAmount}";
+
         var amountLabel = new GUITextBlock(
             new RectTransform(new Vector2(0.9f, 0.32f), button.RectTransform, Anchor.BottomRight),
-            $"x{Math.Max(0, entry.Amount)}",
+            amountText,
             font: GUIStyle.SmallFont,
             textAlignment: Alignment.BottomRight);
         amountLabel.TextColor = Color.White;
@@ -669,18 +783,26 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         badgeLabel.TextColor = Color.LightGray;
         badgeLabel.CanBeFocused = false;
 
-        bool hasSecondaryClick = TryBindSecondaryClick(
-            button,
-            (_, __) =>
-            {
-                RequestPanelTakeByIdentifierClient(entry.Identifier, entry.VariantKey, 1);
-                return true;
-            });
+        bool hasSecondaryClick = false;
+        if (!ReadOnlyView)
+        {
+            hasSecondaryClick = TryBindSecondaryClick(
+                button,
+                (_, __) =>
+                {
+                    RequestPanelTakeByIdentifierClient(entry.Identifier, entry.VariantKey, 1);
+                    return true;
+                });
+        }
 
         button.ToolTip = BuildItemTooltip(entry, hasSecondaryClick);
-        button.Enabled = Math.Max(0, entry.Amount) > 0;
+        button.Enabled = !ReadOnlyView && Math.Max(0, entry.Amount) > 0;
         button.OnClicked = (_, __) =>
         {
+            if (ReadOnlyView)
+            {
+                return true;
+            }
             int count = IsSingleTakeModifierPressed() ? 1 : ResolveTakeStackSize(entry.Identifier);
             RequestPanelTakeByIdentifierClient(entry.Identifier, entry.VariantKey, count);
             return true;
@@ -689,7 +811,13 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     private List<TerminalVirtualEntry> BuildFilteredEntries()
     {
-        var filtered = _panelEntrySnapshot
+        IEnumerable<TerminalVirtualEntry> source = _panelEntrySnapshot;
+        if (FollowFabricatorSelection && _recipeRequiredByIdentifier.Count > 0)
+        {
+            source = source.Where(entry => _recipeRequiredByIdentifier.ContainsKey(entry?.Identifier ?? ""));
+        }
+
+        var filtered = source
             .Where(entry => MatchCategory(entry, _selectedCategoryFlag))
             .Where(entry => MatchSearch(entry, _currentSearchText))
             .ToList();
@@ -766,14 +894,19 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         int rowCount = Math.Max(1, (int)Math.Ceiling(filtered.Count / (double)activeColumns));
         float rowHeight = GetIconGridRowRelativeHeight(rowCount, activeColumns);
         int entrySignature = ComputeIconGridEntriesSignature(filtered);
-        int gridWidth = _panelIconGridList.Rect.Width;
-        int gridHeight = _panelIconGridList.Rect.Height;
+        // NOTE: Do NOT include gridWidth/gridHeight/rowHeight in the signature!
+        // These layout dimensions fluctuate after each rebuild (scrollbar appear/disappear,
+        // child reflow, etc.), causing the signature to change every frame and triggering
+        // an infinite ClearChildren()+rebuild loop that tanks FPS from 200 to 10.
+        string recipeSignature = FollowFabricatorSelection
+            ? $"{_selectedRecipeIdentifier}|{_selectedRecipeAmount}|{_selectedRecipeRequirementsHash}"
+            : "none";
         string signature =
             $"{_cachedSessionOpen}|{_localSortMode}|{_localSortDescending}|{_selectedCategoryFlag}|{(_currentSearchText ?? "").Trim()}|" +
-            $"{filtered.Count}|mode={_cellSizeMode}|cols={activeColumns}|{rowCount}|{rowHeight:0.###}|{gridWidth}x{gridHeight}|{entrySignature}";
+            $"{filtered.Count}|mode={_cellSizeMode}|cols={activeColumns}|{rowCount}|{entrySignature}|recipe={recipeSignature}";
         if (!force && signature == _lastIconGridRenderSignature) { return; }
         _lastIconGridRenderSignature = signature;
-        LogPanelDebug($"grid rebuild mode={_cellSizeMode} cols={activeColumns} rows={rowCount} rowHeight={rowHeight:0.###} grid={gridWidth}x{gridHeight} entries={filtered.Count}");
+        LogPanelDebug($"grid rebuild mode={_cellSizeMode} cols={activeColumns} rows={rowCount} rowHeight={rowHeight:0.###} entries={filtered.Count}");
 
         _panelIconGridList.Content.ClearChildren();
 
@@ -815,6 +948,12 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     private void RequestPanelTakeByIdentifierClient(string identifier, string variantKey, int count)
     {
+        if (ReadOnlyView)
+        {
+            LogPanelDebug($"take ignored (read-only) identifier='{identifier}' variant='{variantKey}' count={count}");
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(identifier)) { return; }
         string wantedVariantKey = (variantKey ?? "").Trim();
         int takeCount = Math.Max(1, count);
@@ -849,6 +988,21 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         _pendingClientAction = (byte)TerminalPanelAction.TakeByIdentifier;
         LogPanelDebug($"take sent to server identifier='{identifier}' variant='{wantedVariantKey}' count={takeCount}");
         item.CreateClientEvent(this);
+    }
+
+    private void RequestDbFillFromPanel()
+    {
+        if (!FollowFabricatorSelection || item == null || item.Removed) { return; }
+
+        var orderComponent = item.GetComponent<DatabaseFabricatorOrderComponent>();
+        if (orderComponent == null)
+        {
+            LogPanelDebug($"db fill ignored id={item?.ID}: DatabaseFabricatorOrderComponent missing");
+            return;
+        }
+
+        bool requested = orderComponent.RequestDbFillFromClient();
+        LogPanelDebug($"db fill requested id={item?.ID} db='{_resolvedDatabaseId}' recipe='{_selectedRecipeIdentifier}' amount={_selectedRecipeAmount} sent={requested}");
     }
 
     private void SetPanelVisible(bool visible, string reason)
@@ -907,10 +1061,14 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             return;
         }
 
+        Vector2 panelSize = CompactLeftPanel ? new Vector2(0.28f, 0.78f) : new Vector2(0.6f, 0.78f);
+        Anchor panelAnchor = CompactLeftPanel ? Anchor.CenterRight : Anchor.Center;
+        Vector2 panelOffset = CompactLeftPanel ? new Vector2(-0.02f, 0f) : new Vector2(0f, -0.03f);
+
         _panelFrame = new GUIFrame(
-            new RectTransform(new Vector2(0.6f, 0.78f), GUI.Canvas, Anchor.Center)
+            new RectTransform(panelSize, GUI.Canvas, panelAnchor)
             {
-                RelativeOffset = new Vector2(0f, -0.03f)
+                RelativeOffset = panelOffset
             },
             style: "ItemUI");
         _panelFrame.Visible = false;
@@ -963,8 +1121,12 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         };
 
         _cellSizeMode = _runtimeCellSizeMode;
+        float searchWidth = FollowFabricatorSelection ? 0.42f : 0.56f;
+        float sortWidth = FollowFabricatorSelection ? 0.18f : 0.22f;
+        float sizeWidth = FollowFabricatorSelection ? 0.18f : 0.22f;
+        float dbFillWidth = FollowFabricatorSelection ? 0.20f : 0f;
         _panelSearchBox = new GUITextBox(
-            new RectTransform(new Vector2(0.56f, 0.9f), _panelToolbarLayout.RectTransform),
+            new RectTransform(new Vector2(searchWidth, 0.9f), _panelToolbarLayout.RectTransform),
             _currentSearchText ?? "",
             createClearButton: true);
         _panelSearchBox.ToolTip = T("dbiotest.ui.search.tooltip", "Search by item name or identifier.");
@@ -977,7 +1139,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         };
 
         _panelSortButton = new GUIButton(
-            new RectTransform(new Vector2(0.22f, 0.9f), _panelToolbarLayout.RectTransform),
+            new RectTransform(new Vector2(sortWidth, 0.9f), _panelToolbarLayout.RectTransform),
             GetSortButtonLabel(),
             style: "GUIButtonSmall");
         _panelSortButton.OnClicked = (_, __) =>
@@ -989,7 +1151,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         };
 
         _panelCellSizeButton = new GUIButton(
-            new RectTransform(new Vector2(0.22f, 0.9f), _panelToolbarLayout.RectTransform),
+            new RectTransform(new Vector2(sizeWidth, 0.9f), _panelToolbarLayout.RectTransform),
             GetCellSizeButtonLabel(),
             style: "GUIButtonSmall");
         _panelCellSizeButton.OnClicked = (_, __) =>
@@ -1000,20 +1162,35 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             return true;
         };
 
+        _panelDbFillButton = new GUIButton(
+            new RectTransform(new Vector2(Math.Max(0.01f, dbFillWidth), 0.9f), _panelToolbarLayout.RectTransform),
+            T("dbiotest.craft.dbfill", "DB Fill"),
+            style: "GUIButtonSmall");
+        _panelDbFillButton.OnClicked = (_, __) =>
+        {
+            RequestDbFillFromPanel();
+            return true;
+        };
+        _panelDbFillButton.Visible = FollowFabricatorSelection;
+        _panelDbFillButton.Enabled = false;
+
         _panelSummaryInfo = new GUITextBlock(
             new RectTransform(new Vector2(1f, 0.06f), _panelMainLayout.RectTransform),
             "",
             textAlignment: Alignment.CenterLeft);
 
+        float contentHeight = CompactLeftPanel ? 0.72f : 0.58f;
         _panelContentLayout = new GUILayoutGroup(
-            new RectTransform(new Vector2(1f, 0.58f), _panelMainLayout.RectTransform),
+            new RectTransform(new Vector2(1f, contentHeight), _panelMainLayout.RectTransform),
             isHorizontal: true)
         {
             AbsoluteSpacing = 6
         };
 
+        float categoryWidth = CompactLeftPanel ? 0.24f : 0.16f;
+        float gridWidth = 1f - categoryWidth;
         _panelCategoryLayout = new GUILayoutGroup(
-            new RectTransform(new Vector2(0.16f, 1f), _panelContentLayout.RectTransform),
+            new RectTransform(new Vector2(categoryWidth, 1f), _panelContentLayout.RectTransform),
             isHorizontal: false)
         {
             AbsoluteSpacing = 3
@@ -1038,7 +1215,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         }
 
         _panelIconGridList = new GUIListBox(
-            new RectTransform(new Vector2(0.84f, 1f), _panelContentLayout.RectTransform))
+            new RectTransform(new Vector2(gridWidth, 1f), _panelContentLayout.RectTransform))
         {
             Spacing = 0
         };
@@ -1046,26 +1223,29 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         _panelBufferInfo = null;
         _panelBufferFrame = null;
         _panelBufferDrawer = null;
-        _panelBufferInfo = new GUITextBlock(
-            new RectTransform(new Vector2(1f, 0.04f), _panelMainLayout.RectTransform),
-            T("dbiotest.panel.bufferpartition", "Buffer (slots 1-5: input, 6-10: output)"),
-            textAlignment: Alignment.Left);
+        if (!CompactLeftPanel)
+        {
+            _panelBufferInfo = new GUITextBlock(
+                new RectTransform(new Vector2(1f, 0.04f), _panelMainLayout.RectTransform),
+                T("dbiotest.panel.bufferpartition", "Buffer (slots 1-5: input, 6-10: output)"),
+                textAlignment: Alignment.Left);
 
-        _panelBufferFrame = new GUIFrame(
-            new RectTransform(new Vector2(1f, 0.12f), _panelMainLayout.RectTransform),
-            style: "InnerFrameDark");
-        _panelBufferFrame.CanBeFocused = false;
-        _panelBufferDrawer = new GUICustomComponent(
-            new RectTransform(Vector2.One, _panelBufferFrame.RectTransform),
-            (sb, _) =>
-            {
-                var inventory = GetTerminalInventory();
-                if (inventory != null)
+            _panelBufferFrame = new GUIFrame(
+                new RectTransform(new Vector2(1f, 0.12f), _panelMainLayout.RectTransform),
+                style: "InnerFrameDark");
+            _panelBufferFrame.CanBeFocused = false;
+            _panelBufferDrawer = new GUICustomComponent(
+                new RectTransform(Vector2.One, _panelBufferFrame.RectTransform),
+                (sb, _) =>
                 {
-                    inventory.Draw(sb, false);
-                }
-            },
-            null);
+                    var inventory = GetTerminalInventory();
+                    if (inventory != null)
+                    {
+                        inventory.Draw(sb, false);
+                    }
+                },
+                null);
+        }
 
         _panelStatusText = new GUITextBlock(
             new RectTransform(new Vector2(1f, 0.08f), _panelMainLayout.RectTransform),
@@ -1235,7 +1415,35 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private void UpdateClientPanelVisuals()
     {
         if (_panelFrame == null) { return; }
+        bool perfDiag = ModFileLog.IsDebugEnabled;
+        long perfStartTicks = 0;
+        long perfAfterSnapshotTicks = 0;
+        long perfAfterRecipeTicks = 0;
+        long perfAfterVisualsTicks = 0;
+        long perfAfterBufferTicks = 0;
+        long perfEndTicks = 0;
+        if (perfDiag)
+        {
+            perfStartTicks = Stopwatch.GetTimestamp();
+        }
+
         bool snapshotChanged = RefreshPanelEntrySnapshot();
+        if (perfDiag)
+        {
+            perfAfterSnapshotTicks = Stopwatch.GetTimestamp();
+        }
+        string prevSelectedRecipeIdentifier = _selectedRecipeIdentifier ?? "";
+        int prevSelectedRecipeAmount = _selectedRecipeAmount;
+        int prevSelectedRecipeRequirementsHash = _selectedRecipeRequirementsHash;
+        bool hasRecipeRequirements = RefreshRecipeRequirementsFromFabricator();
+        if (perfDiag)
+        {
+            perfAfterRecipeTicks = Stopwatch.GetTimestamp();
+        }
+        bool recipeStateChanged =
+            !string.Equals(prevSelectedRecipeIdentifier, _selectedRecipeIdentifier ?? "", StringComparison.Ordinal) ||
+            prevSelectedRecipeAmount != _selectedRecipeAmount ||
+            prevSelectedRecipeRequirementsHash != _selectedRecipeRequirementsHash;
         int totalAmount = 0;
         for (int i = 0; i < _panelEntrySnapshot.Count; i++)
         {
@@ -1264,6 +1472,14 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             _panelCellSizeButton.Text = GetCellSizeButtonLabel();
             _panelCellSizeButton.Enabled = true;
         }
+        if (_panelDbFillButton != null)
+        {
+            _panelDbFillButton.Visible = FollowFabricatorSelection;
+            _panelDbFillButton.Text = T("dbiotest.craft.dbfill", "DB Fill");
+            _panelDbFillButton.Enabled = FollowFabricatorSelection &&
+                                         !string.IsNullOrWhiteSpace(_selectedRecipeIdentifier) &&
+                                         item?.GetComponent<DatabaseFabricatorOrderComponent>() != null;
+        }
 
         if (_panelSearchBox != null &&
             !string.Equals(_panelSearchBox.Text ?? "", _currentSearchText ?? "", StringComparison.Ordinal))
@@ -1279,7 +1495,31 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         if (_panelStatusText != null)
         {
             string takeHint = T("dbiotest.panel.takehint", "Left click takes a stack. Right click (or Shift+Left) takes 1.");
-            if (IsFixedTerminal)
+            if (ReadOnlyView)
+            {
+                takeHint = T("dbiotest.panel.readonly", "Read-only view: take actions are disabled.");
+            }
+            if (FollowFabricatorSelection)
+            {
+                if (!string.IsNullOrWhiteSpace(_selectedRecipeIdentifier))
+                {
+                    if (hasRecipeRequirements)
+                    {
+                        _panelStatusText.Text =
+                            $"{takeHint} | {T("dbiotest.craft.recipe.requirements", "Requirements")}: {_selectedRecipeIdentifier} x{_selectedRecipeAmount}";
+                    }
+                    else
+                    {
+                        _panelStatusText.Text =
+                            $"{takeHint} | {T("dbiotest.craft.recipe.requirements", "Requirements")}: {_selectedRecipeIdentifier} x{_selectedRecipeAmount} (0)";
+                    }
+                }
+                else
+                {
+                    _panelStatusText.Text = $"{takeHint} | {T("dbiotest.craft.recipe.none", "No recipe selected.")}";
+                }
+            }
+            else if (IsFixedTerminal)
             {
                 string flowHint = T("dbiotest.panel.bufferflow", "Input slots 1-5 auto-ingest, output slots 6-10 receive extracted items.");
                 _panelStatusText.Text = $"{takeHint} | {flowHint}";
@@ -1289,10 +1529,82 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
                 _panelStatusText.Text = takeHint;
             }
         }
+        if (perfDiag)
+        {
+            perfAfterVisualsTicks = Stopwatch.GetTimestamp();
+        }
 
         UpdatePanelBufferVisuals();
-        // Always call RefreshIconGrid - the internal signature check handles dedup.
-        RefreshIconGrid(force: snapshotChanged);
+        if (perfDiag)
+        {
+            perfAfterBufferTicks = Stopwatch.GetTimestamp();
+        }
+        // Rebuild only when data state changes. Avoid per-frame sort/filter work.
+        bool gridRebuilt = false;
+        if (snapshotChanged || recipeStateChanged)
+        {
+            RefreshIconGrid(force: true);
+            gridRebuilt = true;
+        }
+
+        if (perfDiag)
+        {
+            perfEndTicks = Stopwatch.GetTimestamp();
+            double snapshotMs = (perfAfterSnapshotTicks - perfStartTicks) * 1000.0 / Stopwatch.Frequency;
+            double recipeMs = (perfAfterRecipeTicks - perfAfterSnapshotTicks) * 1000.0 / Stopwatch.Frequency;
+            double visualsMs = (perfAfterVisualsTicks - perfAfterRecipeTicks) * 1000.0 / Stopwatch.Frequency;
+            double bufferMs = (perfAfterBufferTicks - perfAfterVisualsTicks) * 1000.0 / Stopwatch.Frequency;
+            double gridMs = (perfEndTicks - perfAfterBufferTicks) * 1000.0 / Stopwatch.Frequency;
+            double totalMs = (perfEndTicks - perfStartTicks) * 1000.0 / Stopwatch.Frequency;
+
+            _panelPerfDiagSamples++;
+            _panelPerfDiagTotalMs += totalMs;
+            _panelPerfDiagSnapshotMs += snapshotMs;
+            _panelPerfDiagRecipeMs += recipeMs;
+            _panelPerfDiagVisualsMs += visualsMs;
+            _panelPerfDiagBufferMs += bufferMs;
+            _panelPerfDiagGridMs += gridMs;
+            _panelPerfDiagMaxMs = Math.Max(_panelPerfDiagMaxMs, totalMs);
+            if (gridRebuilt)
+            {
+                _panelPerfDiagGridRebuilds++;
+            }
+
+            if (totalMs >= PanelPerfSlowLogThresholdMs && Timing.TotalTime >= _nextPanelPerfSlowLogAt)
+            {
+                _nextPanelPerfSlowLogAt = Timing.TotalTime + PanelPerfSlowLogCooldown;
+                ModFileLog.WriteDebug(
+                    "Perf",
+                    $"{Constants.LogPrefix} PanelPerfSlow id={item?.ID} db='{_resolvedDatabaseId}' totalMs={totalMs:0.###} " +
+                    $"snapshotMs={snapshotMs:0.###} recipeMs={recipeMs:0.###} visualsMs={visualsMs:0.###} " +
+                    $"bufferMs={bufferMs:0.###} gridMs={gridMs:0.###} entries={_panelEntrySnapshot.Count} " +
+                    $"recipeReq={_recipeRequiredByIdentifier.Count} rebuilt={gridRebuilt}");
+            }
+
+            if (Timing.TotalTime >= _nextPanelPerfDiagLogAt)
+            {
+                _nextPanelPerfDiagLogAt = Timing.TotalTime + PanelPerfDiagLogInterval;
+                int samples = Math.Max(1, _panelPerfDiagSamples);
+                ModFileLog.WriteDebug(
+                    "Perf",
+                    $"{Constants.LogPrefix} PanelPerf id={item?.ID} db='{_resolvedDatabaseId}' samples={_panelPerfDiagSamples} " +
+                    $"avgMs={(_panelPerfDiagTotalMs / samples):0.###} maxMs={_panelPerfDiagMaxMs:0.###} " +
+                    $"snapshotAvg={(_panelPerfDiagSnapshotMs / samples):0.###} recipeAvg={(_panelPerfDiagRecipeMs / samples):0.###} " +
+                    $"visualAvg={(_panelPerfDiagVisualsMs / samples):0.###} bufferAvg={(_panelPerfDiagBufferMs / samples):0.###} " +
+                    $"gridAvg={(_panelPerfDiagGridMs / samples):0.###} gridRebuilds={_panelPerfDiagGridRebuilds} " +
+                    $"entries={_panelEntrySnapshot.Count} recipeReq={_recipeRequiredByIdentifier.Count}");
+
+                _panelPerfDiagSamples = 0;
+                _panelPerfDiagGridRebuilds = 0;
+                _panelPerfDiagTotalMs = 0;
+                _panelPerfDiagMaxMs = 0;
+                _panelPerfDiagSnapshotMs = 0;
+                _panelPerfDiagRecipeMs = 0;
+                _panelPerfDiagVisualsMs = 0;
+                _panelPerfDiagBufferMs = 0;
+                _panelPerfDiagGridMs = 0;
+            }
+        }
     }
 
     private void UpdatePanelBufferVisuals()

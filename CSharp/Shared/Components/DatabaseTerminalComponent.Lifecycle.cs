@@ -15,6 +15,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     {
         base.OnItemLoaded();
         _resolvedDatabaseId = DatabaseStore.Normalize(DatabaseId);
+        InvalidateTerminalContainerCache();
 
         if (IsServerAuthority)
         {
@@ -151,6 +152,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     public override void RemoveComponentSpecific()
     {
+        InvalidateTerminalContainerCache();
 #if CLIENT
         _handheldPanelArmedByUse = false;
         ReleaseClientPanelFocusIfOwned("component removed");

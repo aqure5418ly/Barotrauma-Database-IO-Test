@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Reflection;
+using System.Collections.Generic;
+using System.Linq;
 using Barotrauma;
 using Barotrauma.Items.Components;
 using Barotrauma.Networking;
@@ -108,6 +110,15 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         if (action == TerminalPanelAction.TakeByIdentifier)
         {
+            if (ReadOnlyView)
+            {
+                ModFileLog.WriteDebug(
+                    "Panel",
+                    $"{Constants.LogPrefix} take request ignored (read-only) id={item?.ID} db='{_resolvedDatabaseId}' actor='{actor?.Name ?? "none"}' " +
+                    $"identifier='{takeIdentifier}' variant='{takeVariantKey}' count={takeCount}");
+                return;
+            }
+
             string result = TryTakeByVariantKeyCountFromVirtualSession(takeIdentifier, takeVariantKey, takeCount, actor);
             if (!string.IsNullOrEmpty(result))
             {
@@ -296,7 +307,71 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     private Inventory GetTerminalInventory()
     {
-        return item.GetComponent<ItemContainer>()?.Inventory;
+        return GetTerminalBufferContainerComponent()?.Inventory;
+    }
+
+    private void InvalidateTerminalContainerCache()
+    {
+        _cachedTerminalItemContainers = null;
+        _cachedTerminalBufferContainer = null;
+        _cachedTerminalBufferRequestedIndex = int.MinValue;
+        _cachedTerminalBufferResolvedIndex = -1;
+    }
+
+    internal ItemContainer GetTerminalBufferContainerComponent()
+    {
+        if (item == null || item.Removed)
+        {
+            InvalidateTerminalContainerCache();
+            return null;
+        }
+
+        if (_cachedTerminalItemContainers == null || _cachedTerminalItemContainers.Length == 0)
+        {
+            _cachedTerminalItemContainers = item.GetComponents<ItemContainer>()?.ToArray() ?? Array.Empty<ItemContainer>();
+            _cachedTerminalBufferContainer = null;
+            _cachedTerminalBufferRequestedIndex = int.MinValue;
+            _cachedTerminalBufferResolvedIndex = -1;
+        }
+
+        if (_cachedTerminalItemContainers == null || _cachedTerminalItemContainers.Length == 0) { return null; }
+
+        int requestedIndex = TerminalBufferContainerIndex;
+        int clampedIndex = Math.Clamp(requestedIndex, 0, _cachedTerminalItemContainers.Length - 1);
+
+        if (_cachedTerminalBufferContainer != null &&
+            _cachedTerminalBufferRequestedIndex == requestedIndex &&
+            _cachedTerminalBufferResolvedIndex == clampedIndex &&
+            clampedIndex >= 0 &&
+            clampedIndex < _cachedTerminalItemContainers.Length &&
+            ReferenceEquals(_cachedTerminalItemContainers[clampedIndex], _cachedTerminalBufferContainer))
+        {
+            return _cachedTerminalBufferContainer;
+        }
+
+        if (requestedIndex != clampedIndex && !_terminalBufferIndexFallbackWarned)
+        {
+            _terminalBufferIndexFallbackWarned = true;
+            ModFileLog.Write(
+                "Terminal",
+                $"{Constants.LogPrefix} terminalBufferContainerIndex out of range id={item?.ID} requested={requestedIndex} " +
+                $"available={_cachedTerminalItemContainers.Length} fallback={clampedIndex}");
+        }
+
+        _cachedTerminalBufferRequestedIndex = requestedIndex;
+        _cachedTerminalBufferResolvedIndex = clampedIndex;
+        _cachedTerminalBufferContainer = _cachedTerminalItemContainers[clampedIndex];
+        return _cachedTerminalBufferContainer;
+    }
+
+    internal bool IsTerminalBufferContainer(ItemContainer container)
+    {
+        if (container == null) { return false; }
+        if (_cachedTerminalBufferContainer != null && ReferenceEquals(container, _cachedTerminalBufferContainer))
+        {
+            return true;
+        }
+        return ReferenceEquals(container, GetTerminalBufferContainerComponent());
     }
 
     private void UpdateDescriptionLocal()
@@ -309,6 +384,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         string directionLabel = SortDescending ? T("dbiotest.terminal.sortdesc", "Desc") : T("dbiotest.terminal.sortasc", "Asc");
         string searchLabel = T("dbiotest.terminal.search", "Search");
         string searchValue = string.IsNullOrWhiteSpace(SearchKeyword) ? "-" : SearchKeyword;
+        string readOnlyLine = ReadOnlyView ? $"\n{T("dbiotest.panel.readonly", "Read-only view: take actions are disabled.")}" : "";
 
         string powerLine = "";
         if (RequirePower)
@@ -323,7 +399,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         item.Description =
             $"{hint}\n\n{dbLabel}: {_resolvedDatabaseId}\n{countLabel}: {_cachedItemCount}" +
             $"\n{sortLabel}: {GetSortModeLabel((TerminalSortMode)NormalizeSortModeIndex(SortModeIndex))} ({directionLabel})" +
-            $"\n{searchLabel}: {searchValue}{powerLine}";
+            $"\n{searchLabel}: {searchValue}{powerLine}{readOnlyLine}";
     }
 
     private static string GetSortModeLabel(TerminalSortMode mode)
