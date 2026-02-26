@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using Barotrauma;
 using Barotrauma.Items.Components;
 using DatabaseIOTest.Models;
@@ -8,6 +9,13 @@ namespace DatabaseIOTest.Services
 {
     public static class ItemSerializer
     {
+        private static readonly PropertyInfo ItemStackSizeProperty =
+            typeof(Item).GetProperty("StackSize", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+        private static readonly FieldInfo ItemStackSizeField =
+            typeof(Item).GetField("stackSize", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic) ??
+            typeof(Item).GetField("StackSize", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
         public static List<ItemData> SerializeItems(Character owner, List<Item> items)
         {
             if (items == null) { return new List<ItemData>(); }
@@ -90,14 +98,13 @@ namespace DatabaseIOTest.Services
 
         private static ItemData SerializeItem(Item item)
         {
+            int runtimeStackSize = TryResolveRuntimeStackSize(item);
             var data = new ItemData
             {
                 Identifier = item.Prefab.Identifier.Value,
                 Condition = item.Condition,
                 Quality = item.Quality,
-                // LuaCs Item type in this game version does not expose runtime StackSize.
-                // Stacking is reconstructed by merging equivalent serialized entries.
-                StackSize = 1
+                StackSize = runtimeStackSize
             };
 
             bool isStolen = IsStolen(item);
@@ -131,6 +138,35 @@ namespace DatabaseIOTest.Services
             }
 
             return data;
+        }
+
+        private static int TryResolveRuntimeStackSize(Item item)
+        {
+            if (item == null) { return 1; }
+            int resolved = 1;
+
+            try
+            {
+                if (ItemStackSizeProperty != null)
+                {
+                    object raw = ItemStackSizeProperty.GetValue(item);
+                    if (raw is int stack) { resolved = stack; }
+                    else if (raw != null && int.TryParse(raw.ToString(), out int parsed)) { resolved = parsed; }
+                }
+
+                if (resolved <= 1 && ItemStackSizeField != null)
+                {
+                    object raw = ItemStackSizeField.GetValue(item);
+                    if (raw is int stack) { resolved = stack; }
+                    else if (raw != null && int.TryParse(raw.ToString(), out int parsed)) { resolved = parsed; }
+                }
+            }
+            catch
+            {
+                // Keep fallback stack size=1 when runtime internals are unavailable.
+            }
+
+            return System.Math.Max(1, resolved);
         }
 
         private static bool CanStack(ItemData itemData)

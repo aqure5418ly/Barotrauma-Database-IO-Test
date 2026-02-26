@@ -3,11 +3,13 @@
   <entityname.DatabaseInterface>数据库接口</entityname.DatabaseInterface>
   <entitydescription.DatabaseInterface>将物品放入槽位即可吸收到数据库。</entitydescription.DatabaseInterface>
   <entityname.DatabaseTerminal>数据库终端</entityname.DatabaseTerminal>
-  <entitydescription.DatabaseTerminal>用于开启或关闭数据库会话。</entitydescription.DatabaseTerminal>
+  <entitydescription.DatabaseTerminal>用于浏览数据库物品，并将取出的物品放入终端输出缓冲区。</entitydescription.DatabaseTerminal>
   <entityname.DatabaseInterfaceFixed>数据库接口（固定式）</entityname.DatabaseInterfaceFixed>
   <entitydescription.DatabaseInterfaceFixed>前中期使用的固定式供电接口。</entitydescription.DatabaseInterfaceFixed>
   <entityname.DatabaseTerminalFixed>数据库终端（固定式）</entityname.DatabaseTerminalFixed>
   <entitydescription.DatabaseTerminalFixed>前中期使用的固定式供电终端。</entitydescription.DatabaseTerminalFixed>
+  <entityname.DatabaseStorageAnchor>数据库存储器</entityname.DatabaseStorageAnchor>
+  <entitydescription.DatabaseStorageAnchor>侵入式持久化锚点：将数据库序列化数据直接写入存档。</entitydescription.DatabaseStorageAnchor>
   <entityname.DatabaseAutoRestocker>数据库自动补货器</entityname.DatabaseAutoRestocker>
   <entitydescription.DatabaseAutoRestocker>为链接的容器自动补货。</entitydescription.DatabaseAutoRestocker>
 
@@ -15,17 +17,19 @@
   <dbiotest.interface.count>库存实体数</dbiotest.interface.count>
   <dbiotest.interface.dbid>数据库ID</dbiotest.interface.dbid>
 
-  <dbiotest.terminal.closedhint>使用后开启数据库会话并填充容器。</dbiotest.terminal.closedhint>
-  <dbiotest.terminal.openhint>会话已开启。使用按钮翻页或关闭会话。</dbiotest.terminal.openhint>
+  <dbiotest.terminal.closedhint>使用终端面板浏览并取出物品。</dbiotest.terminal.closedhint>
+  <dbiotest.terminal.openhint>已启用原子模式，所有读写均由服务端权威执行。</dbiotest.terminal.openhint>
   <dbiotest.terminal.dbid>数据库ID</dbiotest.terminal.dbid>
   <dbiotest.terminal.count>库存实体数</dbiotest.terminal.count>
+  <dbiotest.terminal.entries>条目</dbiotest.terminal.entries>
   <dbiotest.terminal.page>页码</dbiotest.terminal.page>
   <dbiotest.terminal.remainingpages>未载入页物品数</dbiotest.terminal.remainingpages>
   <dbiotest.terminal.search>搜索</dbiotest.terminal.search>
-  <dbiotest.terminal.locked>该数据库已被其他终端会话占用。</dbiotest.terminal.locked>
-  <dbiotest.terminal.closed>会话已关闭。</dbiotest.terminal.closed>
-  <dbiotest.btn.open>开启</dbiotest.btn.open>
-  <dbiotest.btn.force>强制</dbiotest.btn.force>
+  <dbiotest.terminal.amount>数量</dbiotest.terminal.amount>
+  <dbiotest.terminal.quality>品质</dbiotest.terminal.quality>
+  <dbiotest.terminal.condition>耐久</dbiotest.terminal.condition>
+  <dbiotest.terminal.locked>原子模式下已禁用会话锁。</dbiotest.terminal.locked>
+  <dbiotest.terminal.closed>旧版会话关闭状态。</dbiotest.terminal.closed>
   <dbiotest.btn.prev>上一页</dbiotest.btn.prev>
   <dbiotest.btn.next>下一页</dbiotest.btn.next>
   <dbiotest.btn.findprev>上一个匹配</dbiotest.btn.findprev>
@@ -33,16 +37,27 @@
   <dbiotest.btn.sort>排序</dbiotest.btn.sort>
   <dbiotest.btn.dir>方向</dbiotest.btn.dir>
   <dbiotest.btn.compact>整理</dbiotest.btn.compact>
-  <dbiotest.btn.close>关闭</dbiotest.btn.close>
 
   <dbiotest.power.status>供电</dbiotest.power.status>
   <dbiotest.power.online>在线</dbiotest.power.online>
   <dbiotest.power.offline>离线</dbiotest.power.offline>
 
-  <dbiotest.panel.title>数据库分页控制</dbiotest.panel.title>
+  <dbiotest.panel.title>数据库终端</dbiotest.panel.title>
   <dbiotest.panel.prev>上一页</dbiotest.panel.prev>
   <dbiotest.panel.next>下一页</dbiotest.panel.next>
   <dbiotest.panel.close>关闭</dbiotest.panel.close>
+  <dbiotest.panel.takehint>左键取一组。右键（或 Shift+左键）取 1 个。</dbiotest.panel.takehint>
+  <dbiotest.panel.takehint.primary>左键：取一组</dbiotest.panel.takehint.primary>
+  <dbiotest.panel.takehint.secondary>右键：取 1 个</dbiotest.panel.takehint.secondary>
+  <dbiotest.panel.takehint.shift>Shift+左键：取 1 个</dbiotest.panel.takehint.shift>
+  <dbiotest.panel.closedhint>面板已隐藏。</dbiotest.panel.closedhint>
+  <dbiotest.panel.bufferhint>缓冲区</dbiotest.panel.bufferhint>
+  <dbiotest.panel.bufferpartition>缓冲区（1-5格：存入，6-10格：取出）</dbiotest.panel.bufferpartition>
+  <dbiotest.panel.bufferflow>1-5格会自动入库，6-10格用于接收取出的物品。</dbiotest.panel.bufferflow>
+  <dbiotest.panel.bufferunavailable>缓冲区不可用</dbiotest.panel.bufferunavailable>
+  <dbiotest.anchor.hint>存档内持久化锚点，用于保存数据库序列化数据。</dbiotest.anchor.hint>
+  <dbiotest.anchor.dbid>数据库ID</dbiotest.anchor.dbid>
+  <dbiotest.anchor.count>已持久化物品数</dbiotest.anchor.count>
 
   <dbiotest.restocker.hint>自动补货链接容器。</dbiotest.restocker.hint>
   <dbiotest.restocker.dbid>数据库ID</dbiotest.restocker.dbid>
@@ -54,23 +69,43 @@
   <dbiotest.restocker.filter>筛选</dbiotest.restocker.filter>
   <dbiotest.restocker.prev>上一个</dbiotest.restocker.prev>
   <dbiotest.restocker.next>下一个</dbiotest.restocker.next>
+  <dbiotest.restocker.toggle>启用 / 停用</dbiotest.restocker.toggle>
+  <dbiotest.restocker.preview>预览</dbiotest.restocker.preview>
+  <dbiotest.restocker.amount>数量</dbiotest.restocker.amount>
+  <dbiotest.restocker.enabled>状态</dbiotest.restocker.enabled>
+  <dbiotest.restocker.enabled.on>已启用</dbiotest.restocker.enabled.on>
+  <dbiotest.restocker.enabled.off>已停用</dbiotest.restocker.enabled.off>
 
   <dbiotest.ui.title>数据库终端</dbiotest.ui.title>
   <dbiotest.ui.search.tooltip>按物品名称或标识符搜索。</dbiotest.ui.search.tooltip>
   <dbiotest.ui.refresh>刷新</dbiotest.ui.refresh>
-  <dbiotest.ui.footer>左键条目转移一个物品。右键终端关闭会话。</dbiotest.ui.footer>
-  <dbiotest.ui.empty>当前会话无物品。</dbiotest.ui.empty>
+  <dbiotest.ui.footer>左键图标可向终端缓冲区生成 1 个物品。</dbiotest.ui.footer>
+  <dbiotest.ui.empty>当前无物品。</dbiotest.ui.empty>
 
   <dbiotest.ui.sort.nameasc>名称 A-Z</dbiotest.ui.sort.nameasc>
   <dbiotest.ui.sort.namedesc>名称 Z-A</dbiotest.ui.sort.namedesc>
   <dbiotest.ui.sort.countdesc>数量从高到低</dbiotest.ui.sort.countdesc>
   <dbiotest.ui.sort.countasc>数量从低到高</dbiotest.ui.sort.countasc>
+  <dbiotest.ui.sort.qualitydesc>品质从高到低</dbiotest.ui.sort.qualitydesc>
+  <dbiotest.ui.sort.qualityasc>品质从低到高</dbiotest.ui.sort.qualityasc>
+  <dbiotest.ui.cellsize.button>格子: {0}</dbiotest.ui.cellsize.button>
+  <dbiotest.ui.cellsize.large>大</dbiotest.ui.cellsize.large>
+  <dbiotest.ui.cellsize.medium>中</dbiotest.ui.cellsize.medium>
+  <dbiotest.ui.cellsize.small>小</dbiotest.ui.cellsize.small>
+  <dbiotest.category.all>全部</dbiotest.category.all>
+  <dbiotest.category.material>材料</dbiotest.category.material>
+  <dbiotest.category.medical>医疗</dbiotest.category.medical>
+  <dbiotest.category.weapon>武器</dbiotest.category.weapon>
+  <dbiotest.category.electrical>电器</dbiotest.category.electrical>
+  <dbiotest.category.equipment>工具</dbiotest.category.equipment>
+  <dbiotest.category.misc>杂项</dbiotest.category.misc>
 
-  <dbiotest.ui.take.success>物品已移入背包。</dbiotest.ui.take.success>
+  <dbiotest.ui.take.success>物品已移入终端缓冲区。</dbiotest.ui.take.success>
   <dbiotest.ui.take.failed>物品转移失败。</dbiotest.ui.take.failed>
-  <dbiotest.ui.take.full>背包已满。</dbiotest.ui.take.full>
+  <dbiotest.ui.take.full>终端缓冲区已满。</dbiotest.ui.take.full>
+  <dbiotest.ui.take.closed>终端会话已关闭。</dbiotest.ui.take.closed>
   <dbiotest.ui.take.invalidterminal>未找到终端会话。</dbiotest.ui.take.invalidterminal>
   <dbiotest.ui.take.denied>你无权使用该终端。</dbiotest.ui.take.denied>
-  <dbiotest.ui.take.notready>终端容器尚未就绪。</dbiotest.ui.take.notready>
+  <dbiotest.ui.take.notready>终端 API 尚未就绪。</dbiotest.ui.take.notready>
   <dbiotest.ui.take.notfound>终端中未找到该物品。</dbiotest.ui.take.notfound>
 </infotexts>

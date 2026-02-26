@@ -17,3 +17,12 @@ Thumbs.db
 # Archives
 *.zip
 *.7z
+
+# Build artifacts (assembly workflow)
+*.dll
+*.deps.json
+*.pdb
+*.tep
+
+# Local assembly build workspace
+.AssemblyCSharpSource/

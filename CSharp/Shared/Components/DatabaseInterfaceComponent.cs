@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Barotrauma;
@@ -161,10 +161,8 @@ public partial class DatabaseInterfaceComponent : ItemComponent
 
     private bool HasRequiredPower()
     {
-        if (!RequirePower) { return true; }
-        var powered = item.GetComponent<Powered>();
-        if (powered == null) { return false; }
-        return powered.Voltage >= Math.Max(0f, MinRequiredVoltage);
+        // Temporary: power gating fully disabled for troubleshooting.
+        return true;
     }
 
     private static string T(string key, string fallback)
@@ -173,3 +171,5 @@ public partial class DatabaseInterfaceComponent : ItemComponent
         return string.IsNullOrWhiteSpace(value) ? fallback : value;
     }
 }
+
+

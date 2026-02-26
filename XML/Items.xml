@@ -14,7 +14,7 @@
     <Fabricate suitablefabricators="fabricator" requiredtime="28">
       <RequiredSkill identifier="electrical" level="72" />
       <RequiredSkill identifier="mechanical" level="68" />
-      <RequiredItem identifier="fpgacircuit" amount="2" />
+      <RequiredItem identifier="fpgacircuit" amount="5" />
       <RequiredItem identifier="titaniumaluminiumalloy" amount="1" />
       <RequiredItem identifier="plastic" amount="2" />
       <RequiredItem identifier="silicon" amount="2" />
@@ -42,22 +42,40 @@
     <Fabricate suitablefabricators="fabricator" requiredtime="32">
       <RequiredSkill identifier="electrical" level="78" />
       <RequiredSkill identifier="mechanical" level="72" />
-      <RequiredItem identifier="fpgacircuit" amount="3" />
-      <RequiredItem identifier="titaniumaluminiumalloy" amount="2" />
-      <RequiredItem identifier="plastic" amount="2" />
-      <RequiredItem identifier="silicon" amount="3" />
+      <RequiredItem identifier="fpgacircuit" amount="8" />
+      <RequiredItem identifier="titaniumaluminiumalloy" amount="8" />
+      <RequiredItem identifier="fulgurium" amount="8" />
+      <RequiredItem identifier="physicorium" amount="8" />
     </Fabricate>
     <Body width="64" height="88" density="20" />
     <Holdable slots="Any,RightHand,LeftHand" msg="ItemMsgPickUpUse" pickkey="Use" />
+    <ItemContainer
+      opentopped="true"
+      capacity="0"
+      maxstacksize="1"
+      ExtraStackSize="63"
+      slotsperrow="5"
+      canbeselected="true"
+      hideitems="false"
+      keepopenwhenequipped="true"
+      movableframe="true"
+      allowuioverlap="true">
+      <GuiFrame relativesize="0.34,0.20" anchor="Center" style="ItemUI" />
+      <SubContainer capacity="5" slotsperrow="5" maxstacksize="63">
+        <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
+      </SubContainer>
+      <SubContainer capacity="5" slotsperrow="5" maxstacksize="63">
+        <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
+      </SubContainer>
+    </ItemContainer>
     <DatabaseTerminalComponent
       databaseId="default"
-      terminalSessionTimeout="180"
-      terminalPageSize="20"
-      sessionVariant="false"
-      openSessionIdentifier="DatabaseTerminalSession"
-      closedTerminalIdentifier="DatabaseTerminal" />
+      requirePower="false"
+      minRequiredVoltage="0.5" />
   </Item>
 
+  <!-- Legacy compatibility item for old saves.
+       Behavior is identical to DatabaseTerminal (atomic/no-session). -->
   <Item
     identifier="DatabaseTerminalSession"
     category="Equipment"
@@ -71,59 +89,30 @@
     <InventoryIcon texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="1702,208,180,96" origin="0.5,0.5" />
     <Sprite texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="1702,208,180,96" origin="0.5,0.5" depth="0.6" />
     <Body width="64" height="88" density="20" />
-    <Holdable slots="Any,RightHand,LeftHand" msg="ItemMsgPickUpUse" pickkey="Use">
-      <CustomInterface canbeselected="false" drawhudwhenequipped="true" allowuioverlap="true">
-        <GuiFrame relativesize="0.42,0.40" anchor="BottomLeft" relativeoffset="0.05,0.10" style="ItemUI" />
-        <TextBox text="dbiotest.terminal.search" propertyname="SearchKeyword" targetitemcomponent="DatabaseTerminalComponent" maxtextlength="40" />
-        <Button text="dbiotest.btn.prev">
-          <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="1" />
-        </Button>
-        <Button text="dbiotest.btn.next">
-          <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="2" />
-        </Button>
-        <Button text="dbiotest.btn.findprev">
-          <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="6" />
-        </Button>
-        <Button text="dbiotest.btn.findnext">
-          <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="7" />
-        </Button>
-        <Button text="dbiotest.btn.sort">
-          <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="8" />
-        </Button>
-        <Button text="dbiotest.btn.dir">
-          <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="9" />
-        </Button>
-        <Button text="dbiotest.btn.compact">
-          <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="10" />
-        </Button>
-        <Button text="dbiotest.btn.close">
-          <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="3" />
-        </Button>
-      </CustomInterface>
-    </Holdable>
+    <Holdable slots="Any,RightHand,LeftHand" msg="ItemMsgPickUpUse" pickkey="Use" />
     <ItemContainer
       opentopped="true"
       capacity="0"
       maxstacksize="1"
       ExtraStackSize="63"
       slotsperrow="5"
-      canbeselected="false"
-      hideitems="true"
+      canbeselected="true"
+      hideitems="false"
       keepopenwhenequipped="true"
       movableframe="true"
       allowuioverlap="true">
-      <GuiFrame relativesize="0.5,0.4" anchor="Center" style="ItemUI" />
-      <SubContainer capacity="20" slotsperrow="5" maxstacksize="63">
+      <GuiFrame relativesize="0.34,0.20" anchor="Center" style="ItemUI" />
+      <SubContainer capacity="5" slotsperrow="5" maxstacksize="63">
+        <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
+      </SubContainer>
+      <SubContainer capacity="5" slotsperrow="5" maxstacksize="63">
         <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
       </SubContainer>
     </ItemContainer>
     <DatabaseTerminalComponent
       databaseId="default"
-      terminalSessionTimeout="180"
-      terminalPageSize="20"
-      sessionVariant="true"
-      openSessionIdentifier="DatabaseTerminalSession"
-      closedTerminalIdentifier="DatabaseTerminal" />
+      requirePower="false"
+      minRequiredVoltage="0.5" />
   </Item>
 
   <Item
@@ -140,7 +129,7 @@
     <Fabricate suitablefabricators="fabricator" requiredtime="16">
       <RequiredSkill identifier="electrical" level="38" />
       <RequiredSkill identifier="mechanical" level="32" />
-      <RequiredItem identifier="fpgacircuit" amount="1" />
+      <RequiredItem identifier="fpgacircuit" amount="5" />
       <RequiredItem identifier="steel" amount="2" />
       <RequiredItem identifier="plastic" amount="2" />
     </Fabricate>
@@ -163,7 +152,7 @@
       databaseId="default"
       maxStorageCount="2048"
       ingestInterval="0.15"
-      requirePower="true"
+      requirePower="false"
       minRequiredVoltage="0.5" />
   </Item>
 
@@ -196,54 +185,26 @@
       maxstacksize="1"
       ExtraStackSize="63"
       slotsperrow="5"
-      canbeselected="true"
+      canbeselected="false"
       hideitems="true"
       msg="ItemMsgInteractSelect"
       keepopenwhenequipped="true"
       movableframe="true"
       allowuioverlap="true">
-      <GuiFrame relativesize="0.4,0.3" relativeoffset="0.03,0.06" anchor="Center" style="ItemUI" />
-      <SubContainer capacity="20" slotsperrow="5" maxstacksize="63">
+      <GuiFrame relativesize="0.24,0.17" relativeoffset="0.02,0.05" anchor="Center" style="ItemUI" />
+      <SubContainer capacity="5" slotsperrow="5" maxstacksize="63">
+        <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
+      </SubContainer>
+      <SubContainer capacity="5" slotsperrow="5" maxstacksize="63">
         <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
       </SubContainer>
     </ItemContainer>
-    <CustomInterface canbeselected="true" allowuioverlap="true">
-      <GuiFrame relativesize="0.20,0.20" anchor="BottomLeft" relativeoffset="0.04,0.08" style="ItemUI" />
-      <Button text="dbiotest.btn.open">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="4" />
-      </Button>
-      <Button text="dbiotest.btn.force">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="5" />
-      </Button>
-      <Button text="dbiotest.btn.close">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="3" />
-      </Button>
-    </CustomInterface>
-    <CustomInterface canbeselected="true" allowuioverlap="true">
-      <GuiFrame relativesize="0.30,0.34" anchor="BottomLeft" relativeoffset="0.26,0.08" style="ItemUI" />
-      <TextBox text="dbiotest.terminal.search" propertyname="SearchKeyword" targetitemcomponent="DatabaseTerminalComponent" maxtextlength="40" />
-      <Button text="dbiotest.btn.prev">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="1" />
-      </Button>
-      <Button text="dbiotest.btn.next">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="2" />
-      </Button>
-      <Button text="dbiotest.btn.findprev">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="6" />
-      </Button>
-      <Button text="dbiotest.btn.findnext">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="7" />
-      </Button>
-      <Button text="dbiotest.btn.sort">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="8" />
-      </Button>
-      <Button text="dbiotest.btn.dir">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="9" />
-      </Button>
-      <Button text="dbiotest.btn.compact">
-        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseTerminalComponent" xmlactionrequest="10" />
-      </Button>
-    </CustomInterface>
+    <!-- REQUIRED FOR FIXED TERMINAL HOOKONLY MODE: do not remove this Terminal component.
+         DatabaseTerminalUiHijackPatch relies on Terminal.AddToGUIUpdateList() as the
+         single fixed UI render entrypoint. Removing it will make fixed terminal UI disappear. -->
+    <Terminal canbeselected="true" msg="ItemMsgInteractSelect" AllowInGameEditing="false">
+      <GuiFrame relativesize="0.6,0.8" anchor="Center" style="ItemUI" />
+    </Terminal>
     <Powered minvoltage="0.5" powerconsumption="30" />
     <ConnectionPanel selectkey="Action" canbeselected="true" msg="ItemMsgRewireScrewdriver" hudpriority="10">
       <GuiFrame relativesize="0.22,0.28" minsize="380,320" maxsize="480,420" anchor="Center" style="ConnectionPanel" />
@@ -253,16 +214,36 @@
     </ConnectionPanel>
     <DatabaseTerminalComponent
       databaseId="default"
-      terminalSessionTimeout="180"
-      terminalPageSize="20"
-      sessionVariant="false"
       useInPlaceSession="true"
-      requirePower="true"
-      minRequiredVoltage="0.5"
-      openSessionIdentifier="DatabaseTerminalFixed"
-      closedTerminalIdentifier="DatabaseTerminalFixed" />
+      requirePower="false"
+      minRequiredVoltage="0.5" />
   </Item>
 
+
+  <Item
+    identifier="DatabaseStorageAnchor"
+    category="Machine,Electrical"
+    tags="database_storage_anchor,machine"
+    showcontentsintooltip="true"
+    linkable="false"
+    waterproof="true"
+    fireproof="true"
+    scale="0.75">
+    <InventoryIcon texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="1190,210,180,91" origin="0.5,0.5" />
+    <Sprite texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="1190,210,180,91" origin="0.5,0.5" depth="0.6" />
+    <Fabricate suitablefabricators="fabricator" requiredtime="14">
+      <RequiredSkill identifier="electrical" level="30" />
+      <RequiredSkill identifier="mechanical" level="28" />
+      <RequiredItem identifier="fpgacircuit" amount="1" />
+      <RequiredItem identifier="steel" amount="2" />
+      <RequiredItem identifier="plastic" amount="1" />
+    </Fabricate>
+    <Body width="128" height="92" density="30" />
+    <Holdable selectkey="Action" pickkey="Use" slots="RightHand+LeftHand" msg="ItemMsgDetachWrench" PickingTime="3.0" aimpos="60,0" handle1="0,0" attachable="true" aimable="false">
+      <RequiredItem identifier="wrench" type="Equipped" />
+    </Holdable>
+    <DatabaseStorageAnchorComponent databaseId="default" />
+  </Item>
 
   <Item
     identifier="DatabaseAutoRestocker"
@@ -288,7 +269,7 @@
       <RequiredItem identifier="wrench" type="Equipped" />
     </Holdable>
     <CustomInterface canbeselected="true" allowuioverlap="true">
-      <GuiFrame relativesize="0.34,0.18" anchor="BottomLeft" relativeoffset="0.04,0.08" style="ItemUI" />
+      <GuiFrame relativesize="0.34,0.24" anchor="BottomLeft" relativeoffset="0.04,0.08" style="ItemUI" />
       <TextBox text="dbiotest.restocker.filter" propertyname="SupplyFilter" targetitemcomponent="DatabaseAutoRestockerComponent" maxtextlength="40" />
       <Button text="dbiotest.restocker.prev">
         <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseAutoRestockerComponent" xmlactionrequest="1" />
@@ -296,12 +277,17 @@
       <Button text="dbiotest.restocker.next">
         <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseAutoRestockerComponent" xmlactionrequest="2" />
       </Button>
+      <Button text="dbiotest.restocker.toggle">
+        <StatusEffect type="OnUse" target="This" targetitemcomponent="DatabaseAutoRestockerComponent" xmlactionrequest="3" />
+      </Button>
     </CustomInterface>
     <Powered minvoltage="0.5" powerconsumption="20" />
     <ConnectionPanel selectkey="Action" canbeselected="true" msg="ItemMsgRewireScrewdriver" hudpriority="10">
       <GuiFrame relativesize="0.22,0.28" minsize="380,320" maxsize="480,420" anchor="Center" style="ConnectionPanel" />
       <RequiredItem identifier="screwdriver" type="Equipped" />
       <input name="power_in" displayname="connection.powerin" />
+      <input name="toggle" displayname="connection.togglestate" />
+      <input name="set_state" displayname="connection.setstate" />
     </ConnectionPanel>
     <DatabaseAutoRestockerComponent
       databaseId="default"
@@ -313,7 +299,7 @@
       lowConditionThreshold="2"
       pollInterval="0.2"
       supplyCooldown="0.3"
-      requirePower="true"
+      requirePower="false"
       minRequiredVoltage="0.5" />
   </Item>
 </Items>
