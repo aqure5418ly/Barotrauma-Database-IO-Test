@@ -16,7 +16,6 @@
   <entitydescription.DatabaseAutoRestocker>Supplies linked containers from the database.</entitydescription.DatabaseAutoRestocker>
 
   <dbiotest.interface.hint>Insert items to ingest into database.</dbiotest.interface.hint>
-  <dbiotest.interface.unpackhint>Containers are auto-unpacked; contained items are ingested automatically.</dbiotest.interface.unpackhint>
   <dbiotest.interface.count>Stored Item Count</dbiotest.interface.count>
   <dbiotest.interface.dbid>Database ID</dbiotest.interface.dbid>
 

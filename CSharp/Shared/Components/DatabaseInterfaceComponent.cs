@@ -22,9 +22,6 @@ public partial class DatabaseInterfaceComponent : ItemComponent
     [Editable(MinValueFloat = 0.0f, MaxValueFloat = 10f), Serialize(0.5f, IsPropertySaveable.Yes, description: "Minimum voltage required when RequirePower=true.")]
     public float MinRequiredVoltage { get; set; } = 0.5f;
 
-    [Editable, Serialize(true, IsPropertySaveable.Yes, description: "When true, items placed inside containers are automatically unpacked and ingested by this interface.")]
-    public bool AutoUnpackContainers { get; set; } = true;
-
     private string _resolvedDatabaseId = DatabaseIOTest.Constants.DefaultDatabaseId;
     private double _lastIngestCheckTime;
     private double _lastDescriptionUpdateTime;
@@ -88,26 +85,10 @@ public partial class DatabaseInterfaceComponent : ItemComponent
         if (allItems.Count == 0) { return; }
 
         var ingestable = new List<Item>();
-        var seenItems = new HashSet<int>();
         foreach (var target in allItems)
         {
             if (target == null || target.Removed) { continue; }
-
-            if (AutoUnpackContainers && TryGetContainedItemsSnapshot(target, out var containedItems))
-            {
-                foreach (var child in containedItems)
-                {
-                    CollectUnpackedIngestableItems(child, ingestable, seenItems);
-                }
-                // Also ingest the container itself after unpacking.
-                if (CanIngest(target) && seenItems.Add(target.ID))
-                {
-                    ingestable.Add(target);
-                }
-                continue;
-            }
-
-            if (CanIngest(target) && seenItems.Add(target.ID))
+            if (CanIngest(target))
             {
                 ingestable.Add(target);
             }
@@ -137,56 +118,6 @@ public partial class DatabaseInterfaceComponent : ItemComponent
         }
     }
 
-    private static bool TryGetContainedItemsSnapshot(Item containerItem, out List<Item> containedItems)
-    {
-        containedItems = null;
-        if (containerItem == null || containerItem.Removed) { return false; }
-
-        List<Item> list = null;
-        foreach (var container in containerItem.GetComponents<ItemContainer>())
-        {
-            var inventory = container?.Inventory;
-            if (inventory == null) { continue; }
-            var all = inventory.AllItemsMod;
-            if (all == null) { continue; }
-            foreach (var child in all)
-            {
-                if (child == null || child.Removed) { continue; }
-                list ??= new List<Item>();
-                list.Add(child);
-            }
-        }
-
-        if (list == null || list.Count <= 0) { return false; }
-        containedItems = list;
-        return true;
-    }
-
-    private void CollectUnpackedIngestableItems(Item source, List<Item> sink, HashSet<int> seenItems)
-    {
-        if (source == null || source.Removed || sink == null || seenItems == null) { return; }
-        if (!seenItems.Add(source.ID)) { return; }
-
-        if (AutoUnpackContainers && TryGetContainedItemsSnapshot(source, out var children))
-        {
-            foreach (var child in children)
-            {
-                CollectUnpackedIngestableItems(child, sink, seenItems);
-            }
-            // Post-order: ingest empty container after children.
-            if (CanIngest(source))
-            {
-                sink.Add(source);
-            }
-            return;
-        }
-
-        if (CanIngest(source))
-        {
-            sink.Add(source);
-        }
-    }
-
     private bool CanIngest(Item target)
     {
         if (target == null || target.Prefab == null) { return false; }
@@ -210,10 +141,6 @@ public partial class DatabaseInterfaceComponent : ItemComponent
         string dbLabel = T("dbiotest.interface.dbid", "Database ID");
         string countLabel = T("dbiotest.interface.count", "Stored Item Count");
         string hint = T("dbiotest.interface.hint", "Insert items to ingest into database.");
-        if (AutoUnpackContainers)
-        {
-            hint += "\n" + T("dbiotest.interface.unpackhint", "Containers are auto-unpacked; contained items are ingested automatically.");
-        }
         string powerLine = "";
         if (RequirePower)
         {
@@ -245,5 +172,3 @@ public partial class DatabaseInterfaceComponent : ItemComponent
         return string.IsNullOrWhiteSpace(value) ? fallback : value;
     }
 }
-
-
