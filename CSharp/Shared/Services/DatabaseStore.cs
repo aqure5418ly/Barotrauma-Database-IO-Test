@@ -536,9 +536,10 @@ namespace DatabaseIOTest.Services
             _roundDecisionApplied = false;
             _roundDecisionSource = "";
             _roundDecisionPriority = 0;
+            _pendingCommittedSnapshot.Clear();
+            _pendingRestoreArmed = false;
             ClearVolatile();
             RebuildFromPersistedTerminals();
-            TryRestoreFromPendingCommitSnapshot();
             int totalItems = GetWorkingTotalItems();
             int committedItems = GetCommittedTotalItems();
             ModFileLog.Write(
