@@ -32,6 +32,13 @@
 
 These projects are design/implementation references only. This mod is not affiliated with them.
 
+## Future Plans
+1. **Codebase Cleanup:** Refactor and clean up the legacy code.
+2. **API Safety:** Expose core mechanisms as safe, external-facing APIs.
+3. **Precompiled Release:** Transition to releasing precompiled DLL versions.
+4. **Gameplay Expansion:** Design custom missions, events, and automated machines to enrich gameplay content.
+5. **DLC Compatibility:** Update and adapt to upcoming game DLCs.
+
 ## Save Compatibility Warning
 - Future updates may change internal database serialization format.
 - Old campaign saves may be affected (missing items, duplicated items, or reset database state are possible in breaking updates).

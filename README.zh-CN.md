@@ -1,4 +1,4 @@
-﻿# Database IO Test（0.4.0）
+﻿# Database IO Test（1.1.5）
 
 ## 当前状态
 - 核心逻辑和交互界面由 C#（LuaCs） 实现。
@@ -33,6 +33,13 @@
 - UI 参考 Super Terminal：https://steamcommunity.com/sharedfiles/filedetails/?id=3670545214&searchtext=superterminal
 
 以上项目仅作为设计与实现参考，本模组与其无隶属关系。
+
+## 未来计划
+1. **代码清理:** 重构并清理旧版遗留代码。
+2. **API 安全化:** 将内部方法改造为安全的外部调用接口。
+3. **预编译发布:** 未来计划改为发布预编译（DLL）版本。
+4. **扩展游戏性:** 为本模组设计专属任务、事件、自动化机器，丰富游戏内容。
+5. **DLC 适配:** 等待官方 DLC 更新后进行适配。
 
 ## 存档兼容性警告
 - 后续更新可能调整数据库序列化结构。
