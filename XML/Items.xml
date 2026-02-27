@@ -229,7 +229,7 @@
     linkable="true"
     waterproof="true"
     fireproof="true"
-    scale="1.5"
+    scale="0.5"
     damagedbyexplosions="true"
     explosiondamagemultiplier="0.2">
     <InventoryIcon texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="678,722,180,92" origin="0.5,0.5" />
