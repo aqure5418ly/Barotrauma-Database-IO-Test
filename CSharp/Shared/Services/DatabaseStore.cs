@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using Barotrauma;
 using DatabaseIOTest.Models;
@@ -294,6 +295,7 @@ namespace DatabaseIOTest.Services
         private static int _roundDecisionPriority;
         private static bool _saveDecisionBindingEnabled;
         private static bool _pendingRestoreArmed;
+        private static string _pendingSnapshotSavePath = "";
         private static double _nextSyncPerfLogAt;
 
         public static string Normalize(string databaseId)
@@ -376,6 +378,7 @@ namespace DatabaseIOTest.Services
             _roundDecisionPriority = 0;
             _saveDecisionBindingEnabled = false;
             _pendingRestoreArmed = false;
+            _pendingSnapshotSavePath = "";
         }
 
         public static void ClearVolatile()
@@ -536,8 +539,19 @@ namespace DatabaseIOTest.Services
             _roundDecisionApplied = false;
             _roundDecisionSource = "";
             _roundDecisionPriority = 0;
-            _pendingCommittedSnapshot.Clear();
-            _pendingRestoreArmed = false;
+            string currentSavePathKey = ResolveCurrentSavePathKey();
+            bool keepPending =
+                _pendingRestoreArmed &&
+                _pendingCommittedSnapshot.Count > 0 &&
+                !string.IsNullOrWhiteSpace(_pendingSnapshotSavePath) &&
+                !string.IsNullOrWhiteSpace(currentSavePathKey) &&
+                string.Equals(_pendingSnapshotSavePath, currentSavePathKey, StringComparison.OrdinalIgnoreCase);
+            if (!keepPending)
+            {
+                _pendingCommittedSnapshot.Clear();
+                _pendingRestoreArmed = false;
+                _pendingSnapshotSavePath = "";
+            }
             ClearVolatile();
             RebuildFromPersistedTerminals();
             int totalItems = GetWorkingTotalItems();
@@ -549,7 +563,9 @@ namespace DatabaseIOTest.Services
             ModFileLog.WriteDebug(
                 "Store",
                 $"{Constants.LogPrefix} BeginRound debug source='{source}' pendingRestoreArmed={_pendingRestoreArmed} " +
-                $"pendingSnapshotDbCount={_pendingCommittedSnapshot.Count} saveBinding={_saveDecisionBindingEnabled}");
+                $"pendingSnapshotDbCount={_pendingCommittedSnapshot.Count} saveBinding={_saveDecisionBindingEnabled} " +
+                $"pendingSavePathSet={!string.IsNullOrWhiteSpace(_pendingSnapshotSavePath)} " +
+                $"currentSavePathSet={!string.IsNullOrWhiteSpace(currentSavePathKey)}");
         }
 
         public static void CommitRound(string source = "unknown")
@@ -1013,6 +1029,17 @@ namespace DatabaseIOTest.Services
             var dataFromAnchor = anchor.ReadPersistedData();
             dataFromAnchor.Items = CompactItems(CloneItemList(dataFromAnchor.Items));
 
+            if (dataFromAnchor.ItemCount <= 0 &&
+                TryGetPendingSnapshotForCurrentSave(id, out var pendingData))
+            {
+                anchor.ApplyStoreSnapshot(pendingData, persistSerializedState: true);
+                dataFromAnchor = CloneDatabaseData(pendingData);
+                ModFileLog.Write(
+                    "Store",
+                    $"{Constants.LogPrefix} RegisterAnchor applied pending snapshot db='{id}' " +
+                    $"version={pendingData.Version} items={pendingData.ItemCount}");
+            }
+
             if (!TryGetCommittedData(id, out var committedData))
             {
                 _committedState.SetData(
@@ -1045,20 +1072,6 @@ namespace DatabaseIOTest.Services
                     CloneDatabaseData(dataFromAnchor),
                     StateMutationKind.Set,
                     "anchor:register:working:replaceBetter");
-            }
-
-            if (_pendingRestoreArmed &&
-                dataFromAnchor.ItemCount <= 0 &&
-                TryGetCommittedData(id, out var restoredData) &&
-                (restoredData?.ItemCount ?? 0) > 0)
-            {
-                anchor.ApplyStoreSnapshot(restoredData, persistSerializedState: true);
-                dataFromAnchor = CloneDatabaseData(restoredData);
-
-                ModFileLog.Write(
-                    "Store",
-                    $"{Constants.LogPrefix} RegisterAnchor applied pending snapshot db='{id}' anchor={anchor.AnchorEntityId} " +
-                    $"version={dataFromAnchor.Version} items={dataFromAnchor.ItemCount}");
             }
 
             SyncTerminals(id);
@@ -2023,16 +2036,20 @@ namespace DatabaseIOTest.Services
                 _pendingCommittedSnapshot[pair.Key] = CloneDatabaseData(pair.Value.Data);
             }
 
+            _pendingSnapshotSavePath = ResolveCurrentSavePathKey();
             _pendingRestoreArmed = _pendingCommittedSnapshot.Count > 0;
             int pendingItems = _pendingCommittedSnapshot.Values.Sum(db => db?.ItemCount ?? 0);
             ModFileLog.Write(
                 "Store",
                 $"{Constants.LogPrefix} Captured pending commit snapshot dbCount={_pendingCommittedSnapshot.Count} totalItems={pendingItems}");
+            ModFileLog.WriteDebug(
+                "Store",
+                $"{Constants.LogPrefix} Pending snapshot save path set={!string.IsNullOrWhiteSpace(_pendingSnapshotSavePath)}");
         }
 
         private static void TryRestoreFromPendingCommitSnapshot()
         {
-            if (!_pendingRestoreArmed || _pendingCommittedSnapshot.Count <= 0)
+            if (!IsPendingSnapshotForCurrentSave(out _))
             {
                 return;
             }
@@ -2063,6 +2080,71 @@ namespace DatabaseIOTest.Services
                 "Store",
                 $"{Constants.LogPrefix} Restored pending commit snapshot workingDbCount={_workingState.Count} " +
                 $"workingItems={restoredItems} committedDbCount={_committedState.Count} committedItems={restoredCommittedItems}");
+        }
+
+        private static bool TryGetPendingSnapshotForCurrentSave(string databaseId, out DatabaseData data)
+        {
+            data = null;
+            if (!IsPendingSnapshotForCurrentSave(out _))
+            {
+                return false;
+            }
+
+            string id = Normalize(databaseId);
+            if (!_pendingCommittedSnapshot.TryGetValue(id, out var pending) || pending == null || pending.ItemCount <= 0)
+            {
+                return false;
+            }
+
+            data = CloneDatabaseData(pending);
+            return data != null;
+        }
+
+        private static bool IsPendingSnapshotForCurrentSave(out string currentSavePathKey)
+        {
+            currentSavePathKey = ResolveCurrentSavePathKey();
+            if (!_pendingRestoreArmed || _pendingCommittedSnapshot.Count <= 0)
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(_pendingSnapshotSavePath) || string.IsNullOrWhiteSpace(currentSavePathKey))
+            {
+                return false;
+            }
+
+            bool matched = string.Equals(_pendingSnapshotSavePath, currentSavePathKey, StringComparison.OrdinalIgnoreCase);
+            if (!matched)
+            {
+                ModFileLog.WriteDebug(
+                    "Store",
+                    $"{Constants.LogPrefix} Pending snapshot save-path mismatch; skip pending restore.");
+            }
+
+            return matched;
+        }
+
+        private static string ResolveCurrentSavePathKey()
+        {
+            try
+            {
+                if (GameMain.GameSession == null)
+                {
+                    return "";
+                }
+
+                string savePath = GameMain.GameSession.DataPath.SavePath;
+                if (string.IsNullOrWhiteSpace(savePath))
+                {
+                    return "";
+                }
+
+                return Path.GetFullPath(savePath).Trim().ToLowerInvariant();
+            }
+            catch
+            {
+                return "";
+            }
         }
 
         private static void SyncTerminals(string databaseId, bool persistCommittedState = false, bool preferDelta = false)
