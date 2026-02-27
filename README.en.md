@@ -1,4 +1,4 @@
-﻿# Database IO Test (0.3.9)
+﻿# Database IO Test（1.1.5）
 
 ## Status
 - Core gameplay logic and UI are implemented in **C# (LuaCs)**.
@@ -10,8 +10,9 @@
   - Persistence anchor for shared database storage.
 - `DatabaseInterface` (handheld) and `DatabaseInterfaceFixed` (stationary)
   - Ingest items and serialize them into the shared database.
-- `DatabaseTerminal` (handheld) and `DatabaseTerminalFixed` (stationary)
-  - Session-based access to database items.
+- `DatabaseTerminal` (handheld), `DatabaseTerminalFixed` (stationary) and `DatabaseCraftTerminal` (fabricator-hybrid)
+  - Atomic access to database items (no session lock).
+  - Multiple terminals can be opened simultaneously without conflicting.
   - Paging, search, sort and compact actions via C# UI.
 - `DatabaseAutoRestocker`
   - Pulls configured items from database and refills linked targets.

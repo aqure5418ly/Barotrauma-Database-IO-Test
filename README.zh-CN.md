@@ -1,4 +1,4 @@
-﻿# Database IO Test（0.3.9）
+﻿# Database IO Test（0.4.0）
 
 ## 当前状态
 - 核心逻辑和交互界面由 C#（LuaCs） 实现。
@@ -11,8 +11,9 @@
   - 承载数据库持久化存储。
 - `DatabaseInterface`（手持）与 `DatabaseInterfaceFixed`（固定式）
   - 吸收物品并序列化写入共享数据库。
-- `DatabaseTerminal`（手持）与 `DatabaseTerminalFixed`（固定式）
-  - 采用无会话原子模式访问数据库物品（服务端权威读写）。
+- `DatabaseTerminal`（手持）、`DatabaseTerminalFixed`（固定式）与 `DatabaseCraftTerminal`（数据库合成终端）
+  - 已彻底移除旧版独占会话机制，采用无会话原子模式访问数据库。
+  - 支持多玩家、多终端同时打开进行独立操作，互不抢占。
   - 本地 UI 快照只读，取物通过原子请求写入终端输出缓冲区。
   - 支持分类、搜索、排序、变体分格与可调 cell 大小（C# UI）。
 - `DatabaseAutoRestocker`（自动补货器）
