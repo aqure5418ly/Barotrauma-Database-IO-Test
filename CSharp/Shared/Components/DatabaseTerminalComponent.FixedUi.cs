@@ -22,8 +22,31 @@ public partial class DatabaseTerminalComponent
 #if CLIENT
         return IsFixedTerminal &&
                EnableCsPanelOverlay &&
+               !IsCompactRecipePanelMode() &&
                item != null &&
                !item.Removed;
+#else
+        return false;
+#endif
+    }
+
+    internal bool IsCompactRecipeTerminalUiMode()
+    {
+#if CLIENT
+        return IsFixedTerminal &&
+               EnableCsPanelOverlay &&
+               item != null &&
+               !item.Removed &&
+               IsCompactRecipePanelMode();
+#else
+        return false;
+#endif
+    }
+
+    internal bool ShouldSuppressNativeTerminalGui()
+    {
+#if CLIENT
+        return ShouldHijackFixedTerminalUi() || IsCompactRecipeTerminalUiMode();
 #else
         return false;
 #endif

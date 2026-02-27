@@ -44,7 +44,12 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         UpdateFixedXmlControlPanelState();
         if (EnableCsPanelOverlay)
         {
-            if (!IsFixedTerminal || ShouldDriveFixedUiFromUpdate())
+            if (IsCompactRecipePanelMode())
+            {
+                EnsureCompactRecipePanelRuntimeInitialized();
+            }
+
+            if (!IsFixedTerminal || IsCompactRecipePanelMode() || ShouldDriveFixedUiFromUpdate())
             {
                 UpdateClientPanel();
             }
@@ -164,6 +169,14 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         _panelBufferDrawer = null;
         _panelBufferFrame = null;
         _panelBufferInfo = null;
+        _compactPanelMainLayout = null;
+        _compactPanelRecipeTitle = null;
+        _compactPanelRequirementsList = null;
+        _compactPanelDbFillButton = null;
+        _compactPanelStatusText = null;
+        _compactHaveByIdentifier.Clear();
+        _lastCompactPanelRenderSignature = "";
+        _compactRecipeRuntimeInitialized = false;
         _panelFrame = null;
 #endif
 

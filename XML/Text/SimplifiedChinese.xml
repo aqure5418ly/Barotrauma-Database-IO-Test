@@ -16,6 +16,7 @@
   <entitydescription.DatabaseAutoRestocker>为链接的容器自动补货。</entitydescription.DatabaseAutoRestocker>
 
   <dbiotest.interface.hint>放入物品以吸收到数据库。</dbiotest.interface.hint>
+  <dbiotest.interface.unpackhint>容器会自动解包，容器内物品将自动吸收到数据库。</dbiotest.interface.unpackhint>
   <dbiotest.interface.count>库存实体数</dbiotest.interface.count>
   <dbiotest.interface.dbid>数据库ID</dbiotest.interface.dbid>
 

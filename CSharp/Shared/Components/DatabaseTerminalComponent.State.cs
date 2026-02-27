@@ -230,6 +230,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
 #if CLIENT
     private const double HandheldUseToggleCooldownSeconds = 0.75;
+    private const double CompactRecipePanelRefreshInterval = 0.2;
     private enum CellSizeMode : byte
     {
         Large = 0,
@@ -255,8 +256,14 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private GUIButton _panelSortButton;
     private GUIButton _panelCellSizeButton;
     private GUIButton _panelDbFillButton;
+    private GUILayoutGroup _compactPanelMainLayout;
+    private GUITextBlock _compactPanelRecipeTitle;
+    private GUIListBox _compactPanelRequirementsList;
+    private GUIButton _compactPanelDbFillButton;
+    private GUITextBlock _compactPanelStatusText;
     private readonly List<GUIButton> _panelCategoryButtons = new List<GUIButton>();
     private readonly List<TerminalVirtualEntry> _panelEntrySnapshot = new List<TerminalVirtualEntry>();
+    private readonly Dictionary<string, int> _compactHaveByIdentifier = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> _recipeRequiredByIdentifier = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
     private CustomInterface _fixedXmlControlPanel;
     private double _nextPanelEntryRefreshAt;
@@ -271,6 +278,9 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private int _selectedRecipeAmount = 1;
     private int _selectedRecipeRequirementsHash;
     private double _nextRecipeRequirementsRefreshAt;
+    private double _nextCompactPanelRefreshAt;
+    private string _lastCompactPanelRenderSignature = "";
+    private bool _compactRecipeRuntimeInitialized;
     private bool _handheldPanelArmedByUse;
     private double _nextHandheldUseToggleAt;
 

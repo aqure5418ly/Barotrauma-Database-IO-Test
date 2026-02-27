@@ -15,7 +15,6 @@ namespace DatabaseIOTest.Patches
 #if CLIENT
         private static double _nextPerfLogAt;
         private static int _prefixCalls;
-        private static int _componentSuppressed;
         private static int _containerCandidates;
         private static int _tagFilteredOut;
         private static int _terminalResolved;
@@ -31,12 +30,11 @@ namespace DatabaseIOTest.Patches
 
             ModFileLog.WriteDebug(
                 "Perf",
-                $"{Constants.LogPrefix} ContainerPatchPerf calls={_prefixCalls} componentSuppressed={_componentSuppressed} " +
+                $"{Constants.LogPrefix} ContainerPatchPerf calls={_prefixCalls} " +
                 $"containerCandidates={_containerCandidates} tagFiltered={_tagFilteredOut} terminalResolved={_terminalResolved} " +
                 $"notSilenced={_notSilenced} containerSuppressed={_containerSuppressed}");
 
             _prefixCalls = 0;
-            _componentSuppressed = 0;
             _containerCandidates = 0;
             _tagFilteredOut = 0;
             _terminalResolved = 0;
@@ -47,7 +45,7 @@ namespace DatabaseIOTest.Patches
 
         private static IEnumerable<MethodBase> TargetMethods()
         {
-            foreach (var method in typeof(ItemComponent).GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+            foreach (var method in typeof(ItemContainer).GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
             {
                 if (method.Name == "AddToGUIUpdateList")
                 {
@@ -56,7 +54,7 @@ namespace DatabaseIOTest.Patches
             }
         }
 
-        private static bool Prefix(ItemComponent __instance)
+        private static bool Prefix(ItemContainer __instance)
         {
 #if CLIENT
             try
@@ -67,17 +65,8 @@ namespace DatabaseIOTest.Patches
                     FlushPerfIfDue();
                 }
 
-                if (__instance is DatabaseTerminalComponent terminal &&
-                    terminal.ShouldHijackFixedTerminalUi())
-                {
-                    // Only suppress native component GUI; Terminal hook drives UI.
-                    if (ModFileLog.IsDebugEnabled) { _componentSuppressed++; }
-                    return false;
-                }
-
-                if (__instance is not ItemContainer container) { return true; }
                 if (ModFileLog.IsDebugEnabled) { _containerCandidates++; }
-                var owner = container.Item;
+                var owner = __instance?.Item;
                 if (owner == null || owner.Removed) { return true; }
                 if (!owner.HasTag(DatabaseTerminalTag))
                 {

@@ -53,6 +53,10 @@ namespace DatabaseIOTest.Services
         private const BindingFlags AnyInstance = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
         private static readonly FieldInfo FabricationRecipesField =
             typeof(Fabricator).GetField("fabricationRecipes", BindingFlags.Instance | BindingFlags.NonPublic);
+        private static readonly PropertyInfo SelectedItemIdentifierProperty =
+            typeof(Fabricator).GetProperty("SelectedItemIdentifier", AnyInstance);
+        private static readonly FieldInfo SelectedItemIdentifierField =
+            typeof(Fabricator).GetField("selectedItemIdentifier", AnyInstance);
         private static double _nextPerfLogAt;
         private static int _resolveCalls;
         private static int _fastIdentifierHits;
@@ -255,6 +259,33 @@ namespace DatabaseIOTest.Services
             }
         }
 
+        private static bool TryReadIdentifierFromValue(object value, out string identifier)
+        {
+            identifier = "";
+            if (value == null) { return false; }
+
+            if (value is Identifier baroId)
+            {
+                if (baroId.IsEmpty) { return false; }
+                identifier = baroId.Value?.Trim() ?? "";
+                return !string.IsNullOrWhiteSpace(identifier);
+            }
+
+            if (value is string str)
+            {
+                identifier = str?.Trim() ?? "";
+                return !string.IsNullOrWhiteSpace(identifier);
+            }
+
+            if (value is FabricationRecipe recipe && recipe.TargetItem?.Identifier != null)
+            {
+                identifier = recipe.TargetItem.Identifier.Value?.Trim() ?? "";
+                return !string.IsNullOrWhiteSpace(identifier);
+            }
+
+            return false;
+        }
+
         private static bool TryResolveSelectedIdentifierFast(Fabricator fabricator, out string identifier)
         {
             identifier = "";
@@ -262,10 +293,16 @@ namespace DatabaseIOTest.Services
 
             try
             {
-                Identifier selected = fabricator.SelectedItemIdentifier;
-                if (!selected.IsEmpty)
+                if (SelectedItemIdentifierProperty != null &&
+                    TryReadIdentifierFromValue(SelectedItemIdentifierProperty.GetValue(fabricator), out identifier))
                 {
-                    identifier = selected.Value?.Trim() ?? "";
+                    return true;
+                }
+
+                if (SelectedItemIdentifierField != null &&
+                    TryReadIdentifierFromValue(SelectedItemIdentifierField.GetValue(fabricator), out identifier))
+                {
+                    return true;
                 }
             }
             catch
@@ -273,7 +310,7 @@ namespace DatabaseIOTest.Services
                 identifier = "";
             }
 
-            return !string.IsNullOrWhiteSpace(identifier);
+            return false;
         }
 
         private static int ResolveSelectedAmountFast(Fabricator fabricator)
@@ -293,33 +330,6 @@ namespace DatabaseIOTest.Services
         {
             identifier = "";
             if (fabricator == null) { return false; }
-
-            bool TryReadIdentifierFromValue(object value, out string id)
-            {
-                id = "";
-                if (value == null) { return false; }
-
-                if (value is Identifier baroId)
-                {
-                    if (baroId.IsEmpty) { return false; }
-                    id = baroId.Value;
-                    return !string.IsNullOrWhiteSpace(id);
-                }
-
-                if (value is string str)
-                {
-                    id = str?.Trim() ?? "";
-                    return !string.IsNullOrWhiteSpace(id);
-                }
-
-                if (value is FabricationRecipe recipe && recipe.TargetItem?.Identifier != null)
-                {
-                    id = recipe.TargetItem.Identifier.Value;
-                    return !string.IsNullOrWhiteSpace(id);
-                }
-
-                return false;
-            }
 
             foreach (string memberName in new[] { "SelectedItemIdentifier", "selectedItemIdentifier" })
             {

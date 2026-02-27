@@ -34,14 +34,19 @@ namespace DatabaseIOTest.Patches
                 if (!item.HasTag(DatabaseTerminalTag)) { return true; }
 
                 var terminal = item.GetComponent<DatabaseTerminalComponent>();
-                if (terminal == null || !terminal.ShouldHijackFixedTerminalUi()) { return true; }
+                if (terminal == null || !terminal.ShouldSuppressNativeTerminalGui()) { return true; }
 
                 // HookOnly fixed UI requires the XML Terminal component on DatabaseTerminalFixed.
                 // This patch is triggered by Terminal.AddToGUIUpdateList, so removing that XML node
                 // will remove the render entrypoint for fixed terminal UI.
-                if (!terminal.ShouldDriveFixedUiFromHook()) { return true; }
+                if (terminal.ShouldDriveFixedUiFromHook())
+                {
+                    terminal.DrawFixedTerminalUiFromGuiHook("harmony:Terminal.AddToGUIUpdateList");
+                }
 
-                terminal.DrawFixedTerminalUiFromGuiHook("harmony:Terminal.AddToGUIUpdateList");
+                // Always suppress native Terminal GUI for DB terminals.
+                // Compact craft terminal runs Update-only custom UI, so this path intentionally
+                // suppresses native Terminal while skipping hook-driven drawing.
                 return false;
             }
             catch (Exception ex)

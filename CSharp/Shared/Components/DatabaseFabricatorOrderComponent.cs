@@ -136,8 +136,9 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
                 $"{DatabaseIOTest.Constants.LogPrefix} client order ignored: fabricator component missing db='{_resolvedDatabaseId}' itemId={item?.ID}");
             return;
         }
-        Identifier identifier = _fabricator.SelectedItemIdentifier;
-        if (identifier.IsEmpty)
+        if (!FabricatorRecipeResolver.TryResolveSelectedRecipe(_fabricator, isServerAuthority: false, out var selected) ||
+            selected == null ||
+            string.IsNullOrWhiteSpace(selected.Identifier))
         {
             ModFileLog.Write(
                 "Fabricator",
@@ -145,14 +146,15 @@ public partial class DatabaseFabricatorOrderComponent : ItemComponent, IClientSe
             return;
         }
 
-        int amount = Math.Max(1, _fabricator.AmountToFabricate);
+        string identifier = selected.Identifier;
+        int amount = Math.Max(1, selected.Amount);
         if (GameMain.NetworkMember == null)
         {
-            HandleOrderServer(identifier.Value, amount, Character.Controlled);
+            HandleOrderServer(identifier, amount, Character.Controlled);
             return;
         }
 
-        _pendingIdentifier = identifier.Value;
+        _pendingIdentifier = identifier;
         _pendingAmount = amount;
         item.CreateClientEvent(this);
     }

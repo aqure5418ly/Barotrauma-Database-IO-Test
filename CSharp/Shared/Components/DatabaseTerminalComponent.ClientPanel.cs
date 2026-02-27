@@ -316,6 +316,97 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         return (ReadOnlyView && FollowFabricatorSelection) ? 0.5 : PanelEntryRefreshInterval;
     }
 
+    private bool IsCompactRecipePanelMode()
+    {
+        return CompactLeftPanel && FollowFabricatorSelection;
+    }
+
+    private void EnsureCompactRecipePanelRuntimeInitialized()
+    {
+        if (!IsCompactRecipePanelMode()) { return; }
+        if (_compactRecipeRuntimeInitialized) { return; }
+        if (item == null || item.Removed) { return; }
+
+        foreach (var container in item.GetComponents<ItemContainer>())
+        {
+            if (container?.GuiFrame == null) { continue; }
+            container.GuiFrame.CanBeFocused = false;
+            container.GuiFrame.Visible = false;
+            container.GuiFrame.Enabled = false;
+        }
+
+        _compactRecipeRuntimeInitialized = true;
+    }
+
+    private void AccumulateHaveCount(string identifier, int amount)
+    {
+        string id = (identifier ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(id)) { return; }
+        int safeAmount = Math.Max(0, amount);
+        if (safeAmount <= 0) { return; }
+
+        if (_compactHaveByIdentifier.TryGetValue(id, out int current))
+        {
+            _compactHaveByIdentifier[id] = current + safeAmount;
+        }
+        else
+        {
+            _compactHaveByIdentifier[id] = safeAmount;
+        }
+    }
+
+    private void RefreshHaveCountsOnly()
+    {
+        _compactHaveByIdentifier.Clear();
+        if (IsServerAuthority)
+        {
+            var snapshot = DatabaseStore.GetItemsSnapshot(_resolvedDatabaseId, out _);
+            if (snapshot == null) { return; }
+
+            foreach (var itemData in snapshot)
+            {
+                if (itemData == null) { continue; }
+                AccumulateHaveCount(itemData.Identifier, Math.Max(1, itemData.StackSize));
+            }
+            return;
+        }
+
+        string payload = LuaB1RowsPayload ?? "";
+        if (string.IsNullOrWhiteSpace(payload)) { return; }
+
+        string[] rowParts = payload.Split(LuaRowSeparator);
+        for (int i = 0; i < rowParts.Length; i++)
+        {
+            string row = rowParts[i] ?? "";
+            if (string.IsNullOrWhiteSpace(row)) { continue; }
+            string[] fields = row.Split(LuaFieldSeparator);
+            if (fields.Length <= 0) { continue; }
+
+            string id = (fields[0] ?? "").Trim();
+            int amount = 0;
+            if (fields.Length > 3)
+            {
+                int.TryParse(fields[3] ?? "0", out amount);
+            }
+            AccumulateHaveCount(id, amount);
+        }
+    }
+
+    private static int ComputeHaveCountsHash(IReadOnlyDictionary<string, int> haveByIdentifier)
+    {
+        if (haveByIdentifier == null || haveByIdentifier.Count <= 0) { return 0; }
+        unchecked
+        {
+            int hash = 17;
+            foreach (var pair in haveByIdentifier.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                hash = (hash * 31) + StringComparer.OrdinalIgnoreCase.GetHashCode(pair.Key ?? "");
+                hash = (hash * 31) + Math.Max(0, pair.Value);
+            }
+            return hash;
+        }
+    }
+
     private static int ComputeRecipeRequirementsHash(IReadOnlyDictionary<string, int> requiredByIdentifier)
     {
         if (requiredByIdentifier == null || requiredByIdentifier.Count <= 0) { return 0; }
@@ -331,7 +422,9 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         }
     }
 
-    private bool RefreshRecipeRequirementsFromFabricator(bool force = false)
+    private bool RefreshRecipeRequirementsFromFabricator(
+        bool force = false,
+        double refreshIntervalSeconds = RecipeRequirementsRefreshInterval)
     {
         if (!FollowFabricatorSelection || item == null || item.Removed)
         {
@@ -347,7 +440,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         {
             return _recipeRequiredByIdentifier.Count > 0;
         }
-        _nextRecipeRequirementsRefreshAt = Timing.TotalTime + RecipeRequirementsRefreshInterval;
+        _nextRecipeRequirementsRefreshAt = Timing.TotalTime + Math.Max(0.05, refreshIntervalSeconds);
 
         var fabricator = item.GetComponent<Fabricator>();
         if (fabricator == null)
@@ -408,6 +501,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
     private bool RefreshPanelEntrySnapshot(bool force = false)
     {
+        if (IsCompactRecipePanelMode()) { return false; }
         if (!force && Timing.TotalTime < _nextPanelEntryRefreshAt) { return false; }
         _nextPanelEntryRefreshAt = Timing.TotalTime + GetPanelEntryRefreshInterval();
 
@@ -1005,6 +1099,245 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         LogPanelDebug($"db fill requested id={item?.ID} db='{_resolvedDatabaseId}' recipe='{_selectedRecipeIdentifier}' amount={_selectedRecipeAmount} sent={requested}");
     }
 
+    private void EnsureCompactRecipePanelCreated()
+    {
+        if (_panelFrame != null) { return; }
+        if (GUI.Canvas == null)
+        {
+            if (Timing.TotalTime >= _nextNoCanvasLogAllowedTime)
+            {
+                LogPanelDebug($"skip compact create id={item?.ID}: GUI.Canvas is null");
+                _nextNoCanvasLogAllowedTime = Timing.TotalTime + 1.0;
+            }
+            return;
+        }
+
+        _panelFrame = new GUIFrame(
+            new RectTransform(new Vector2(0.22f, 0.38f), GUI.Canvas, Anchor.TopRight)
+            {
+                RelativeOffset = new Vector2(-0.01f, 0.08f)
+            },
+            style: "ItemUI");
+        _panelFrame.Visible = false;
+        _panelFrame.Enabled = false;
+
+        _compactPanelMainLayout = new GUILayoutGroup(
+            new RectTransform(new Vector2(0.95f, 0.95f), _panelFrame.RectTransform, Anchor.Center),
+            isHorizontal: false)
+        {
+            AbsoluteSpacing = 6
+        };
+
+        var topBar = new GUILayoutGroup(
+            new RectTransform(new Vector2(1f, 0.14f), _compactPanelMainLayout.RectTransform),
+            isHorizontal: true)
+        {
+            AbsoluteSpacing = 6
+        };
+
+        _compactPanelRecipeTitle = new GUITextBlock(
+            new RectTransform(new Vector2(0.78f, 1f), topBar.RectTransform),
+            T("dbiotest.craft.recipe.none", "No recipe selected."),
+            font: GUIStyle.SubHeadingFont,
+            textAlignment: Alignment.CenterLeft);
+
+        _panelCloseButton = new GUIButton(
+            new RectTransform(new Vector2(0.22f, 1f), topBar.RectTransform),
+            T("dbiotest.panel.close", "Close"));
+        _panelCloseButton.OnClicked = (_, __) =>
+        {
+            _panelManualHideUntil = Timing.TotalTime + 1.0;
+            if (!IsFixedTerminal)
+            {
+                _handheldPanelArmedByUse = false;
+            }
+            ReleaseClientPanelFocusIfOwned("manual close");
+            SetPanelVisible(false, "manual close");
+            return true;
+        };
+
+        _compactPanelRequirementsList = new GUIListBox(
+            new RectTransform(new Vector2(1f, 0.62f), _compactPanelMainLayout.RectTransform))
+        {
+            Spacing = 2
+        };
+
+        _compactPanelDbFillButton = new GUIButton(
+            new RectTransform(new Vector2(1f, 0.12f), _compactPanelMainLayout.RectTransform),
+            T("dbiotest.craft.dbfill", "DB Fill"),
+            style: "GUIButtonSmall");
+        _compactPanelDbFillButton.OnClicked = (_, __) =>
+        {
+            RequestDbFillFromPanel();
+            return true;
+        };
+        _compactPanelDbFillButton.Enabled = false;
+
+        _compactPanelStatusText = new GUITextBlock(
+            new RectTransform(new Vector2(1f, 0.12f), _compactPanelMainLayout.RectTransform),
+            T("dbiotest.craft.recipe.none", "No recipe selected."),
+            textAlignment: Alignment.CenterLeft);
+
+        _lastCompactPanelRenderSignature = "";
+        _nextCompactPanelRefreshAt = 0;
+        _compactHaveByIdentifier.Clear();
+
+        LogPanelDebug(
+            $"compact panel created id={item?.ID} db='{_resolvedDatabaseId}' " +
+            $"rect=({_panelFrame.Rect.X},{_panelFrame.Rect.Y},{_panelFrame.Rect.Width},{_panelFrame.Rect.Height})");
+    }
+
+    private void RebuildCompactRecipeRows()
+    {
+        if (_compactPanelRequirementsList?.Content == null) { return; }
+        _compactPanelRequirementsList.Content.ClearChildren();
+
+        if (string.IsNullOrWhiteSpace(_selectedRecipeIdentifier) || _recipeRequiredByIdentifier.Count <= 0)
+        {
+            new GUITextBlock(
+                new RectTransform(new Vector2(1f, 0.2f), _compactPanelRequirementsList.Content.RectTransform),
+                T("dbiotest.craft.recipe.none", "No recipe selected."),
+                textAlignment: Alignment.Center);
+            return;
+        }
+
+        foreach (var pair in _recipeRequiredByIdentifier.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            string identifier = (pair.Key ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(identifier)) { continue; }
+
+            int need = Math.Max(0, pair.Value);
+            _compactHaveByIdentifier.TryGetValue(identifier, out int have);
+            bool enough = have >= need && need > 0;
+
+            var row = new GUILayoutGroup(
+                new RectTransform(new Vector2(1f, 0.16f), _compactPanelRequirementsList.Content.RectTransform),
+                isHorizontal: true)
+            {
+                AbsoluteSpacing = 4
+            };
+
+            var iconFrame = new GUIFrame(
+                new RectTransform(new Vector2(0.16f, 1f), row.RectTransform),
+                style: "ListBoxElement");
+            iconFrame.CanBeFocused = false;
+            var icon = ResolveEntryIcon(identifier);
+            if (icon != null)
+            {
+                var image = new GUIImage(
+                    new RectTransform(new Vector2(0.8f, 0.8f), iconFrame.RectTransform, Anchor.Center),
+                    icon,
+                    scaleToFit: true);
+                image.CanBeFocused = false;
+            }
+
+            string displayName = ResolveDisplayNameForIdentifier(identifier);
+            if (string.IsNullOrWhiteSpace(displayName))
+            {
+                displayName = identifier;
+            }
+            var nameText = new GUITextBlock(
+                new RectTransform(new Vector2(0.5f, 1f), row.RectTransform),
+                displayName,
+                textAlignment: Alignment.CenterLeft);
+            nameText.CanBeFocused = false;
+            nameText.ToolTip = identifier;
+
+            var amountText = new GUITextBlock(
+                new RectTransform(new Vector2(0.2f, 1f), row.RectTransform),
+                $"{Math.Max(0, have)}/{need}",
+                textAlignment: Alignment.CenterRight);
+            amountText.TextColor = enough ? Color.LightGreen : Color.IndianRed;
+            amountText.CanBeFocused = false;
+
+            var okText = new GUITextBlock(
+                new RectTransform(new Vector2(0.14f, 1f), row.RectTransform),
+                enough ? "OK" : "X",
+                textAlignment: Alignment.Center);
+            okText.TextColor = enough ? Color.LightGreen : Color.IndianRed;
+            okText.CanBeFocused = false;
+        }
+    }
+
+    private void UpdateCompactRecipePanel()
+    {
+        if (_panelFrame == null) { return; }
+
+        if (Timing.TotalTime >= _nextCompactPanelRefreshAt || string.IsNullOrEmpty(_lastCompactPanelRenderSignature))
+        {
+            _nextCompactPanelRefreshAt = Timing.TotalTime + CompactRecipePanelRefreshInterval;
+            RefreshRecipeRequirementsFromFabricator(force: true, refreshIntervalSeconds: CompactRecipePanelRefreshInterval);
+            RefreshHaveCountsOnly();
+        }
+
+        string recipeIdentifier = _selectedRecipeIdentifier ?? "";
+        int recipeAmount = Math.Max(1, _selectedRecipeAmount);
+        int requirementsHash = _selectedRecipeRequirementsHash;
+        int haveHash = ComputeHaveCountsHash(_compactHaveByIdentifier);
+        string compactSignature = $"{recipeIdentifier}|{recipeAmount}|{requirementsHash}|{haveHash}";
+        bool renderChanged = !string.Equals(compactSignature, _lastCompactPanelRenderSignature, StringComparison.Ordinal);
+        if (renderChanged)
+        {
+            _lastCompactPanelRenderSignature = compactSignature;
+            RebuildCompactRecipeRows();
+        }
+
+        string recipeDisplay = string.IsNullOrWhiteSpace(recipeIdentifier)
+            ? ""
+            : ResolveDisplayNameForIdentifier(recipeIdentifier);
+        if (string.IsNullOrWhiteSpace(recipeDisplay))
+        {
+            recipeDisplay = recipeIdentifier;
+        }
+        if (_compactPanelRecipeTitle != null)
+        {
+            _compactPanelRecipeTitle.Text = string.IsNullOrWhiteSpace(recipeIdentifier)
+                ? T("dbiotest.craft.recipe.none", "No recipe selected.")
+                : $"{T("dbiotest.craft.recipe.requirements", "Requirements")}: {recipeDisplay} x{recipeAmount}";
+        }
+
+        bool hasRecipe = !string.IsNullOrWhiteSpace(recipeIdentifier) && _recipeRequiredByIdentifier.Count > 0;
+        bool hasOrderComponent = item?.GetComponent<DatabaseFabricatorOrderComponent>() != null;
+        if (_compactPanelDbFillButton != null)
+        {
+            _compactPanelDbFillButton.Text = T("dbiotest.craft.dbfill", "DB Fill");
+            _compactPanelDbFillButton.Enabled = hasRecipe && hasOrderComponent;
+        }
+
+        if (_compactPanelStatusText != null)
+        {
+            if (!hasRecipe)
+            {
+                _compactPanelStatusText.Text = T("dbiotest.craft.recipe.none", "No recipe selected.");
+                _compactPanelStatusText.TextColor = Color.LightGray;
+            }
+            else
+            {
+                bool anyMissing = false;
+                foreach (var pair in _recipeRequiredByIdentifier)
+                {
+                    _compactHaveByIdentifier.TryGetValue(pair.Key ?? "", out int have);
+                    if (Math.Max(0, have) < Math.Max(0, pair.Value))
+                    {
+                        anyMissing = true;
+                        break;
+                    }
+                }
+
+                if (anyMissing)
+                {
+                    _compactPanelStatusText.Text = T("dbiotest.craft.status.missing", "Missing materials.");
+                    _compactPanelStatusText.TextColor = Color.IndianRed;
+                }
+                else
+                {
+                    _compactPanelStatusText.Text = T("dbiotest.craft.status.ready", "Ready for DB Fill.");
+                    _compactPanelStatusText.TextColor = Color.LightGreen;
+                }
+            }
+        }
+    }
+
     private void SetPanelVisible(bool visible, string reason)
     {
         bool prevFrameVisible = _panelFrame?.Visible ?? false;
@@ -1051,6 +1384,11 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private void EnsurePanelCreated()
     {
         if (_panelFrame != null) { return; }
+        if (IsCompactRecipePanelMode())
+        {
+            EnsureCompactRecipePanelCreated();
+            return;
+        }
         if (GUI.Canvas == null)
         {
             if (Timing.TotalTime >= _nextNoCanvasLogAllowedTime)
@@ -1061,9 +1399,9 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             return;
         }
 
-        Vector2 panelSize = CompactLeftPanel ? new Vector2(0.28f, 0.78f) : new Vector2(0.6f, 0.78f);
-        Anchor panelAnchor = CompactLeftPanel ? Anchor.CenterRight : Anchor.Center;
-        Vector2 panelOffset = CompactLeftPanel ? new Vector2(-0.02f, 0f) : new Vector2(0f, -0.03f);
+        Vector2 panelSize = new Vector2(0.6f, 0.78f);
+        Anchor panelAnchor = Anchor.Center;
+        Vector2 panelOffset = new Vector2(0f, -0.03f);
 
         _panelFrame = new GUIFrame(
             new RectTransform(panelSize, GUI.Canvas, panelAnchor)
@@ -1340,7 +1678,15 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         isNearby = distanceSq <= PanelInteractionRange * PanelInteractionRange;
         if (IsFixedTerminal)
         {
-            shouldShow = isSelected || isNearby;
+            if (IsCompactRecipePanelMode())
+            {
+                // Craft compact panel should only follow explicit selection, not passive proximity.
+                shouldShow = isSelected;
+            }
+            else
+            {
+                shouldShow = isSelected || isNearby;
+            }
         }
         else
         {
@@ -1415,6 +1761,11 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private void UpdateClientPanelVisuals()
     {
         if (_panelFrame == null) { return; }
+        if (IsCompactRecipePanelMode())
+        {
+            UpdateCompactRecipePanel();
+            return;
+        }
         bool perfDiag = ModFileLog.IsDebugEnabled;
         long perfStartTicks = 0;
         long perfAfterSnapshotTicks = 0;
