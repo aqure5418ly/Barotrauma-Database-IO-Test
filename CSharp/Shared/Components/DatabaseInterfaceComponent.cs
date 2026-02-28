@@ -22,6 +22,15 @@ public partial class DatabaseInterfaceComponent : ItemComponent
     [Editable(MinValueFloat = 0.0f, MaxValueFloat = 10f), Serialize(0.5f, IsPropertySaveable.Yes, description: "Minimum voltage required when RequirePower=true.")]
     public float MinRequiredVoltage { get; set; } = 0.5f;
 
+    [Editable, Serialize(false, IsPropertySaveable.Yes, description: "Unpack container contents before ingesting.")]
+    public bool AutoUnpackContainers { get; set; } = false;
+
+    [Editable, Serialize(false, IsPropertySaveable.Yes, description: "When unpacking, only ingest unpacked contents and skip top-level items.")]
+    public bool UnpackContainersOnly { get; set; } = false;
+
+    [Editable, Serialize(true, IsPropertySaveable.Yes, description: "Keep container item in interface after unpacking its contents.")]
+    public bool KeepContainerAfterUnpack { get; set; } = true;
+
     private string _resolvedDatabaseId = DatabaseIOTest.Constants.DefaultDatabaseId;
     private double _lastIngestCheckTime;
     private double _lastDescriptionUpdateTime;
@@ -85,12 +94,33 @@ public partial class DatabaseInterfaceComponent : ItemComponent
         if (allItems.Count == 0) { return; }
 
         var ingestable = new List<Item>();
+        var seenIngestIds = new HashSet<int>();
         foreach (var target in allItems)
         {
             if (target == null || target.Removed) { continue; }
+
+            if (AutoUnpackContainers && TryCollectUnpackContents(target, out var unpackContents))
+            {
+                foreach (var unpacked in unpackContents)
+                {
+                    if (CanIngest(unpacked))
+                    {
+                        AddUniqueIngestTarget(ingestable, seenIngestIds, unpacked);
+                    }
+                }
+
+                if (!KeepContainerAfterUnpack && !UnpackContainersOnly && CanIngest(target))
+                {
+                    AddUniqueIngestTarget(ingestable, seenIngestIds, target);
+                }
+                continue;
+            }
+
+            if (UnpackContainersOnly) { continue; }
+
             if (CanIngest(target))
             {
-                ingestable.Add(target);
+                AddUniqueIngestTarget(ingestable, seenIngestIds, target);
             }
         }
 
@@ -135,6 +165,42 @@ public partial class DatabaseInterfaceComponent : ItemComponent
         return true;
     }
 
+    private static void AddUniqueIngestTarget(List<Item> ingestable, HashSet<int> seenIds, Item target)
+    {
+        if (target == null || target.Removed) { return; }
+        if (!seenIds.Add(target.ID)) { return; }
+        ingestable.Add(target);
+    }
+
+    private static bool TryCollectUnpackContents(Item containerItem, out List<Item> contents)
+    {
+        contents = null;
+        if (containerItem == null || containerItem.Removed) { return false; }
+
+        var containerComponents = containerItem.GetComponents<ItemContainer>()?.Where(c => c?.Inventory != null).ToList();
+        if (containerComponents == null || containerComponents.Count == 0) { return false; }
+
+        var collected = new List<Item>();
+        var seenIds = new HashSet<int>();
+        foreach (var component in containerComponents)
+        {
+            var nestedItems = component.Inventory?.AllItemsMod;
+            if (nestedItems == null) { continue; }
+
+            foreach (var nested in nestedItems)
+            {
+                if (nested == null || nested.Removed) { continue; }
+                if (nested == containerItem) { continue; }
+                if (!seenIds.Add(nested.ID)) { continue; }
+                collected.Add(nested);
+            }
+        }
+
+        if (collected.Count == 0) { return false; }
+        contents = collected;
+        return true;
+    }
+
     private void UpdateDescription()
     {
         int count = DatabaseStore.GetItemCount(_resolvedDatabaseId);
@@ -151,7 +217,19 @@ public partial class DatabaseInterfaceComponent : ItemComponent
             powerLine = $"\n{powerLabel}: {state} ({GetCurrentVoltage():0.##}/{Math.Max(0f, MinRequiredVoltage):0.##}V)";
         }
 
-        item.Description = $"{hint}\n\n{dbLabel}: {_resolvedDatabaseId}\n{countLabel}: {count}/{Math.Max(1, MaxStorageCount)}{powerLine}";
+        string modeLine = "";
+        if (AutoUnpackContainers)
+        {
+            string unpackMode = UnpackContainersOnly
+                ? T("dbiotest.interface.mode.unpackonly", "Mode: unpack container contents only")
+                : T("dbiotest.interface.mode.unpackmixed", "Mode: ingest items and unpack container contents");
+            string keepMode = KeepContainerAfterUnpack
+                ? T("dbiotest.interface.mode.keepcontainer", "Container: keep in interface")
+                : T("dbiotest.interface.mode.storecontainer", "Container: ingest after unpack");
+            modeLine = $"\n{unpackMode}\n{keepMode}";
+        }
+
+        item.Description = $"{hint}\n\n{dbLabel}: {_resolvedDatabaseId}\n{countLabel}: {count}/{Math.Max(1, MaxStorageCount)}{powerLine}{modeLine}";
     }
 
     private float GetCurrentVoltage()

@@ -10,6 +10,8 @@
   - Persistence anchor for shared database storage.
 - `DatabaseInterface` (handheld) and `DatabaseInterfaceFixed` (stationary)
   - Ingest items and serialize them into the shared database.
+- `DatabaseUnpackInterface` (handheld) and `DatabaseUnpackInterfaceFixed` (stationary)
+  - Automatically unpacks containers placed inside, extracting and storing all contained items into the shared database.
 - `DatabaseTerminal` (handheld), `DatabaseTerminalFixed` (stationary) and `DatabaseCraftTerminal` (fabricator-hybrid)
   - Atomic access to database items (no session lock).
   - Multiple terminals can be opened simultaneously without conflicting.

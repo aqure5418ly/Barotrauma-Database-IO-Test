@@ -74,6 +74,40 @@
       minRequiredVoltage="0.5" />
   </Item>
 
+  <Item
+    identifier="DatabaseUnpackInterface"
+    category="Equipment"
+    tags="smallitem,mobilecontainer,database_interface,database_unpack_interface"
+    showcontentsintooltip="true"
+    scale="0.5"
+    impactsoundtag="impact_metal_light"
+    waterproof="true"
+    fireproof="true">
+    <InventoryIcon texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="678,223,180,66" origin="0.5,0.5" />
+    <Sprite texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="678,223,180,66" origin="0.5,0.5" depth="0.6" />
+    <Fabricate suitablefabricators="fabricator" requiredtime="32">
+      <RequiredSkill identifier="electrical" level="76" />
+      <RequiredSkill identifier="mechanical" level="72" />
+      <RequiredItem identifier="fpgacircuit" amount="6" />
+      <RequiredItem identifier="titaniumaluminiumalloy" amount="2" />
+      <RequiredItem identifier="plastic" amount="3" />
+      <RequiredItem identifier="silicon" amount="2" />
+    </Fabricate>
+    <Body width="140" height="82" density="20" />
+    <Holdable slots="Any,RightHand,LeftHand" msg="ItemMsgPickUpSelect" pickkey="Use" />
+    <ItemContainer capacity="1" slotsperrow="1" canbeselected="true" hideitems="true" msg="ItemMsgInteractSelect">
+      <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
+      <GuiFrame relativesize="0.2,0.2" anchor="Center" style="ItemUI" />
+    </ItemContainer>
+    <DatabaseInterfaceComponent
+      databaseId="default"
+      maxStorageCount="2048"
+      ingestInterval="0.15"
+      autoUnpackContainers="true"
+      unpackContainersOnly="true"
+      keepContainerAfterUnpack="true" />
+  </Item>
+
   <!-- Legacy compatibility item for old saves.
        Behavior is identical to DatabaseTerminal (atomic/no-session). -->
   <Item
@@ -157,6 +191,51 @@
   </Item>
 
   <Item
+    identifier="DatabaseUnpackInterfaceFixed"
+    category="Machine,Electrical"
+    tags="database_interface,database_interface_fixed,database_unpack_interface,machine"
+    showcontentsintooltip="true"
+    linkable="true"
+    waterproof="true"
+    fireproof="true"
+    scale="0.75">
+    <InventoryIcon texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="1190,210,180,91" origin="0.5,0.5" />
+    <Sprite texture="%ModDir%/Textures/DatabaseAtlas.png" sourcerect="1190,210,180,91" origin="0.5,0.5" depth="0.6" />
+    <Fabricate suitablefabricators="fabricator" requiredtime="20">
+      <RequiredSkill identifier="electrical" level="45" />
+      <RequiredSkill identifier="mechanical" level="40" />
+      <RequiredItem identifier="fpgacircuit" amount="6" />
+      <RequiredItem identifier="steel" amount="3" />
+      <RequiredItem identifier="plastic" amount="2" />
+      <RequiredItem identifier="silicon" amount="1" />
+    </Fabricate>
+    <Body width="128" height="92" density="30" />
+    <Holdable selectkey="Action" pickkey="Use" slots="RightHand+LeftHand" msg="ItemMsgDetachWrench" PickingTime="3.0" aimpos="60,0" handle1="0,0" attachable="true" aimable="false">
+      <RequiredItem identifier="wrench" type="Equipped" />
+    </Holdable>
+    <ItemContainer capacity="1" slotsperrow="1" canbeselected="true" hideitems="true" msg="ItemMsgInteractSelect">
+      <Containable items="smallitem,mediumitem,largeitem,ammobox,coilgunammo,railgunammo,depthchargeammo,divingsuit,combatdivingsuit,abyssdivingsuit,pucs,slipsuit,alienartifact" />
+      <GuiFrame relativesize="0.2,0.2" anchor="Center" style="ItemUI" />
+    </ItemContainer>
+    <Powered minvoltage="0.5" powerconsumption="15" />
+    <ConnectionPanel selectkey="Action" canbeselected="true" msg="ItemMsgRewireScrewdriver" hudpriority="10">
+      <GuiFrame relativesize="0.22,0.28" minsize="380,320" maxsize="480,420" anchor="Center" style="ConnectionPanel" />
+      <RequiredItem identifier="screwdriver" type="Equipped" />
+      <input name="power_in" displayname="connection.powerin" />
+      <output name="condition_out" displayname="connection.conditionout" />
+    </ConnectionPanel>
+    <DatabaseInterfaceComponent
+      databaseId="default"
+      maxStorageCount="2048"
+      ingestInterval="0.15"
+      requirePower="false"
+      minRequiredVoltage="0.5"
+      autoUnpackContainers="true"
+      unpackContainersOnly="true"
+      keepContainerAfterUnpack="true" />
+  </Item>
+
+  <Item
     identifier="DatabaseTerminalFixed"
     category="Machine,Electrical"
     tags="database_terminal,database_terminal_fixed,machine"
@@ -215,7 +294,7 @@
     <DatabaseTerminalComponent
       databaseId="default"
       useInPlaceSession="true"
-      requirePower="false"
+      requirePower="true"
       minRequiredVoltage="0.5" />
   </Item>
 
@@ -295,7 +374,7 @@
       terminalBufferContainerIndex="2"
       compactLeftPanel="true"
       followFabricatorSelection="true"
-      requirePower="false"
+      requirePower="true"
       minRequiredVoltage="0.5" />
   </Item>
 
@@ -379,7 +458,7 @@
       lowConditionThreshold="2"
       pollInterval="0.2"
       supplyCooldown="0.3"
-      requirePower="false"
+      requirePower="true"
       minRequiredVoltage="0.5" />
   </Item>
 </Items>

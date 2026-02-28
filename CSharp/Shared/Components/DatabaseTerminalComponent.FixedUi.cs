@@ -4,6 +4,8 @@ using DatabaseIOTest.Services;
 
 public partial class DatabaseTerminalComponent
 {
+    private static readonly Identifier ScrewdriverIdentifier = "screwdriver".ToIdentifier();
+
     // Keep both paths available for fast A/B tests:
     // UpdateOnly: Update() drives fixed UI, hooks only silence native container GUI.
     // HookOnly: hooks drive fixed UI (legacy path, kept for rollback).
@@ -46,6 +48,7 @@ public partial class DatabaseTerminalComponent
     internal bool ShouldSuppressNativeTerminalGui()
     {
 #if CLIENT
+        if (ShouldYieldToConnectionPanelUi()) { return false; }
         return ShouldHijackFixedTerminalUi() || IsCompactRecipeTerminalUiMode();
 #else
         return false;
@@ -55,7 +58,34 @@ public partial class DatabaseTerminalComponent
     internal bool ShouldSilenceFixedContainerGui()
     {
 #if CLIENT
+        if (ShouldYieldToConnectionPanelUi()) { return false; }
         return ShouldHijackFixedTerminalUi() && IsVirtualSessionOpenForUi();
+#else
+        return false;
+#endif
+    }
+
+    internal bool ShouldYieldToConnectionPanelUi()
+    {
+#if CLIENT
+        if (!IsFixedTerminal || item == null || item.Removed) { return false; }
+
+        Character controlled = Character.Controlled;
+        if (controlled == null || controlled.Removed || controlled.IsDead) { return false; }
+
+        bool selectedThis = controlled.SelectedItem == item || controlled.SelectedSecondaryItem == item;
+        if (!selectedThis) { return false; }
+
+        var equippedItems = controlled.Inventory?.AllItemsMod;
+        if (equippedItems == null) { return false; }
+        foreach (var equipped in equippedItems)
+        {
+            if (equipped == null || equipped.Removed) { continue; }
+            if (equipped.Prefab == null || equipped.Prefab.Identifier != ScrewdriverIdentifier) { continue; }
+            if (controlled.HasEquippedItem(equipped)) { return true; }
+        }
+
+        return false;
 #else
         return false;
 #endif

@@ -1676,6 +1676,15 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
         float distanceSq = Vector2.DistanceSquared(controlled.WorldPosition, item.WorldPosition);
         distance = (float)Math.Sqrt(Math.Max(0f, distanceSq));
         isNearby = distanceSq <= PanelInteractionRange * PanelInteractionRange;
+
+        if (ShouldYieldToConnectionPanelUi())
+        {
+            LogPanelEval("hide:rewire_priority", controlled, isSelected, isInControlledInventory, isNearby, shouldShow, distance);
+            ReleaseClientPanelFocusIfOwned("rewire priority");
+            SetPanelVisible(false, "rewire priority");
+            return;
+        }
+
         if (IsFixedTerminal)
         {
             if (IsCompactRecipePanelMode())

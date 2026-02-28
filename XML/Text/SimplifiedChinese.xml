@@ -2,10 +2,14 @@
 <infotexts language="Simplified Chinese" nowhitespace="false" translatedname="简体中文">
   <entityname.DatabaseInterface>数据库接口</entityname.DatabaseInterface>
   <entitydescription.DatabaseInterface>将物品放入槽位即可吸收到数据库。</entitydescription.DatabaseInterface>
+  <entityname.DatabaseUnpackInterface>数据库拆包接口</entityname.DatabaseUnpackInterface>
+  <entitydescription.DatabaseUnpackInterface>用于拆解容器并将其内容物入库，容器本体会保留在接口中。</entitydescription.DatabaseUnpackInterface>
   <entityname.DatabaseTerminal>数据库终端</entityname.DatabaseTerminal>
   <entitydescription.DatabaseTerminal>用于浏览数据库物品，并将取出的物品放入终端输出缓冲区。</entitydescription.DatabaseTerminal>
   <entityname.DatabaseInterfaceFixed>数据库接口（固定式）</entityname.DatabaseInterfaceFixed>
   <entitydescription.DatabaseInterfaceFixed>前中期使用的固定式供电接口。</entitydescription.DatabaseInterfaceFixed>
+  <entityname.DatabaseUnpackInterfaceFixed>数据库拆包接口（固定式）</entityname.DatabaseUnpackInterfaceFixed>
+  <entitydescription.DatabaseUnpackInterfaceFixed>固定式供电拆包接口：容器内容物入库，容器本体保留在槽位中。</entitydescription.DatabaseUnpackInterfaceFixed>
   <entityname.DatabaseTerminalFixed>数据库终端（固定式）</entityname.DatabaseTerminalFixed>
   <entitydescription.DatabaseTerminalFixed>前中期使用的固定式供电终端。</entitydescription.DatabaseTerminalFixed>
   <entityname.DatabaseCraftTerminal>数据库合成终端</entityname.DatabaseCraftTerminal>
@@ -18,6 +22,10 @@
   <dbiotest.interface.hint>放入物品以吸收到数据库。</dbiotest.interface.hint>
   <dbiotest.interface.count>库存实体数</dbiotest.interface.count>
   <dbiotest.interface.dbid>数据库ID</dbiotest.interface.dbid>
+  <dbiotest.interface.mode.unpackonly>模式：仅拆包容器内容物</dbiotest.interface.mode.unpackonly>
+  <dbiotest.interface.mode.unpackmixed>模式：普通入库 + 容器拆包</dbiotest.interface.mode.unpackmixed>
+  <dbiotest.interface.mode.keepcontainer>容器处理：保留在接口中</dbiotest.interface.mode.keepcontainer>
+  <dbiotest.interface.mode.storecontainer>容器处理：拆包后容器也入库</dbiotest.interface.mode.storecontainer>
 
   <dbiotest.terminal.closedhint>使用终端面板浏览并取出物品。</dbiotest.terminal.closedhint>
   <dbiotest.terminal.openhint>已启用原子模式，所有读写均由服务端权威执行。</dbiotest.terminal.openhint>

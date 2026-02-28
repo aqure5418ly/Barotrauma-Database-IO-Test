@@ -2,10 +2,14 @@
 <infotexts language="English" nowhitespace="false" translatedname="English">
   <entityname.DatabaseInterface>Database Interface</entityname.DatabaseInterface>
   <entitydescription.DatabaseInterface>Drop items into the slot to ingest them into the database.</entitydescription.DatabaseInterface>
+  <entityname.DatabaseUnpackInterface>Database Unpack Interface</entityname.DatabaseUnpackInterface>
+  <entitydescription.DatabaseUnpackInterface>Unpacks container contents into the database and keeps the container item in place.</entitydescription.DatabaseUnpackInterface>
   <entityname.DatabaseTerminal>Database Terminal</entityname.DatabaseTerminal>
   <entitydescription.DatabaseTerminal>Browse database items and route extracted items to terminal output buffer.</entitydescription.DatabaseTerminal>
   <entityname.DatabaseInterfaceFixed>Database Interface (Fixed)</entityname.DatabaseInterfaceFixed>
   <entitydescription.DatabaseInterfaceFixed>Stationary powered interface for early/mid game database ingest.</entitydescription.DatabaseInterfaceFixed>
+  <entityname.DatabaseUnpackInterfaceFixed>Database Unpack Interface (Fixed)</entityname.DatabaseUnpackInterfaceFixed>
+  <entitydescription.DatabaseUnpackInterfaceFixed>Stationary powered unpack interface: ingests container contents into database and keeps the container item in slot.</entitydescription.DatabaseUnpackInterfaceFixed>
   <entityname.DatabaseTerminalFixed>Database Terminal (Fixed)</entityname.DatabaseTerminalFixed>
   <entitydescription.DatabaseTerminalFixed>Stationary powered terminal for early/mid game database access.</entitydescription.DatabaseTerminalFixed>
   <entityname.DatabaseCraftTerminal>Database Craft Terminal</entityname.DatabaseCraftTerminal>
@@ -18,6 +22,10 @@
   <dbiotest.interface.hint>Insert items to ingest into database.</dbiotest.interface.hint>
   <dbiotest.interface.count>Stored Item Count</dbiotest.interface.count>
   <dbiotest.interface.dbid>Database ID</dbiotest.interface.dbid>
+  <dbiotest.interface.mode.unpackonly>Mode: unpack container contents only</dbiotest.interface.mode.unpackonly>
+  <dbiotest.interface.mode.unpackmixed>Mode: ingest items and unpack container contents</dbiotest.interface.mode.unpackmixed>
+  <dbiotest.interface.mode.keepcontainer>Container: keep in interface</dbiotest.interface.mode.keepcontainer>
+  <dbiotest.interface.mode.storecontainer>Container: ingest after unpack</dbiotest.interface.mode.storecontainer>
 
   <dbiotest.terminal.closedhint>Use terminal panel to browse and extract items.</dbiotest.terminal.closedhint>
   <dbiotest.terminal.openhint>Atomic mode active. All reads/writes are server-authoritative.</dbiotest.terminal.openhint>

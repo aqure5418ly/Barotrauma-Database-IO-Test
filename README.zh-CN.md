@@ -11,6 +11,8 @@
   - 承载数据库持久化存储。
 - `DatabaseInterface`（手持）与 `DatabaseInterfaceFixed`（固定式）
   - 吸收物品并序列化写入共享数据库。
+- `DatabaseUnpackInterface`（手持解包接口）与 `DatabaseUnpackInterfaceFixed`（固定式解包接口）
+  - 可以自动解包放入其中的容器，并将容器内的所有物品递归存入数据库。
 - `DatabaseTerminal`（手持）、`DatabaseTerminalFixed`（固定式）与 `DatabaseCraftTerminal`（数据库合成终端）
   - 已彻底移除旧版独占会话机制，采用无会话原子模式访问数据库。
   - 支持多玩家、多终端同时打开进行独立操作，互不抢占。
