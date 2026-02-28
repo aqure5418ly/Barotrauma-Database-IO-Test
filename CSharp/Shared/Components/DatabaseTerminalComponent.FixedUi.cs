@@ -24,6 +24,7 @@ public partial class DatabaseTerminalComponent
 #if CLIENT
         return IsFixedTerminal &&
                EnableCsPanelOverlay &&
+               HasRequiredPower() &&
                !IsCompactRecipePanelMode() &&
                item != null &&
                !item.Removed;
@@ -37,6 +38,7 @@ public partial class DatabaseTerminalComponent
 #if CLIENT
         return IsFixedTerminal &&
                EnableCsPanelOverlay &&
+               HasRequiredPower() &&
                item != null &&
                !item.Removed &&
                IsCompactRecipePanelMode();

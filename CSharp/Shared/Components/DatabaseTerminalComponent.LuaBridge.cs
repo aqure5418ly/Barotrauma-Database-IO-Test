@@ -75,6 +75,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     public string TryTakeOneByIdentifierFromVirtualSession(string identifier, Character actor)
     {
         if (ReadOnlyView) { return "read_only"; }
+        if (!HasRequiredPower()) { return "no_power"; }
         if (!IsServerAuthority) { return "not_authority"; }
         if (actor == null || actor.Removed || actor.IsDead || actor.Inventory == null) { return "invalid_actor"; }
 
@@ -156,6 +157,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private string TryTakeOneByVariantKeyFromVirtualSession(string identifier, string variantKey, Character actor)
     {
         if (ReadOnlyView) { return "read_only"; }
+        if (!HasRequiredPower()) { return "no_power"; }
         if (!IsServerAuthority) { return "not_authority"; }
         if (actor == null || actor.Removed || actor.IsDead || actor.Inventory == null) { return "invalid_actor"; }
 

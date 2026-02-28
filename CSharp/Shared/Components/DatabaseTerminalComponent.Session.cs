@@ -77,6 +77,7 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private void FlushIdleInventoryItems()
     {
         if (!IsServerAuthority || item == null || item.Removed) { return; }
+        if (!HasRequiredPower()) { return; }
 
         var inventory = GetTerminalInventory();
         if (inventory == null || inventory.Capacity <= 0) { return; }

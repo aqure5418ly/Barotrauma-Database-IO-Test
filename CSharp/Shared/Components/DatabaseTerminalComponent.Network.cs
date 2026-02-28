@@ -110,6 +110,15 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
 
         if (action == TerminalPanelAction.TakeByIdentifier)
         {
+            if (!HasRequiredPower())
+            {
+                ModFileLog.WriteDebug(
+                    "Panel",
+                    $"{Constants.LogPrefix} take request ignored (no power) id={item?.ID} db='{_resolvedDatabaseId}' actor='{actor?.Name ?? "none"}' " +
+                    $"identifier='{takeIdentifier}' variant='{takeVariantKey}' count={takeCount}");
+                return;
+            }
+
             if (ReadOnlyView)
             {
                 ModFileLog.WriteDebug(

@@ -1048,6 +1048,12 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             return;
         }
 
+        if (!HasRequiredPower())
+        {
+            LogPanelDebug($"take ignored (no power) identifier='{identifier}' variant='{variantKey}' count={count}");
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(identifier)) { return; }
         string wantedVariantKey = (variantKey ?? "").Trim();
         int takeCount = Math.Max(1, count);
@@ -1087,6 +1093,11 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
     private void RequestDbFillFromPanel()
     {
         if (!FollowFabricatorSelection || item == null || item.Removed) { return; }
+        if (!HasRequiredPower())
+        {
+            LogPanelDebug($"db fill ignored (no power) id={item?.ID} db='{_resolvedDatabaseId}' recipe='{_selectedRecipeIdentifier}'");
+            return;
+        }
 
         var orderComponent = item.GetComponent<DatabaseFabricatorOrderComponent>();
         if (orderComponent == null)
@@ -1682,6 +1693,14 @@ public partial class DatabaseTerminalComponent : ItemComponent, IServerSerializa
             LogPanelEval("hide:rewire_priority", controlled, isSelected, isInControlledInventory, isNearby, shouldShow, distance);
             ReleaseClientPanelFocusIfOwned("rewire priority");
             SetPanelVisible(false, "rewire priority");
+            return;
+        }
+
+        if (!HasRequiredPower())
+        {
+            LogPanelEval("hide:no_power", controlled, isSelected, isInControlledInventory, isNearby, shouldShow, distance);
+            ReleaseClientPanelFocusIfOwned("no required power");
+            SetPanelVisible(false, "no required power");
             return;
         }
 
